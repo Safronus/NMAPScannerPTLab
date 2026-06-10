@@ -2017,9 +2017,10 @@ class NmapScannerApp(QWidget):
         enabled_phases = {p: (p in phases) for p in self.phases}
         ctx = self._build_resume_ctx(run)  # seed open_ports/needs_pn z aktuálních dat
 
-        # UI: nečistit data, jen reset progressu pro re-scanované fáze + označit buňky.
+        # UI: nečistit data, jen reset progressu JEN re-scanovaných fází (ostatní
+        # fáze si nechají svůj dosavadní průběh) + označit dotčené buňky matice.
         self.live_task_panel.reset()
-        self.phase_progress_bars.reset(self.phases, enabled_phases)
+        self.phase_progress_bars.reset_phases(phases)
         for target in targets:
             for phase in phases:
                 self.status_matrix.update_status(target, phase, 'čeká')

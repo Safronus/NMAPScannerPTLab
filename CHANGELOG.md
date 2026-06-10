@@ -4,6 +4,14 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.1.1] - 2026-06-10
+
+### Opraveno
+- **Kontextový re-scan resetoval progress bary všech fází, ne jen dotčených.**
+  Při re-scanu (např. jen UDP) se ostatní (už hotové) fáze zašedly na „—" a
+  zmizel jejich průběh. Nově se resetují **jen re-scanované fáze**
+  (`PhaseProgressBars.reset_phases`), ostatní si nechají svůj dosavadní stav.
+
 ## [5.1.0] - 2026-06-10
 
 ### Přidáno

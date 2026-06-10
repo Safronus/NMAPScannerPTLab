@@ -57,6 +57,20 @@ class PhaseProgressBars(QWidget):
                 count.setText("—")
                 count.setStyleSheet("color: #95A5A6;")
 
+    def reset_phases(self, phases):
+        """Resetuje do počátečního stavu JEN vybrané fáze (pro kontextový re-scan).
+        Ostatní fáze nechá beze změny — zachová jejich dosavadní průběh/výsledky."""
+        for phase in phases:
+            bar = self._bars.get(phase)
+            count = self._counts.get(phase)
+            if bar is None:
+                continue
+            bar.setEnabled(True)
+            bar.setRange(0, 0)   # neurčitý stav, dokud nepřijde první total
+            bar.setValue(0)
+            count.setText("0/0")
+            count.setStyleSheet("")
+
     def update(self, phase, completed, total):
         bar = self._bars.get(phase)
         count = self._counts.get(phase)
