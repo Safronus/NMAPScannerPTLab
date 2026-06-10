@@ -133,6 +133,7 @@ nmapscanner/               hlavní balík aplikace
   core/scan_profiles.py    profily a žebříky variant skenu (bez Qt, testovatelné)
   core/scan_manager.py     adaptivní orchestrace fází (de-eskalace, pipeline, resume)
   core/run_history.py      historie běhů, verzování výsledků a diff (bez Qt, testovatelné)
+  core/project_store.py    projektový formát v4 — atomický zápis, migrace (bez Qt, testovatelné)
   core/tls_grading.py      klasifikace TLS šifer + známka dle Qualys (bez Qt, testovatelné)
   workers/                 vlákna: scan, tls, certificate, security_headers, screenshot, ffuf
   widgets/                 LogConsole, StatusMatrix, LiveTaskPanel, PhaseProgressBars, …
@@ -156,6 +157,7 @@ Headless testy (bez GUI a bez nmapu) se spouští jednotlivě, např.:
 .venv/bin/python tests/test_screenshot.py           # screenshot přes Selenium (skip bez Chrome)
 .venv/bin/python tests/test_signal_marshal.py       # žádný _pythonToCppCopy spam (cross-thread)
 .venv/bin/python tests/test_shutdown.py             # kill procesů + odolné emise při zavření
+.venv/bin/python tests/test_project_store.py        # projektový formát v4 + migrace
 ```
 
 Verzování (od 2.0.0): velké zásahy → MAJOR, drobné úpravy a fixy → PATCH.

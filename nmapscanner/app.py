@@ -27,6 +27,7 @@ from .core import scan_profiles as sp
 from .core.project import ProjectPaths, default_projects_dir, safe_name
 from .core import run_history as rh
 from .core.run_history import RunHistory, ScanRun, run_id_from_timestamp
+from .core import project_store as pstore
 from .workers.screenshot import ScreenshotManager
 from .dialogs.runs import DiffDialog, RunsManagerDialog
 from .widgets.log_console import LogConsole
@@ -2129,11 +2130,8 @@ class NmapScannerApp(QWidget):
                     self.status_matrix.update_status(target, phase, 'skipped_by_user')
 
     # ---- snapshoty verzí na disku ------------------------------------
-    def _snapshot_rel_path(self, run_id):
-        return f"results/{run_id}/snapshot.json"
-
     def _persist_active_snapshot(self):
-        """Uloží aktuálně zobrazená data jako snapshot AKTIVNÍ verze (je-li zobrazena)."""
+        """Uloží data AKTIVNÍ verze atomicky do results/<run_id>/data.json (v4)."""
         active = self.run_history.active()
         if active is None or self.viewing_run_id != active.id:
             return
@@ -2143,13 +2141,10 @@ class NmapScannerApp(QWidget):
             return
         try:
             paths = ProjectPaths.from_project_file(self.current_project_path)
-            snap_file = paths.run_snapshot(active.id)
-            with open(snap_file, 'w', encoding='utf-8') as f:
-                json.dump(self.scan_results, f, indent=2, ensure_ascii=False)
-            active.snapshot_path = self._snapshot_rel_path(active.id)
+            pstore.save_run_data(paths.run_data_file(active.id), active.id, self.scan_results)
             self._pending_snapshots.pop(active.id, None)
         except Exception as e:
-            self.worker_signals.log.emit("error", f"⚠️ Uložení snapshotu verze selhalo: {e}")
+            self.worker_signals.log.emit("error", f"⚠️ Uložení dat verze selhalo: {e}")
 
     def _load_snapshot(self, run):
         if run is None:
@@ -2157,15 +2152,15 @@ class NmapScannerApp(QWidget):
         if run.id in self._pending_snapshots:
             import copy
             return copy.deepcopy(self._pending_snapshots[run.id])
-        if run.snapshot_path and self.current_project_path:
+        if self.current_project_path:
             try:
-                root = ProjectPaths.from_project_file(self.current_project_path).root
-                snap_file = root / run.snapshot_path
-                if snap_file.exists():
-                    with open(snap_file, 'r', encoding='utf-8') as f:
-                        return json.load(f)
+                paths = ProjectPaths.from_project_file(self.current_project_path)
+                data = pstore.load_run_data(paths.run_data_file(run.id),
+                                            snapshot_fallback=paths.run_snapshot(run.id))
+                if data:
+                    return data
             except Exception as e:
-                self.worker_signals.log.emit("error", f"⚠️ Načtení snapshotu verze selhalo: {e}")
+                self.worker_signals.log.emit("error", f"⚠️ Načtení dat verze selhalo: {e}")
         return {p: {} for p in self.phases}
 
     def _delete_run_files(self, run):
@@ -2260,20 +2255,19 @@ class NmapScannerApp(QWidget):
         self.settings.setValue("default_projects_dir", parent)
 
         try:
-            # Zkopírovat snapshoty všech verzí (běhů) do nové složky.
+            # Zkopírovat data všech verzí (běhů) do nové složky (v4 data.json).
             for run in self.run_history.runs:
                 snap = self._load_snapshot(run)
-                if any(snap.get(ph) for ph in rh.NMAP_PHASES) or snap.get("certificates"):
-                    with open(paths.run_snapshot(run.id), 'w', encoding='utf-8') as f:
-                        json.dump(snap, f, indent=2, ensure_ascii=False)
-                    run.snapshot_path = self._snapshot_rel_path(run.id)
+                if snap and (any(snap.get(ph) for ph in rh.NMAP_PHASES)
+                             or snap.get("certificates") or snap.get("tls_audit")):
+                    pstore.save_run_data(paths.run_data_file(run.id), run.id, snap)
 
-            # Přepnout na novou složku a uložit metadata.
+            # Přepnout na novou složku a uložit metadata (atomicky, v4).
             self.current_project_path = str(paths.project_file)
             self._pending_snapshots = {}
-            project_data = self.gather_project_data()
-            with open(paths.project_file, 'w', encoding='utf-8') as f:
-                json.dump(project_data, f, indent=2, ensure_ascii=False)
+            pstore.save_project_file(self.current_project_path, self._project_meta(),
+                                     self.run_history,
+                                     datetime.now().isoformat(timespec="seconds"))
 
             self.add_to_recent_projects(self.current_project_path)
             self.settings.setValue("last_project_path", self.current_project_path)
@@ -2391,43 +2385,33 @@ class NmapScannerApp(QWidget):
         # Uložit zpět do nastavení
         self.settings.setValue("recent_projects", recent_projects)
 
-    def gather_project_data(self):
-        """Sestaví dict se stavem projektu pro uložení (schema v3 = historie běhů).
-
-        Snapshoty výsledků jednotlivých běhů se ukládají zvlášť do
-        ``results/<run_id>/snapshot.json`` (viz ``_persist_active_snapshot``);
-        projektový soubor drží jen metadata, ať zůstane malý.
-        """
+    def _project_meta(self):
+        """Metadata projektu pro projektový soubor (v4)."""
         return {
-            "schema": 3,
-            "project_name": self.project_name_edit.text(),
+            "name": self.project_name_edit.text(),
             "scan_profile": self.profile_combo.currentData(),
             "custom_command": self.custom_command_edit.text(),
-            "raw_input_text": self.raw_input_text.toPlainText(),
-            "cleaned_output_text": self.cleaned_output_text.toPlainText(),
+            "raw_input": self.raw_input_text.toPlainText(),
+            "cleaned_input": self.cleaned_output_text.toPlainText(),
             "screenshots": self.screenshots,
-            "run_history": self.run_history.to_dict(),
         }
 
     def apply_project_data(self, data):
-        """Načte stav projektu. Podporuje schema v3 (historie běhů) i migraci starých."""
+        """Načte stav projektu (formát v4) přes ProjectStore. Zvládne i migraci
+        ze staršího formátu v3 a úplně starého inline scan_results."""
         self.loading_project = True
 
-        p_name = data.get("project_name") or data.get("name") or "Můj Nmap Projekt"
+        meta, history, pending = pstore.parse_project(data)
+        p_name = meta.get("name") or "Můj Nmap Projekt"
         self.project_name_edit.setText(p_name)
+        self._set_profile(meta.get("scan_profile", "master"))
+        self.custom_command_edit.setText(meta.get("custom_command", ""))
+        self.screenshots = meta.get("screenshots", {}) or {}
+        self.raw_input_text.setPlainText(meta.get("raw_input", ""))
+        self.cleaned_output_text.setPlainText(meta.get("cleaned_input", ""))
 
-        self._set_profile(data.get("scan_profile", "master"))
-        self.custom_command_edit.setText(data.get("custom_command", ""))
-        self.screenshots = data.get("screenshots", {}) or {}
-        self.raw_input_text.setPlainText(data.get("raw_input_text", ""))
-        self.cleaned_output_text.setPlainText(data.get("cleaned_output_text", ""))
-
-        self._pending_snapshots = {}
-        rh_data = data.get("run_history")
-        if rh_data:
-            self.run_history = RunHistory.from_dict(rh_data)
-        else:
-            self.run_history = self._migrate_legacy(data)
+        self.run_history = history
+        self._pending_snapshots = dict(pending)
 
         active = self.run_history.active()
         self.viewing_run_id = active.id if active else None
@@ -2447,33 +2431,6 @@ class NmapScannerApp(QWidget):
         self.refresh_runs_combo()
         n = len(self.run_history.runs)
         self.status_label.setText(f"Projekt '{p_name}' načten ({n} běhů/verzí).")
-
-    def _migrate_legacy(self, data):
-        """Převede starý projekt (scan_results inline, bez historie) na jeden běh."""
-        history = RunHistory()
-        scan_results = data.get("scan_results", {}) or {}
-        targets = rh.targets_from_snapshot(scan_results)
-        if not targets:
-            targets = [l.strip() for l in data.get("cleaned_output_text", "").splitlines()
-                       if l.strip() and not l.strip().startswith('#')]
-        history.merge_master_targets(targets)
-
-        has_results = any(scan_results.get(ph) for ph in rh.NMAP_PHASES)
-        if has_results or targets:
-            run_id = run_id_from_timestamp(time.strftime("%Y%m%d-%H%M%S") + "_import")
-            ps = data.get("phase_settings", {}) or {}
-            enabled = {p: bool(ps.get(p, {}).get("enabled", True)) for p in self.phases}
-            run = ScanRun(run_id, label="Běh 1 (import)",
-                          created_at=datetime.now().isoformat(timespec="seconds"),
-                          profile=data.get("scan_profile", "master"),
-                          custom_command=data.get("custom_command", ""),
-                          targets=targets, enabled_phases=enabled)
-            run.status = "completed"
-            run.phase_status = rh.phase_status_from_snapshot(scan_results)
-            history.add_run(run)
-            # Snapshot zatím jen v paměti; uloží se na disk při příštím autosave.
-            self._pending_snapshots[run_id] = scan_results
-        return history
 
     def repopulate_ui_from_results(self):
         """OPRAVA PÁDU: Vynechání persistence klíčů z matice IP adres."""
@@ -4045,12 +4002,11 @@ class NmapScannerApp(QWidget):
         self._ensure_project_folder()
 
         try:
-            # Nejdřív odložit snapshot aktivní verze na disk, pak metadata projektu.
+            # Data aktivní verze (atomicky) + metadata projektu (atomicky, v4).
             self._persist_active_snapshot()
-            project_data = self.gather_project_data()
-            with open(self.current_project_path, 'w', encoding='utf-8') as f:
-                json.dump(project_data, f, indent=2, ensure_ascii=False)
-
+            pstore.save_project_file(self.current_project_path, self._project_meta(),
+                                     self.run_history,
+                                     datetime.now().isoformat(timespec="seconds"))
             # Aby se projekt objevil ve startup dialogu i bez ručního „Uložit".
             self.add_to_recent_projects(self.current_project_path)
             self.settings.setValue("last_project_path", self.current_project_path)
@@ -4134,17 +4090,15 @@ class NmapScannerApp(QWidget):
             return
         
         elif clicked == save_current_btn and self.current_project_path:
-            # Uložit do současného projektu
+            # Uložit do současného projektu (atomicky, v4)
             try:
-                project_data = self.gather_project_data()
-                with open(self.current_project_path, 'w', encoding='utf-8') as f:
-                    json.dump(project_data, f, indent=2, ensure_ascii=False)
+                self.auto_save_project()
                 self.worker_signals.log.emit("export", f"Projekt uložen do {self.current_project_path}")
             except Exception as e:
                 QMessageBox.critical(self, "Chyba uložení", f"Nelze uložit projekt: {e}")
                 event.ignore()
                 return
-        
+
         elif clicked == save_new_btn:
             # Uložit jako nový projekt
             path, _ = QFileDialog.getSaveFileName(
@@ -4155,9 +4109,9 @@ class NmapScannerApp(QWidget):
             )
             if path:
                 try:
-                    project_data = self.gather_project_data()
-                    with open(path, 'w', encoding='utf-8') as f:
-                        json.dump(project_data, f, indent=2, ensure_ascii=False)
+                    self._persist_active_snapshot()
+                    pstore.save_project_file(path, self._project_meta(), self.run_history,
+                                             datetime.now().isoformat(timespec="seconds"))
                     self.worker_signals.log.emit("export", f"Projekt uložen do {path}")
                 except Exception as e:
                     QMessageBox.critical(self, "Chyba uložení", f"Nelze uložit projekt: {e}")

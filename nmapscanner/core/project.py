@@ -90,8 +90,12 @@ class ProjectPaths:
         return d
 
     def run_snapshot(self, run_id):
-        """Cesta k snapshotu výsledků daného běhu: results/<run_id>/snapshot.json."""
+        """Cesta k snapshotu výsledků daného běhu (v3): results/<run_id>/snapshot.json."""
         return self.run_dir(run_id) / "snapshot.json"
+
+    def run_data_file(self, run_id):
+        """Cesta k datovému souboru běhu (v4): results/<run_id>/data.json."""
+        return self.run_dir(run_id) / "data.json"
 
     def __repr__(self):
         return f"ProjectPaths({self.root!r})"

@@ -4,6 +4,30 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.0.0] - 2026-06-10
+
+Nový projektový formát (schema v4) — robustní, atomický, self-describing,
+rozšiřitelný. Verzování, historie a timeline zůstávají; ukládání je odolné.
+
+### Přidáno
+- Nový modul `nmapscanner/core/project_store.py` (bez Qt, pokrytý testem):
+  - **Atomický zápis** všech souborů (temp + `os.replace` + `fsync`) — pád
+    uprostřed ukládání už nepoškodí projekt ani jeho verze.
+  - **Self-describing** soubory: `schema`, `format`, `updated_at`.
+  - **Oddělení metadat a dat**: `project.nmapproj` drží jen metadata projektu a
+    běhů; data každého běhu jsou v `results/<run_id>/data.json` pod klíčem
+    `results` (libovolné typy: nmap fáze, tls_audit, certificates,
+    security_headers, ffuf, screenshots…) — snadno rozšiřitelné.
+  - **Migrace** ze schema v3 (run_history + snapshot.json) i z úplně starého
+    formátu (scan_results inline) → jeden běh. Ověřeno i na reálném projektu.
+
+### Změněno
+- Veškeré ukládání/načítání projektu v `app.py` jde přes `ProjectStore`
+  (autosave, export, „uložit při zavření", načtení). Data verzí se čtou z
+  `data.json`, s fallbackem na starší `snapshot.json`.
+- Zpětná kompatibilita formátu není garantovaná (dle zadání), ale staré projekty
+  se při otevření automaticky **migrují** — o data nepřijdeš.
+
 ## [4.9.0] - 2026-06-10
 
 TLS Inspektor — oddělení enginů do pod-řádků + historie prověřování.
