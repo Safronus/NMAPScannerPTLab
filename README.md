@@ -50,6 +50,34 @@ pip install -r requirements.txt
 python nmap-scanner.py
 ```
 
+## Projektové složky (od 2.1.0)
+
+Každý projekt má **vlastní složku** a všechna data skenu se ukládají dovnitř:
+
+```
+<projekt>/
+  project.nmapproj      stav projektu (JSON)
+  results/scan_<čas>/   výstupy nmap skenů
+  screenshots/          screenshoty webových služeb
+  reports/              exporty (docx/csv/json)
+```
+
+Výchozí základní složka je `~/NmapScannerProjects` (nastavení
+`default_projects_dir`). Při „Uložit projekt" vybereš nadřazenou složku a
+volba se zapamatuje. Pokud spustíš sken bez otevřeného projektu, složka se
+automaticky založí pod výchozí základnou. Tím se data drží pohromadě a mimo
+adresář repozitáře.
+
+## Vývojové prostředí mimo iCloud
+
+`.venv` je uložen mimo iCloud (`~/.venvs/NMAPScannerPTLab`), protože iCloud
+velké/binární soubory odkládá a **neudrží symlinky**. Pouštěj přes:
+```bash
+~/.venvs/NMAPScannerPTLab/bin/python nmap-scanner.py
+```
+Robustnější řešení je přesunout celý repozitář mimo iCloud — pak půjde
+i jednoduchý `.venv` v adresáři projektu a spolehlivě poběží GUI test.
+
 ## 🔒 Bezpečnost dat — DŮLEŽITÉ
 
 Tento repozitář je **soukromý** a smí obsahovat **pouze zdrojový kód

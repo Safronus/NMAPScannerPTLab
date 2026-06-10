@@ -4,6 +4,33 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [2.1.0] - 2026-06-10
+
+Projektové složky — všechna data skenu se ukládají do jedné složky projektu.
+
+### Přidáno
+- **Projektové složky:** každý projekt má vlastní složku s podsložkami
+  `results/`, `screenshots/`, `reports/` a stavovým souborem
+  `project.nmapproj`. Nový modul `nmapscanner/core/project.py`
+  (`ProjectPaths`) centralizuje všechny výstupní cesty (bez závislosti na Qt,
+  pokryto unit testy).
+- Konfigurovatelná **výchozí základní složka** pro projekty
+  (nastavení `default_projects_dir`, default `~/NmapScannerProjects`).
+  Při uložení projektu se vybírá nadřazená složka a volba se zapamatuje.
+
+### Změněno
+- Výsledky skenu už nejdou do pracovního adresáře
+  (`./nmap_scan_results_*`), ale do `<projekt>/results/scan_<čas>/`.
+  Screenshoty (odvozené z téže cesty) tím rovněž padají do projektu.
+- Autosave už netvoří soubory v `~/.nmap_scanner_autosave`, ale píše do
+  projektové složky (případně nově založené pod výchozí základnou).
+- „Uložit projekt" nyní zakládá projektovou složku místo samostatného
+  `.nmapproj` souboru.
+
+### Pozn.
+- Vývojový `.venv` přesunut mimo iCloud (`~/.venvs/NMAPScannerPTLab`);
+  symlink v iCloud složce iCloud bohužel odstraňuje — viz README.
+
 ## [2.0.0] - 2026-06-10
 
 První verze po rozdělení monolitu. Beze změny chování aplikace —

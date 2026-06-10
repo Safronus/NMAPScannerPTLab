@@ -1,7 +1,6 @@
 import os
 import time
 import json
-from pathlib import Path
 from datetime import datetime
 
 
@@ -23,6 +22,7 @@ from . import VERSION
 from .utils import clean_and_parse_ips, get_color_for_ip
 from .signals import WorkerSignals
 from .core.scan_manager import ScanManager
+from .core.project import ProjectPaths, default_projects_dir, safe_name
 from .widgets.log_console import LogConsole
 from .widgets.status_matrix import StatusMatrix
 from .dialogs.startup import StartupDialog
@@ -1806,6 +1806,23 @@ class NmapScannerApp(QWidget):
         
         dialog.exec()
 
+    def _ensure_project_folder(self):
+        """Vrátí ProjectPaths aktuálního projektu. Pokud žádný projekt není
+        otevřený, založí novou projektovou složku pod výchozí základní složkou
+        (fallback dle nastavení 'default_projects_dir', default ~/NmapScannerProjects).
+        Veškerá data skenu se ukládají dovnitř této složky."""
+        if self.current_project_path:
+            paths = ProjectPaths.from_project_file(self.current_project_path)
+            paths.ensure()
+            return paths
+
+        base_dir = self.settings.value("default_projects_dir", default_projects_dir())
+        name = f"{safe_name(self.project_name_edit.text())}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        paths = ProjectPaths.create(base_dir, name)
+        self.current_project_path = str(paths.project_file)
+        self.worker_signals.log.emit("info", f"🔄 Vytvořena projektová složka: {paths.root}")
+        return paths
+
     def start_workflow_ui(self):
         # Zkontrolovat, zda již existují data z předchozího testu
         has_existing_data = any(len(self.scan_results.get(phase, {})) > 0 for phase in self.phases)
@@ -1884,23 +1901,14 @@ class NmapScannerApp(QWidget):
         self.completed_tasks = 0
         
         timestamp = time.strftime("%Y%m%d-%H%M%S")
-        self.base_export_path = Path.cwd() / f"nmap_scan_results_{timestamp}"
-        self.base_export_path.mkdir(parents=True, exist_ok=True)
-        
+        # Výsledky skenu jdou do projektové složky (results/scan_<timestamp>),
+        # ne do pracovního adresáře. Screenshoty odvozené z base_export_path
+        # se tím automaticky ukládají také dovnitř projektu.
+        paths = self._ensure_project_folder()
+        self.base_export_path = paths.results_run_dir(timestamp)
+
         self.worker_signals.log.emit("info", f"Výsledky se budou ukládat do: {self.base_export_path}")
-        
-        # NOVÉ: Při startu nového testování vytvořit autosave projekt pokud neexistuje
-        if not self.current_project_path:
-            home_dir = os.path.expanduser("~")
-            autosave_dir = os.path.join(home_dir, ".nmap_scanner_autosave")
-            os.makedirs(autosave_dir, exist_ok=True)
-            
-            project_name = self.project_name_edit.text().replace(" ", "_").replace("/", "_")
-            timestamp_auto = datetime.now().strftime('%Y%m%d_%H%M%S')
-            self.current_project_path = os.path.join(autosave_dir, f"{project_name}_{timestamp_auto}_autosave.nmapproj")
-            
-            self.worker_signals.log.emit("info", f"🔄 Vytvořen dočasný autosave projekt: {self.current_project_path}")
-        
+
         self.scan_manager.start_workflow(targets)
 
     def show_startup_dialog(self):
@@ -1917,28 +1925,37 @@ class NmapScannerApp(QWidget):
             # "new" -> nic nedělat, pokračovat s prázdným projektem
 
     def export_project_dialog(self):
-        """Export projektu do JSON (.nmapproj). Povoleno jen, když neběží testování."""
+        """Uloží projekt do vlastní projektové složky. Uživatel vybere nadřazenou
+        složku (výchozí = nastavená základní složka), uvnitř ní vznikne složka
+        pojmenovaná podle projektu s podsložkami results/screenshots/reports a
+        stavovým souborem project.nmapproj. Povoleno jen, když neběží testování."""
         if self.scan_manager.is_running:
-            QMessageBox.warning(self, "Export nelze", "Export není možný během probíhajícího testování.")
+            QMessageBox.warning(self, "Uložení nelze", "Uložení není možné během probíhajícího testování.")
             return
-        
-        path, _ = QFileDialog.getSaveFileName(self, "Exportovat projekt", "", "Nmap Project (*.nmapproj)")
-        if not path:
+
+        base_dir = self.settings.value("default_projects_dir", default_projects_dir())
+        os.makedirs(base_dir, exist_ok=True)
+        parent = QFileDialog.getExistingDirectory(self, "Vyberte nadřazenou složku pro projekt", base_dir)
+        if not parent:
             return
-        
+
+        paths = ProjectPaths.create(parent, self.project_name_edit.text())
+        # Zapamatovat zvolenou základní složku pro příště (konfigurovatelný default).
+        self.settings.setValue("default_projects_dir", parent)
+
         project_data = self.gather_project_data()
         try:
-            with open(path, 'w', encoding='utf-8') as f:
+            with open(paths.project_file, 'w', encoding='utf-8') as f:
                 json.dump(project_data, f, indent=2, ensure_ascii=False)
-            
-            self.current_project_path = path  # NOVÉ: Uložit jako aktuální projekt
-            self.add_to_recent_projects(path)
-            
-            self.settings.setValue("last_project_path", path)
-            self.status_label.setText(f"Projekt exportován do {path}")
-            self.worker_signals.log.emit("export", f"Projekt úspěšně exportován do {path}.")
+
+            self.current_project_path = str(paths.project_file)
+            self.add_to_recent_projects(self.current_project_path)
+
+            self.settings.setValue("last_project_path", self.current_project_path)
+            self.status_label.setText(f"Projekt uložen do {paths.root}")
+            self.worker_signals.log.emit("export", f"Projekt úspěšně uložen do složky {paths.root}.")
         except Exception as e:
-            QMessageBox.critical(self, "Chyba exportu", f"Nelze uložit projekt: {e}")
+            QMessageBox.critical(self, "Chyba uložení", f"Nelze uložit projekt: {e}")
 
     def import_project_dialog(self):
         """Import projektu ze souboru JSON (.nmapproj). Povoleno jen, když neběží testování."""
@@ -3656,19 +3673,9 @@ class NmapScannerApp(QWidget):
 
     def auto_save_project(self):
         """Automaticky uloží projekt na pozadí během testování."""
-        if not self.current_project_path:
-            # Pokud není otevřený žádný projekt, vytvořit dočasný autosave
-            home_dir = os.path.expanduser("~")
-            autosave_dir = os.path.join(home_dir, ".nmap_scanner_autosave")
-            os.makedirs(autosave_dir, exist_ok=True)
-            
-            project_name = self.project_name_edit.text().replace(" ", "_").replace("/", "_")
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            autosave_path = os.path.join(autosave_dir, f"{project_name}_{timestamp}_autosave.nmapproj")
-            
-            self.current_project_path = autosave_path
-            self.worker_signals.log.emit("info", f"🔄 Autosave: Vytvořen dočasný projekt {autosave_path}")
-        
+        # Zajistí projektovou složku (případně ji založí pod výchozí základnou).
+        self._ensure_project_folder()
+
         try:
             project_data = self.gather_project_data()
             with open(self.current_project_path, 'w', encoding='utf-8') as f:

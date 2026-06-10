@@ -3,4 +3,4 @@ import os
 # Musi byt nastaveno PRED importem QtWebEngine kdekoli v baliku.
 os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu --disable-software-rasterizer")
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
