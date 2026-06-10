@@ -68,15 +68,15 @@ volba se zapamatuje. Pokud spustíš sken bez otevřeného projektu, složka se
 automaticky založí pod výchozí základnou. Tím se data drží pohromadě a mimo
 adresář repozitáře.
 
-## Vývojové prostředí mimo iCloud
+## Vývojové prostředí
 
-`.venv` je uložen mimo iCloud (`~/.venvs/NMAPScannerPTLab`), protože iCloud
-velké/binární soubory odkládá a **neudrží symlinky**. Pouštěj přes:
+Repozitář je uložen **mimo iCloud** (`~/GitHub Projects - Local/NMAPScannerPTLab`),
+protože iCloud odkládá velké/binární soubory a neudrží symlinky (a může poškodit
+`.git`). Virtuální prostředí `.venv` je v `~/.venvs/NMAPScannerPTLab` a do projektu
+je vedeno symlinkem `.venv` (mimo iCloud už symlink drží). Spuštění:
 ```bash
-~/.venvs/NMAPScannerPTLab/bin/python nmap-scanner.py
+.venv/bin/python nmap-scanner.py
 ```
-Robustnější řešení je přesunout celý repozitář mimo iCloud — pak půjde
-i jednoduchý `.venv` v adresáři projektu a spolehlivě poběží GUI test.
 
 ## 🔒 Bezpečnost dat — DŮLEŽITÉ
 
