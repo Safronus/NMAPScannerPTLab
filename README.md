@@ -34,7 +34,9 @@ do přehledné matice a generuje reporty.
   X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy).
 - **Certifikáty** — detail, export, hromadný přehled.
 - **ffuf** — fuzzing adresářů/souborů s vestavěnou správou wordlistů.
-- **Screenshoty** webových služeb (QtWebEngine / Selenium).
+- **Screenshoty** webových služeb přes **Selenium (headless Chrome)** — jeden
+  znovupoužitý prohlížeč ve vlastním vlákně. chromedriver netřeba instalovat
+  ručně (Selenium Manager ho vyřeší podle nainstalovaného Chrome).
 - **Reporty** — export do Wordu (`.docx`), CSV a JSON.
 - **Projekty** — ukládání/načítání stavu do `.nmapproj`, autosave.
 
@@ -58,7 +60,7 @@ pip install -r requirements.txt
 | `ffuf`        | fuzzing adresářů           | `brew install ffuf`        |
 | `testssl.sh`  | TLS audit interních IP     | `brew install testssl`     |
 | `openssl`     | detaily certifikátů        | součást systému            |
-| `chromedriver`| Selenium screenshoty       | `brew install chromedriver`|
+| Google Chrome | Selenium screenshoty       | `brew install --cask google-chrome` (chromedriver řeší Selenium Manager) |
 
 ## Spuštění
 ```bash
@@ -149,6 +151,7 @@ Headless testy (bez GUI a bez nmapu) se spouští jednotlivě, např.:
 .venv/bin/python tests/test_project_versioning.py   # on-disk snapshoty verzí
 .venv/bin/python tests/test_tls_grading.py          # TLS hodnocení dle Qualys
 .venv/bin/python tests/test_sudo.py                 # sudo heslo jen na stdin (ne v ps)
+.venv/bin/python tests/test_screenshot.py           # screenshot přes Selenium (skip bez Chrome)
 ```
 
 Verzování (od 2.0.0): velké zásahy → MAJOR, drobné úpravy a fixy → PATCH.

@@ -4,6 +4,26 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [4.5.0] - 2026-06-10
+
+Oprava screenshotů webových služeb — přechod na Selenium (headless Chrome).
+
+### Opraveno
+- **Screenshoty webu nyní fungují.** Dřívější způsob (`QWebEngineView.grab()`)
+  na nezobrazeném off-screen view vracel prázdný/null obrázek (web obsah se
+  renderuje v odděleném procesu a `grab()` ho nezachytí) — proto screenshoty
+  nikdy nevznikly.
+- Nový `ScreenshotManager` (`workers/screenshot.py`) řídí **headless Chrome přes
+  Selenium** ve vlastním vlákně, drží **jeden** znovupoužitý prohlížeč (rychlejší
+  než spouštět Chrome pro každý cíl) a zpracovává požadavky sériově. chromedriver
+  se neinstaluje ručně — Selenium Manager (4.6+) ho vyřeší sám podle nainstalovaného
+  Google Chrome / Chromium. Při nedostupnosti se ohlásí jasná hláška a další
+  pokusy se přeskakují.
+- Odstraněn rozbitý QtWebEngine způsob i nepoužitá Selenium varianta v `app.py`.
+- Headless Chrome se korektně zavře při ukončení aplikace.
+- Test `tests/test_screenshot.py` pořídí reálný screenshot offline `data:` URL a
+  ověří nenulový PNG (přeskočí se, pokud Selenium/Chrome nejsou k dispozici).
+
 ## [4.4.0] - 2026-06-10
 
 Sudo heslo pro nmap přes dialog v aplikaci — místo neviditelného čekání na

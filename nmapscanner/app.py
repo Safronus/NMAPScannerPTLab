@@ -27,6 +27,7 @@ from .core import scan_profiles as sp
 from .core.project import ProjectPaths, default_projects_dir, safe_name
 from .core import run_history as rh
 from .core.run_history import RunHistory, ScanRun, run_id_from_timestamp
+from .workers.screenshot import ScreenshotManager
 from .dialogs.runs import DiffDialog, RunsManagerDialog
 from .widgets.log_console import LogConsole
 from .widgets.status_matrix import StatusMatrix
@@ -108,7 +109,13 @@ class NmapScannerApp(QWidget):
         self.worker_signals.log.connect(self.log_console.log_message)
         self.worker_signals.task_started.connect(self.on_task_started)
         self.worker_signals.phase_progress.connect(self.on_phase_progress)
-        self.worker_signals.screenshot_request.connect(self.handle_screenshot_request)
+        # Screenshoty webu přes Selenium (headless Chrome) ve vlastním vlákně —
+        # požadavky se zpracují sériově jedním znovupoužitým prohlížečem.
+        self.screenshot_thread = QThread()
+        self.screenshot_manager = ScreenshotManager(self.worker_signals)
+        self.screenshot_manager.moveToThread(self.screenshot_thread)
+        self.screenshot_thread.start()
+        self.worker_signals.screenshot_request.connect(self.screenshot_manager.take_screenshot)
         self.worker_signals.screenshot_taken.connect(self.on_screenshot_taken)
         self.scan_manager.workflow_finished.connect(self.on_workflow_finished)
         
@@ -1031,90 +1038,6 @@ class NmapScannerApp(QWidget):
         return tab
 
     @Slot(str, str, int, str)
-    def handle_screenshot_request(self, url, ip, port, path):
-        """Vytvoří screenshot v hlavním vlákně."""
-        import requests
-        from urllib3.exceptions import InsecureRequestWarning
-        import warnings
-        
-        # Potlačit varování o SSL
-        warnings.filterwarnings('ignore', category=InsecureRequestWarning)
-        
-        # Nejprve zkusit HTTP request pro získání status kódu
-        try:
-            response = requests.get(url, verify=False, timeout=10, allow_redirects=True)
-            status_code = response.status_code
-            self.worker_signals.log.emit("info", f"📡 HTTP {status_code} pro {url}")
-        except Exception as e:
-            status_code = None
-            self.worker_signals.log.emit("warning", f"⚠️ Chyba HTTP requestu pro {url}: {str(e)[:100]}")
-            self.status_matrix.update_status(ip, 'screenshot', 'chyba')
-            return
-        
-        # Pokud je status code OK (2xx nebo 3xx), pokračovat se screenshotem
-        if status_code and 200 <= status_code < 400:
-            from PySide6.QtWebEngineCore import QWebEngineSettings, QWebEnginePage
-            
-            view = QWebEngineView()
-            view.resize(1920, 1080)  # Nastavit rozlišení pro screenshot
-            
-            # Vytvořit vlastní profil s vypnutými SSL kontrolami
-            profile = view.page().profile()
-            settings = profile.settings()
-            settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, False)
-            settings.setAttribute(QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, True)
-            settings.setAttribute(QWebEngineSettings.WebAttribute.ErrorPageEnabled, False)
-            
-            # Vytvořit vlastní page s ignorováním SSL chyb
-            class CustomWebEnginePage(QWebEnginePage):
-                def certificateError(self, error):
-                    # Ignorovat všechny SSL chyby
-                    error.acceptCertificate()
-                    return True
-            
-            custom_page = CustomWebEnginePage(profile, view)
-            view.setPage(custom_page)
-            
-            # Timeout pro načtení stránky
-            load_timeout = QTimer()
-            load_timeout.setSingleShot(True)
-            load_timeout.setInterval(15000)  # 15 sekund
-            
-            def on_timeout():
-                self.worker_signals.log.emit("warning", f"⏱️ Timeout při načítání {url} - pořizuji screenshot i tak...")
-                # Pokusit se pořídit screenshot i při timeoutu
-                self.capture_and_save(view, self.generate_screenshot_path(ip, port, path), ip, url)
-            
-            load_timeout.timeout.connect(on_timeout)
-            
-            def on_load_finished(ok):
-                load_timeout.stop()
-                
-                if ok:
-                    # Počkat chvíli na dokončení renderování JavaScriptu
-                    QTimer.singleShot(2000, lambda: self.capture_and_save(
-                        view, 
-                        self.generate_screenshot_path(ip, port, path), 
-                        ip, 
-                        url
-                    ))
-                else:
-                    # I když načtení "selhalo", zkusit pořídit screenshot
-                    self.worker_signals.log.emit("warning", f"⚠️ QWebEngine hlásí chybu načtení {url} (HTTP {status_code}), ale pořizuji screenshot...")
-                    QTimer.singleShot(2000, lambda: self.capture_and_save(
-                        view, 
-                        self.generate_screenshot_path(ip, port, path), 
-                        ip, 
-                        url
-                    ))
-            
-            view.page().loadFinished.connect(on_load_finished)
-            load_timeout.start()
-            view.load(url)
-        else:
-            self.worker_signals.log.emit("warning", f"⚠️ Nečekaný status kód {status_code} pro {url}, screenshot přeskočen.")
-            self.status_matrix.update_status(ip, 'screenshot', 'hotovo')
-            
     def update_service_summary(self):
         """
         Aktualizuje přehled služeb - agregace podle názvu služby, protokolu a portu.
@@ -1352,80 +1275,6 @@ class NmapScannerApp(QWidget):
         dialog.exec()
 
     
-    def generate_screenshot_path(self, ip, port, path):
-        """Helper funkce pro generování cesty k souboru screenshotu."""
-        now_str = datetime.now().strftime('%Y%m%d_%H%M%S')
-        ip_safe = ip.replace('.', '_')
-        filename = f"{ip_safe}_{port}_{now_str}.png"
-        return os.path.join(path, filename)
-    
-    def capture_and_save(self, view, filepath, ip, url):
-        """Helper funkce pro zachycení a uložení screenshotu."""
-        try:
-            pixmap = view.grab()
-            if not pixmap.isNull():
-                pixmap.save(filepath)
-                self.worker_signals.log.emit("info", f"📸 Screenshot pro {url} uložen do {filepath}")
-                self.worker_signals.screenshot_taken.emit(ip, filepath)
-                self.status_matrix.update_status(ip, 'screenshot', 'hotovo')
-            else:
-                self.worker_signals.log.emit("error", f"❌ Screenshot pro {url} je prázdný (null pixmap)")
-                self.status_matrix.update_status(ip, 'screenshot', 'chyba')
-        except Exception as e:
-            self.worker_signals.log.emit("error", f"❌ Chyba při ukládání screenshotu {url}: {str(e)}")
-            self.status_matrix.update_status(ip, 'screenshot', 'chyba')
-        finally:
-            view.deleteLater()
-
-
-    def handle_screenshot_request_selenium(self, url, ip, port, path):
-        """Alternativní screenshot pomocí Selenium."""
-        from selenium import webdriver
-        from selenium.webdriver.chrome.options import Options
-        from selenium.common.exceptions import WebDriverException, TimeoutException
-        import requests
-        
-        # HTTP request pro status kód
-        try:
-            response = requests.get(url, verify=False, timeout=10)
-            status_code = response.status_code
-            self.worker_signals.log.emit("info", f"📡 HTTP {status_code} pro {url}")
-        except Exception as e:
-            self.worker_signals.log.emit("warning", f"⚠️ HTTP request selhal: {str(e)[:100]}")
-            self.status_matrix.update_status(ip, 'screenshot', 'chyba')
-            return
-        
-        if 200 <= status_code < 400:
-            chrome_options = Options()
-            chrome_options.add_argument('--headless')
-            chrome_options.add_argument('--no-sandbox')
-            chrome_options.add_argument('--disable-dev-shm-usage')
-            chrome_options.add_argument('--ignore-certificate-errors')
-            chrome_options.add_argument('--allow-insecure-localhost')
-            
-            try:
-                driver = webdriver.Chrome(options=chrome_options)
-                driver.set_page_load_timeout(15)
-                driver.get(url)
-                
-                now_str = datetime.now().strftime('%Y%m%d_%H%M%S')
-                ip_safe = ip.replace('.', '_')
-                filename = f"{ip_safe}_{port}_{now_str}.png"
-                filepath = os.path.join(path, filename)
-                
-                driver.save_screenshot(filepath)
-                self.worker_signals.log.emit("info", f"📸 Screenshot pro {url} (HTTP {status_code}) uložen")
-                self.worker_signals.screenshot_taken.emit(ip, filepath)
-                self.status_matrix.update_status(ip, 'screenshot', 'hotovo')
-                
-                driver.quit()
-            except (WebDriverException, TimeoutException) as e:
-                self.worker_signals.log.emit("warning", f"⚠️ Screenshot selhal: {str(e)[:100]}")
-                self.status_matrix.update_status(ip, 'screenshot', 'chyba')
-        else:
-            self.worker_signals.log.emit("warning", f"⚠️ Status {status_code}, screenshot přeskočen")
-            self.status_matrix.update_status(ip, 'screenshot', 'hotovo')
-
     @Slot(str, str)
     def on_screenshot_taken(self, ip, filepath):
         """Reaguje na pořízení screenshotu a aktualizuje GUI."""
@@ -4240,7 +4089,13 @@ class NmapScannerApp(QWidget):
         
         # elif clicked == dont_save_btn - nic nedělat, jen zavřít
         
-        # Korektní ukončení vláken
+        # Korektní ukončení vláken (vč. zavření headless Chrome pro screenshoty)
+        try:
+            self.screenshot_manager.shutdown()
+        except Exception:
+            pass
+        self.screenshot_thread.quit()
+        self.screenshot_thread.wait(3000)
         self.manager_thread.quit()
         self.manager_thread.wait()
         event.accept()
