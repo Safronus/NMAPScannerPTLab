@@ -4,6 +4,17 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.4.1] - 2026-06-10
+
+### Přidáno
+- **Ikona aplikace.** Kombinace radaru a obvodových tras (PCB): červený radarový
+  disk s bílými trasami a pady (objevené uzly sítě) na tmavě modrém macOS
+  squircle podkladu + terminálová lišta `>_ 22 80 443` (otevřené porty).
+  Zdroj `assets/icon.svg`, vyrenderované
+  `assets/icon.png` (runtime, všechny OS) a `assets/icon.icns` (macOS bundle).
+  Regenerace: `python3 assets/render_icon.py`. Launcher nastavuje
+  `setWindowIcon` → ikona v Docku (macOS) i na taskbaru (Linux).
+
 ## [5.4.0] - 2026-06-10
 
 ### Přidáno

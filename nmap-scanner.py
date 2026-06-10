@@ -113,9 +113,13 @@ def main():
     # Pořadí importů je důležité: QtWebEngine (uvnitř nmapscanner.app) se musí
     # naimportovat PŘED vytvořením QApplication.
     from nmapscanner.app import NmapScannerApp
+    from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
     app = QApplication(sys.argv)
+    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.png")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))  # okna + Dock (macOS) / taskbar (Linux)
     window = NmapScannerApp()
     window.showMaximized()
     sys.exit(app.exec())
