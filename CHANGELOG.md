@@ -4,6 +4,24 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.9.0] - 2026-06-11
+
+### Přidáno
+- **Report: výběr typu (technický / manažerský) a jazyka (CZ / EN).** Dialog má
+  nově záložky **Report / Texty / Komentáře**. Manažerský report vynechá
+  technikálie (jen metodiky, cíle, souhrnná tabulka nálezů + počty INFO/LOW/
+  MEDIUM/HIGH/CRITICAL a souhrnné doporučení).
+- **Editovatelná předgenerovaná pole.** Úvod/omezení, rozsah/náplň, shrnutí,
+  závěr a souhrnné doporučení jsou předvyplněné generovaným textem a dají se
+  přepsat; metadata (název, projekt, klient, autoři, zaměření); volitelné
+  **komentáře k jednotlivým nálezům** (tabulka). Vše se ukládá do projektu
+  (`scan_results['report_config']`) a obnoví při dalším otevření.
+- **Sekce „Použité nástroje" s verzemi** — automatická detekce verzí (nmap, ffuf,
+  sslscan, SSLyze, OpenSSL, OWASP ZAP, …) v `core/report_tools.py`.
+- **Registr reportů v projektu** (`core/report_store.py`) — vytvořené PDF se
+  ukládají do projektové složky `reports/` s timestampovaným názvem a zapisují
+  do `manifest.json` (základ pro manažer reportů).
+
 ## [5.8.2] - 2026-06-11
 
 ### Přidáno

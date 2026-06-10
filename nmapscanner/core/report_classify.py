@@ -745,6 +745,8 @@ def build_findings(scan_results, sections=None, min_severity="INFO", lang="cs"):
     idx = 1
     for s in sections:
         part, idx = SECTION_BUILDERS[s](scan_results, idx, lang)
+        for f in part:
+            f["section"] = s  # jazykově nezávislý klíč sekce (pro skupiny/komentáře)
         findings.extend(part)
 
     cap = SEVERITY_RANK.get(min_severity, SEVERITY_RANK["INFO"])

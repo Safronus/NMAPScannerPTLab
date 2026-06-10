@@ -927,6 +927,11 @@ class NmapScannerApp(QWidget):
 
         dialog = ReportDialog(self.scan_results, meta_defaults, reports_dir, self)
         dialog.exec()
+        # Uložit konfiguraci reportu (uloženou do scan_results dialogem) do projektu
+        try:
+            self.auto_save_project()
+        except Exception:
+            pass
 
     def open_zap_dialog(self):
         """Otevře podokno OWASP ZAP (aktivní web sken). Výsledky jdou do reportu."""
