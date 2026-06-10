@@ -59,6 +59,9 @@ class NmapScannerApp(QWidget):
         self.current_project_path = None
         self.screenshots = {}
         self.loading_project = False
+        # Cesta, pro kterou je autosave zablokovaný (macOS práva / read-only FS) —
+        # ať se neopakuje selhání a nezahltí log při každém triggeru.
+        self._autosave_blocked = None
         # Verzování běhů: historie + aktuálně zobrazená verze + cache snapshotů,
         # které ještě nejsou na disku (migrace / nový běh).
         self.run_history = RunHistory()
@@ -2213,8 +2216,9 @@ class NmapScannerApp(QWidget):
                     self.status_matrix.update_status(target, phase, 'skipped_by_user')
 
     # ---- snapshoty verzí na disku ------------------------------------
-    def _persist_active_snapshot(self):
-        """Uloží data AKTIVNÍ verze atomicky do results/<run_id>/data.json (v4)."""
+    def _persist_active_snapshot(self, raise_on_error=False):
+        """Uloží data AKTIVNÍ verze atomicky do results/<run_id>/data.json (v4).
+        ``raise_on_error`` přepošle výjimku volajícímu (autosave ji řeší centrálně)."""
         active = self.run_history.active()
         if active is None or self.viewing_run_id != active.id:
             return
@@ -2227,6 +2231,8 @@ class NmapScannerApp(QWidget):
             pstore.save_run_data(paths.run_data_file(active.id), active.id, self.scan_results)
             self._pending_snapshots.pop(active.id, None)
         except Exception as e:
+            if raise_on_error:
+                raise
             self.worker_signals.log.emit("error", f"⚠️ Uložení dat verze selhalo: {e}")
 
     def _load_snapshot(self, run):
@@ -4082,12 +4088,16 @@ class NmapScannerApp(QWidget):
 
     def auto_save_project(self):
         """Automaticky uloží projekt (snapshot aktivní verze + metadata běhů)."""
+        # Pokud je autosave pro tuto cestu zablokovaný (macOS práva / read-only),
+        # nezkoušej to znovu — jen by to spamovalo log a zdržovalo GUI.
+        if self._autosave_blocked and self._autosave_blocked == self.current_project_path:
+            return
         # Zajistí projektovou složku (případně ji založí pod výchozí základnou).
         self._ensure_project_folder()
 
         try:
             # Data aktivní verze (atomicky) + metadata projektu (atomicky, v4).
-            self._persist_active_snapshot()
+            self._persist_active_snapshot(raise_on_error=True)
             pstore.save_project_file(self.current_project_path, self._project_meta(),
                                      self.run_history,
                                      datetime.now().isoformat(timespec="seconds"))
@@ -4095,9 +4105,37 @@ class NmapScannerApp(QWidget):
             self.add_to_recent_projects(self.current_project_path)
             self.settings.setValue("last_project_path", self.current_project_path)
             self._update_project_path_label()
+            self._autosave_blocked = None  # úspěch → případnou blokaci zrušit
             self.worker_signals.log.emit("info", f"💾 Autosave: Projekt uložen do {self.current_project_path}")
         except Exception as e:
-            self.worker_signals.log.emit("error", f"⚠️ Autosave: Chyba při automatickém ukládání: {e}")
+            self._handle_autosave_failure(e)
+
+    def _handle_autosave_failure(self, e):
+        """Selhání autosave. Práva (EPERM/EACCES) = typicky projekt na Ploše/iCloudu,
+        kam macOS nedovolí zapisovat → autosave pro tu cestu vypnout a poradit jednou."""
+        import errno
+        is_perm = (isinstance(e, PermissionError)
+                   or getattr(e, "errno", None) in (errno.EPERM, errno.EACCES))
+        if is_perm:
+            self._autosave_blocked = self.current_project_path
+            self.worker_signals.log.emit(
+                "error", "⛔ Autosave vypnut — macOS blokuje zápis do složky projektu "
+                f"({self.current_project_path}).")
+            self.status_label.setText("⛔ Autosave vypnut — macOS blokuje zápis do složky projektu.")
+            QMessageBox.warning(
+                self, "Autosave zablokován (práva macOS)",
+                "Nelze automaticky ukládat do složky projektu:\n"
+                f"{self.current_project_path}\n\n"
+                "Složka je nejspíš na Ploše nebo v iCloudu, kam aplikace nemá právo "
+                "zapisovat (Ochrana soukromí macOS). Data v aplikaci zůstávají, jen se "
+                "zatím neukládají na disk.\n\n"
+                "Řešení (stačí jedno):\n"
+                "• Ulož projekt mimo Plochu/iCloud přes „Exportovat projekt…“.\n"
+                "• Povol aplikaci přístup v Nastavení → Soukromí a zabezpečení → "
+                "Soubory a složky (případně Plný přístup k disku) a restartuj aplikaci.")
+        else:
+            self.worker_signals.log.emit(
+                "error", f"⚠️ Autosave: Chyba při automatickém ukládání: {e}")
 
 
     def save_settings(self):

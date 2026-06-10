@@ -4,6 +4,22 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.1.2] - 2026-06-10
+
+### Opraveno
+- **Zavření Inspektoru TLS / certifikátů / hlaviček zamrzlo aplikaci** (dlouhé
+  „kolečko"). Každý dialog si vytvářel **vlastní** `QThreadPool`, jehož destruktor
+  při zavření volá `waitForDone()` a **blokuje GUI vlákno**, dokud nedoběhne
+  worker (Qualys/testssl/openssl/HTTP). Dialogy nově používají **globální pool**
+  — zavření je okamžité, rozběhnuté kontroly doběhnou na pozadí (TLS je navíc ruší).
+- **Autosave spamoval chyby u projektu na Ploše/iCloudu.** macOS (ochrana
+  soukromí, TCC) blokuje zápis do takové složky → `EPERM` při každém pokusu po
+  zavření dialogu. Nově se autosave po prvním selhání práv pro danou cestu
+  **vypne**, vysvětlí to **jednou** (návod: exportovat projekt mimo Plochu/iCloud,
+  nebo povolit přístup v Nastavení → Soukromí → Soubory a složky) a dál už
+  nezahlcuje log ani nezdržuje GUI. Data v aplikaci zůstávají; po exportu/uložení
+  jinam se ukládání samo obnoví.
+
 ## [5.1.1] - 2026-06-10
 
 ### Opraveno

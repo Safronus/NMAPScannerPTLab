@@ -24,7 +24,9 @@ class TlsAuditDialog(QDialog):
         self.scan_results = scan_results
         self.project_name = project_name or ""    # pro verzovaný název PDF reportu
         self.project_path = project_path          # cesta k .nmapproj → složka reports/
-        self.thread_pool = QThreadPool()
+        # Globální pool (ne vlastní): vlastní QThreadPool by při zavření dialogu
+        # v destruktoru volal waitForDone() a zamrazil GUI, dokud nedoběhne worker.
+        self.thread_pool = QThreadPool.globalInstance()
         self.item_map = {}            # (ip, port) -> port řádek
         self.engine_items = {}        # (ip, port, engine) -> řádek enginu pod portem
         self._active = 0              # počet všech právě běžících workerů (napříč dávkami)

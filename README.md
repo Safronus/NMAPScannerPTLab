@@ -95,6 +95,13 @@ volba se zapamatuje. Pokud spustíš sken bez otevřeného projektu, složka se
 automaticky založí pod výchozí základnou. Tím se data drží pohromadě a mimo
 adresář repozitáře.
 
+> ⚠️ **macOS — neukládej projekt na Plochu ani do iCloudu.** macOS (ochrana
+> soukromí / TCC) tam aplikaci blokuje zápis (`Operation not permitted`),
+> takže autosave selže. Aplikace to pozná, autosave pro takovou cestu vypne a
+> jednou poradí. Použij `~/NmapScannerProjects` nebo jinou běžnou složku mimo
+> Plochu/Dokumenty/iCloud — případně appce povol „Soubory a složky"/„Plný
+> přístup k disku" v Nastavení → Soukromí a zabezpečení.
+
 ## Vývojové prostředí
 
 Repozitář je uložen **mimo iCloud** (`~/GitHub Projects - Local/NMAPScannerPTLab`),
@@ -161,6 +168,7 @@ Headless testy (bez GUI a bez nmapu) se spouští jednotlivě, např.:
 .venv/bin/python tests/test_signal_marshal.py       # žádný _pythonToCppCopy spam (cross-thread)
 .venv/bin/python tests/test_shutdown.py             # kill procesů + odolné emise při zavření
 .venv/bin/python tests/test_project_store.py        # projektový formát v4 + migrace
+.venv/bin/python tests/test_autosave_resilience.py  # zápis selže čistě při blokovaných právech (macOS)
 ```
 
 Verzování (od 2.0.0): velké zásahy → MAJOR, drobné úpravy a fixy → PATCH.

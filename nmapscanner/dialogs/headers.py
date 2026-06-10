@@ -22,7 +22,9 @@ class SecurityHeadersDialog(QDialog):
         self.setWindowTitle("Inspektor Security Headers")
         self.resize(1400, 750)
         self.scan_results = scan_results
-        self.thread_pool = QThreadPool()
+        # Globální pool (ne vlastní): vlastní QThreadPool by při zavření dialogu
+        # v destruktoru volal waitForDone() a zamrazil GUI, dokud nedoběhne worker.
+        self.thread_pool = QThreadPool.globalInstance()
         self.item_map = {}
         
         self.init_ui()

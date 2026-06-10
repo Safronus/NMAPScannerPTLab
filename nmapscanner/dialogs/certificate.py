@@ -153,7 +153,9 @@ class CertificateDialog(QDialog):
         self.resize(1600, 800)
         
         self.scan_results = scan_results
-        self.thread_pool = QThreadPool()
+        # Globální pool (ne vlastní): vlastní QThreadPool by při zavření dialogu
+        # v destruktoru volal waitForDone() a zamrazil GUI, dokud nedoběhne worker.
+        self.thread_pool = QThreadPool.globalInstance()
         self.processing_count = 0
         self.item_map = {} 
         
