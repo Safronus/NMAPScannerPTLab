@@ -90,6 +90,23 @@ def main():
 
     total = len(QUALYS_INSECURE) + len(QUALYS_WEAK) + len(QUALYS_SECURE)
 
+    # --- OpenSSL-styl názvy (z testssl.sh) — ověřeno proti reálnému výstupu ---
+    openssl_cases = {
+        "ECDHE-ECDSA-AES256-GCM-SHA384": "SECURE",
+        "ECDHE-RSA-AES128-GCM-SHA256": "SECURE",
+        "ECDHE-ECDSA-CHACHA20-POLY1305": "SECURE",
+        "ECDHE-ECDSA-AES256-SHA384": "WEAK",      # CBC (bez GCM/CHACHA)
+        "AES256-GCM-SHA384": "WEAK",              # statická RSA (bez forward secrecy)
+        "DES-CBC3-SHA": "WEAK",                   # 3DES
+        "RC4-MD5": "INSECURE",
+        "ECDHE-RSA-DES-CBC3-SHA": "WEAK",         # 3DES
+    }
+    for cname, expected in openssl_cases.items():
+        lbl = classify_cipher(cname)[0]
+        if lbl != expected:
+            fails.append(f"OpenSSL {cname}: dostal {lbl}, čekáno {expected}")
+    total += len(openssl_cases)
+
     # --- celková známka (dle reálných Qualys grade) ---
     # vx.hn: TLS1.2+1.3, jen silné šifry -> A (Qualys A+ kvůli HSTS, to nehodnotíme)
     g, _ = calculate_grade({"tls1_2": True, "tls1_3": True}, _ciphers("SECURE", "SECURE"))

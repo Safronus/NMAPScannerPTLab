@@ -773,11 +773,17 @@ class NmapScannerApp(QWidget):
         
         main_layout.addWidget(content_splitter)
         
+    def _autosave_after_audit(self):
+        """Uloží výsledky auditu (TLS/cert/headers/ffuf) do verze, je-li projekt."""
+        if self.current_project_path and not self.scan_manager.is_running:
+            self.auto_save_project()
+
     def open_tls_audit_dialog(self):
         """Otevře dialog pro audit TLS a šifer."""
         dialog = TlsAuditDialog(self.scan_results, self)
         dialog.exec()
-        
+        self._autosave_after_audit()
+
     def open_security_headers_dialog(self):
         """Otevře dialog pro kontrolu Security Headers."""
         if not any(self.scan_results.get('tcp', {}).values()):
@@ -785,16 +791,18 @@ class NmapScannerApp(QWidget):
             return
         dialog = SecurityHeadersDialog(self.scan_results, self)
         dialog.exec()
+        self._autosave_after_audit()
 
     def open_certificate_dialog(self):
         """Otevře dialog pro kontrolu certifikátů."""
         if not any(self.scan_results.get(phase, {}) for phase in ['tcp', 'online']):
             QMessageBox.warning(self, "Žádná data", "Nejdříve spusťte skenování (TCP), aby bylo možné detekovat webové služby.")
             return
-            
+
         dialog = CertificateDialog(self.scan_results, self)
         dialog.exec()
-        
+        self._autosave_after_audit()
+
     def open_ffuf_dialog(self):
         """Otevře ffuf dialog a spravuje předávání dat."""
         if "ffuf" not in self.scan_results:
@@ -802,11 +810,12 @@ class NmapScannerApp(QWidget):
 
         # Předáváme referenci na naše výsledky
         dialog = FfufDialog(self.scan_results, self)
-        
+
         if self.scan_results["ffuf"]:
             dialog.load_existing_results(self.scan_results["ffuf"])
-        
+
         dialog.exec()
+        self._autosave_after_audit()
         
         # Po zavření dialogu pro jistotu znovu synchronizujeme
         self.scan_results["ffuf"] = dialog.json_results
@@ -2227,19 +2236,6 @@ class NmapScannerApp(QWidget):
         self.status_matrix.populate_targets([])
         self.refresh_runs_combo()
         self.status_label.setText("Nový prázdný projekt.")
-
-    def show_startup_dialog(self):
-        """Zobrazí startup dialog pro výběr projektu."""
-        last_project_path = self.settings.value("last_project_path", None)
-        has_last = last_project_path and os.path.exists(last_project_path)
-
-        dialog = StartupDialog(has_last_project=has_last, parent=self)
-        if dialog.exec() == QDialog.Accepted:
-            if dialog.choice == "last":
-                self.import_project(last_project_path)
-            elif dialog.choice == "import":
-                self.import_project_dialog()
-            # "new" -> nic nedělat, pokračovat s prázdným projektem
 
     def export_project_dialog(self):
         """Uloží projekt do vlastní projektové složky. Uživatel vybere nadřazenou
@@ -4055,6 +4051,9 @@ class NmapScannerApp(QWidget):
             with open(self.current_project_path, 'w', encoding='utf-8') as f:
                 json.dump(project_data, f, indent=2, ensure_ascii=False)
 
+            # Aby se projekt objevil ve startup dialogu i bez ručního „Uložit".
+            self.add_to_recent_projects(self.current_project_path)
+            self.settings.setValue("last_project_path", self.current_project_path)
             self.worker_signals.log.emit("info", f"💾 Autosave: Projekt uložen do {self.current_project_path}")
         except Exception as e:
             self.worker_signals.log.emit("error", f"⚠️ Autosave: Chyba při automatickém ukládání: {e}")
@@ -4179,7 +4178,13 @@ class NmapScannerApp(QWidget):
         
         # elif clicked == dont_save_btn - nic nedělat, jen zavřít
         
-        # Korektní ukončení vláken (vč. zavření headless Chrome pro screenshoty)
+        # Korektní ukončení vláken. KLÍČOVÉ: nejdřív zabít běžící nmap procesy,
+        # jinak se ScanWorker zasekne na subprocess (až 20 min) a appka při zavírání
+        # zamrzne / spadne na 'Signal source has been deleted'.
+        try:
+            self.scan_manager.shutdown()
+        except Exception:
+            pass
         try:
             self.screenshot_manager.shutdown()
         except Exception:
@@ -4187,6 +4192,6 @@ class NmapScannerApp(QWidget):
         self.screenshot_thread.quit()
         self.screenshot_thread.wait(3000)
         self.manager_thread.quit()
-        self.manager_thread.wait()
+        self.manager_thread.wait(3000)
         event.accept()
 

@@ -28,10 +28,11 @@ def run_threaded_scan():
     import nmapscanner.workers.scan as scanmod
     from nmapscanner.signals import WorkerSignals
     from nmapscanner.core.scan_manager import ScanManager
+    from _fakeproc import make_fake_popen
 
-    def fake_run(cmd, **kw):
-        return types.SimpleNamespace(returncode=0, stdout=xml("10.0.0.9", tcp=(22, 443, 8080)), stderr=b"")
-    scanmod.subprocess.run = fake_run
+    def respond(argv, _input):
+        return (0, xml("10.0.0.9", tcp=(22, 443, 8080)), b"")
+    scanmod.subprocess.Popen = make_fake_popen(respond)
 
     class Drv(QObject):
         start = Signal(list, str, dict, str, bool, dict)

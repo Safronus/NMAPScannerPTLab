@@ -30,29 +30,44 @@ GRADE_COLORS = {
 def classify_cipher(name):
     """Vrátí ``(label, hex_color, tag)`` pro danou cipher suite dle Qualys pravidel.
 
-    label ∈ {"INSECURE", "WEAK", "SECURE"}.
+    Rozumí **oběma stylům názvů**: IANA (``TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256``,
+    typicky z nmapu) i OpenSSL (``ECDHE-RSA-AES128-GCM-SHA256``, typicky z
+    testssl.sh). label ∈ {"INSECURE", "WEAK", "SECURE"}.
     """
     u = (name or "").upper()
 
     # --- INSECURE (Qualys červená) ---
-    if ("NULL" in u or "ANON" in u or "_ADH_" in u or "_AECDH_" in u
-            or "EXPORT" in u or "RC4" in u
-            or ("_DES_" in u and "3DES" not in u)   # jednoduché DES, ne 3DES
-            or u.endswith("_MD5")):
+    if "NULL" in u or "ANON" in u or "ADH" in u or "AECDH" in u:
         return "INSECURE", INSECURE_COLOR, "(INSECURE)"
+    if "EXPORT" in u or u.startswith("EXP-") or u.startswith("EXP1"):
+        return "INSECURE", INSECURE_COLOR, "(INSECURE – export)"
+    if "RC4" in u:
+        return "INSECURE", INSECURE_COLOR, "(INSECURE – RC4)"
+    if u.endswith("MD5"):
+        return "INSECURE", INSECURE_COLOR, "(INSECURE – MD5)"
+    # jednoduché DES (ne 3DES): obsahuje DES, ale ne 3DES / DES-CBC3 / EDE
+    if "DES" in u and not any(x in u for x in ("3DES", "DES-CBC3", "DES_CBC3", "EDE")):
+        return "INSECURE", INSECURE_COLOR, "(INSECURE – DES)"
+
+    # --- TLS 1.3 sady (vždy bezpečné) — TLS_AES_*/TLS_CHACHA20_* bez "WITH" ---
+    if u.startswith("TLS_") and "WITH" not in u and (
+            "AES" in u or "CHACHA20" in u or "SM4" in u or "CCM" in u):
+        return "SECURE", SECURE_COLOR, ""
 
     # --- WEAK (Qualys oranžová) ---
-    # Statická RSA výměna klíčů → chybí forward secrecy (i pro GCM/CCM).
-    if u.startswith("TLS_RSA_") or u.startswith("SSL_RSA_"):
-        return "WEAK", WEAK_COLOR, "(WEAK – bez forward secrecy)"
     # 3DES (Sweet32)
-    if "3DES" in u:
+    if "3DES" in u or "DES-CBC3" in u or "DES_CBC3" in u or "EDE" in u:
         return "WEAK", WEAK_COLOR, "(WEAK – 3DES/Sweet32)"
-    # CBC mód (Lucky13/POODLE)
-    if "_CBC_" in u:
+    # Statická RSA (chybí forward secrecy) — i pro GCM/CCM.
+    fs = ("ECDHE" in u or "DHE" in u or "EDH" in u or "EECDH" in u)
+    if u.startswith("TLS_RSA_") or u.startswith("SSL_RSA_") or not fs:
+        return "WEAK", WEAK_COLOR, "(WEAK – bez forward secrecy)"
+    # CBC mód (Lucky13/POODLE): IANA _CBC_, nebo OpenSSL non-AEAD bloková šifra.
+    aead = ("GCM" in u or "CCM" in u or "CHACHA" in u or "POLY1305" in u)
+    if "_CBC_" in u or "-CBC-" in u or not aead:
         return "WEAK", WEAK_COLOR, "(WEAK – CBC)"
     # Staré algoritmy, které Qualys penalizuje
-    if "IDEA" in u or "_SEED_" in u:
+    if "IDEA" in u or "SEED" in u:
         return "WEAK", WEAK_COLOR, "(WEAK)"
 
     # --- SECURE (Qualys zelená) ---

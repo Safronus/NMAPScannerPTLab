@@ -15,6 +15,7 @@ from PySide6.QtCore import QCoreApplication
 
 import nmapscanner.workers.scan as scanmod
 from nmapscanner.signals import WorkerSignals
+from _fakeproc import make_fake_popen
 
 ONLINE_XML = (b'<?xml version="1.0"?><nmaprun version="7.99"><host>'
               b'<status state="up"/><address addr="1.2.3.4" addrtype="ipv4"/></host>'
@@ -24,12 +25,12 @@ ONLINE_XML = (b'<?xml version="1.0"?><nmaprun version="7.99"><host>'
 def run_worker(sudo_password=None, use_sudo=True):
     captured = {}
 
-    def fake_run(argv, input=None, **kw):
+    def responder(argv, input):
         captured["argv"] = list(argv)
         captured["input"] = input
-        return types.SimpleNamespace(returncode=0, stdout=ONLINE_XML, stderr=b"")
+        return (0, ONLINE_XML, b"")
 
-    scanmod.subprocess.run = fake_run
+    scanmod.subprocess.Popen = make_fake_popen(responder)
     sig = WorkerSignals()
     w = scanmod.ScanWorker("online", "1.2.3.4", 0, "nmap -sn -T4 -oX - 1.2.3.4",
                            "ONLINE", False, 120, sig,

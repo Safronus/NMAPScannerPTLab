@@ -18,6 +18,7 @@ import nmapscanner.workers.scan as scanmod
 from nmapscanner.signals import WorkerSignals
 from nmapscanner.core.scan_manager import ScanManager
 from nmapscanner.core import scan_profiles as sp
+from _fakeproc import make_fake_popen
 
 TARGETS = ["10.0.0.1", "10.0.0.2"]
 
@@ -42,38 +43,36 @@ def xml(ip, up=True, tcp=(), udp=(), osmatch=False):
 def run_workflow():
     seen_cmds = []
 
-    def R(rc=0, out="", err=""):
-        # Worker běží v bajtovém režimu (kvůli sudo heslu na stdin) → stdout/stderr bytes.
-        return types.SimpleNamespace(
-            returncode=rc,
-            stdout=out.encode() if isinstance(out, str) else out,
-            stderr=err.encode() if isinstance(err, str) else err)
+    def B(rc=0, out="", err=""):
+        return (rc,
+                out.encode() if isinstance(out, str) else out,
+                err.encode() if isinstance(err, str) else err)
 
-    def fake_run(cmd, **kw):
-        s = " ".join(cmd)
+    def respond(argv, _input):
+        s = " ".join(argv)
         seen_cmds.append(s)
         tgt = next((t for t in TARGETS if t in s), "?")
-        pn = "-Pn" in cmd
+        pn = "-Pn" in argv
         up = tgt == "10.0.0.1"   # .2 je „down" (ping selže)
 
-        if "-sn" in cmd:                       # online
-            return R(0, xml(tgt, up=up))
+        if "-sn" in argv:                      # online
+            return B(0, xml(tgt, up=up))
         # .2 down → hloubkové stupně musí běžet s -Pn
         if tgt == "10.0.0.2" and not pn:
             raise AssertionError(f"{tgt} hloubkový sken bez -Pn (ping selhal → má být -Pn)")
 
-        if "-sU" in cmd:                       # udp (2 stupně)
-            return R(0, xml(tgt, tcp=(), udp=(53,) if "--top-ports 100" in s else (53, 161)))
-        if "-O" in cmd:                        # osscan
-            return R(0, xml(tgt, osmatch=True))
-        if "--script" in cmd:                  # vuln
-            return R(0, xml(tgt, tcp=(22, 443)))
+        if "-sU" in argv:                      # udp (2 stupně)
+            return B(0, xml(tgt, tcp=(), udp=(53,) if "--top-ports 100" in s else (53, 161)))
+        if "-O" in argv:                       # osscan
+            return B(0, xml(tgt, osmatch=True))
+        if "--script" in argv:                 # vuln
+            return B(0, xml(tgt, tcp=(22, 443)))
         # tcp (2 stupně): top 1000 → jen 22; -p- → 22 + 443
         if "--top-ports 1000" in s:
-            return R(0, xml(tgt, tcp=(22,)))
-        return R(0, xml(tgt, tcp=(22, 443)))   # -p-
+            return B(0, xml(tgt, tcp=(22,)))
+        return B(0, xml(tgt, tcp=(22, 443)))   # -p-
 
-    scanmod.subprocess.run = fake_run
+    scanmod.subprocess.Popen = make_fake_popen(respond)
 
     app = QCoreApplication.instance() or QCoreApplication(sys.argv)
     sig = WorkerSignals()

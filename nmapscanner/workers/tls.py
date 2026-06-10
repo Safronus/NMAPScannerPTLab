@@ -160,16 +160,17 @@ class SslLabsWorker(QRunnable):
         except ValueError:
             # Není to IP → bereme jako doménu (to Qualys umí).
             return target, None
-        # Je to IP adresa
+        # Interní/privátní IP Qualys neumí (potřebuje veřejnou dosažitelnost).
         if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_reserved:
-            return None, ("Qualys SSL Labs skenuje jen veřejné domény, ne interní/privátní IP "
+            return None, ("Qualys SSL Labs skenuje jen veřejné cíle, ne interní/privátní IP "
                           f"({target}). Pro interní cíle použij engine Nmap nebo TestSSL.sh.")
+        # Veřejná IP: nejdřív zkus reverzní DNS (lepší shoda s certem), jinak
+        # předáme IP přímo Qualysu — ať to zkusí (Qualys u IP vrátí vlastní chybu,
+        # když to nejde).
         try:
-            host = socket.gethostbyaddr(target)[0]
-            return host, None
+            return socket.gethostbyaddr(target)[0], None
         except Exception:
-            return None, (f"Qualys vyžaduje doménové jméno, ne IP ({target}) — "
-                          "reverzní DNS (PTR) nenalezeno. Zadej cíl jako doménu.")
+            return target, None
 
     @Slot()
     def run(self):
@@ -217,6 +218,13 @@ class SslLabsWorker(QRunnable):
                     if time.monotonic() > deadline:
                         raise Exception("Qualys API je přetížené (rate limit). Zkus to později.")
                     continue
+                if response.status_code in (400, 441):
+                    # Qualys nepřijal cíl — typicky když je to IP bez použitelného
+                    # hostname (Qualys umí jen veřejné domény, raw IP odmítá).
+                    raise Exception(
+                        f"Qualys nepřijal cíl '{host}' (HTTP {response.status_code}). "
+                        "Qualys umí jen veřejné domény; tato IP nemá použitelný reverzní "
+                        "DNS (PTR). Použij doménu, nebo pro tenhle cíl engine TestSSL.sh.")
                 if response.status_code != 200:
                     raise Exception(f"Qualys API vrátilo HTTP {response.status_code}.")
 
@@ -359,9 +367,6 @@ class TestSslWorker(QRunnable):
             else:
                 raise Exception("Nepodařilo se vygenerovat JSON report.")
 
-            import re
-            from ..core.tls_grading import classify_cipher, WEAK_COLOR, INSECURE_COLOR, SECURE_COLOR
-
             def proto_label(raw):
                 """Z id/textu testssl odvodí název protokolu (TLSv1.2 …) nebo None."""
                 k = raw.lower().replace(".", "_").replace("-", "_")
@@ -396,34 +401,27 @@ class TestSslWorker(QRunnable):
                         if pl:
                             scan_data['protocols'][proto_key_map[pl]] = True
 
-                # Cipher řádky: id začíná na 'cipher' (cipher_, cipher-, cipherx-…)
+                # Cipher řádky: id začíná na 'cipher' (cipher-tls1_2_xc02c …).
+                # testssl finding má tvar: "<proto>  <hexkód>  <NÁZEV>  <kex/info>",
+                # kde NÁZEV je OpenSSL styl (ECDHE-ECDSA-AES256-GCM-SHA384) nebo u
+                # TLS 1.3 IANA (TLS_AES_256_GCM_SHA384).
                 if low_id.startswith("cipher"):
                     proto_name = proto_label(id_val) or "TLSv1.2"
                     cipher_tree.setdefault(proto_name, [])
 
-                    # Preferuj IANA název (TLS_/SSL_…); jinak ber celé finding.
-                    m = re.search(r'\b((?:TLS|SSL)_[A-Z0-9_]+)\b', finding)
-                    cname = m.group(1) if m else finding.strip()
+                    parts = finding.split()
+                    cname = parts[2] if len(parts) >= 3 else finding.strip()
+                    kex = " ".join(parts[3:]) if len(parts) > 3 else ""
 
-                    if m:
-                        # Qualys-laděná klasifikace dle názvu šifry.
-                        grade_label, grade_color, grade_tag = classify_cipher(cname)
-                    else:
-                        # Fallback na severity od testssl.
-                        if severity in ("CRITICAL", "HIGH"):
-                            grade_label, grade_color = "INSECURE", INSECURE_COLOR
-                        elif severity == "MEDIUM":
-                            grade_label, grade_color = "WEAK", WEAK_COLOR
-                        else:
-                            grade_label, grade_color = "SECURE", SECURE_COLOR
-                        grade_tag = f"[{severity}]" if severity else ""
+                    # Qualys-laděná klasifikace (rozumí IANA i OpenSSL názvům).
+                    grade_label, grade_color, grade_tag = classify_cipher(cname)
 
                     cipher_tree[proto_name].append({
                         'name': cname,
                         'grade_label': grade_label,
                         'grade_color': grade_color,
                         'grade_tag': grade_tag,
-                        'kex_info': ""
+                        'kex_info': kex,
                     })
 
             scan_data['cipher_tree'] = cipher_tree

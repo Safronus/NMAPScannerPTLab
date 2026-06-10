@@ -20,7 +20,7 @@ from PySide6.QtCore import QObject, Signal, Slot, QThreadPool
 
 from . import scan_profiles as sp
 from .run_history import SUCCESS_STATUSES
-from ..workers.scan import ScanWorker
+from ..workers.scan import ScanWorker, ProcessRegistry
 
 
 class ScanManager(QObject):
@@ -32,6 +32,8 @@ class ScanManager(QObject):
         self.max_concurrent = max_concurrent
         self.thread_pool = QThreadPool()
         self.is_running = False
+        # Registr běžících nmap procesů — aby šly při zastavení/zavření tvrdě zabít.
+        self.proc_registry = ProcessRegistry()
         # Sudo kontext (nastaví aplikace před spuštěním; _reset_state ho NEmaže):
         # sudo_password = bytes/bytearray nebo None; use_sudo = obalit nmap sudem.
         self.sudo_password = None
@@ -69,6 +71,7 @@ class ScanManager(QObject):
         self.custom_command = (custom_command or "").strip()
         self.targets = [t for t in targets if t]
         self.resume = bool(resume) and self.profile != "custom"
+        self.proc_registry.reset()
 
         ctx = resume_ctx or {}
         self.prior_status = ctx.get("status", {}) or {}
@@ -119,9 +122,17 @@ class ScanManager(QObject):
 
     def stop_workflow(self):
         self.is_running = False
-        self.thread_pool.clear()
+        self.proc_registry.terminate_all()   # zabít běžící nmap procesy
+        self.thread_pool.clear()              # zahodit frontu čekajících
         self.signals.log.emit("warning", "⏹️ Skenování zastaveno uživatelem.")
         self.workflow_finished.emit()
+
+    def shutdown(self):
+        """Tvrdé zastavení pro zavření aplikace — zabije procesy a počká na pool."""
+        self.is_running = False
+        self.proc_registry.terminate_all()
+        self.thread_pool.clear()
+        self.thread_pool.waitForDone(3000)
 
     # ---- příchozí výsledky workerů -----------------------------------
     @Slot(str, str, int, str, object, bool)
@@ -250,7 +261,8 @@ class ScanManager(QObject):
         command, timeout, _vl = built
         label = sp.stage_label(phase, stage_idx, use_pn, calm)
         worker = ScanWorker(phase, target, stage_idx, command, label, use_pn, timeout,
-                            self.signals, sudo_password=self.sudo_password, use_sudo=self.use_sudo)
+                            self.signals, sudo_password=self.sudo_password,
+                            use_sudo=self.use_sudo, registry=self.proc_registry)
         self.thread_pool.start(worker, sp.priority(phase, stage_idx))
 
     def _bump(self, phase):
@@ -296,7 +308,8 @@ class ScanManager(QObject):
             cmd += " -Pn"
         label = "CUSTOM" + (" · -Pn" if use_pn else "")
         worker = ScanWorker("tcp", target, 0, cmd, label, use_pn, 3600, self.signals,
-                            sudo_password=self.sudo_password, use_sudo=self.use_sudo)
+                            sudo_password=self.sudo_password, use_sudo=self.use_sudo,
+                            registry=self.proc_registry)
         self.thread_pool.start(worker, sp.PHASE_PRIORITY["tcp"])
 
     # ---- pomocné -----------------------------------------------------

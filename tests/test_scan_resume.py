@@ -13,6 +13,7 @@ import nmapscanner.workers.scan as scanmod
 from nmapscanner.signals import WorkerSignals
 from nmapscanner.core.scan_manager import ScanManager
 from nmapscanner.core import scan_profiles as sp
+from _fakeproc import make_fake_popen
 
 T = ["10.0.0.1", "10.0.0.2"]
 
@@ -28,15 +29,14 @@ def xml(ip, tcp=(), udp=()):
 def main():
     calls = {}   # (target, phase) -> počet nmap volání
 
-    def fake_run(cmd, **kw):
-        s = " ".join(cmd)
-        tgt = next((t for t in T if t in s), "?")
-        ph = ("online" if "-sn" in cmd else "udp" if "-sU" in cmd else "osscan" if "-O" in cmd
-              else "vuln" if "--script" in cmd else "tcp")
+    def respond(argv, _input):
+        tgt = next((t for t in T if t in " ".join(argv)), "?")
+        ph = ("online" if "-sn" in argv else "udp" if "-sU" in argv else "osscan" if "-O" in argv
+              else "vuln" if "--script" in argv else "tcp")
         calls[(tgt, ph)] = calls.get((tgt, ph), 0) + 1
-        return types.SimpleNamespace(returncode=0, stdout=xml(tgt, udp=(53,)).encode(), stderr=b"")
+        return (0, xml(tgt, udp=(53,)).encode(), b"")
 
-    scanmod.subprocess.run = fake_run
+    scanmod.subprocess.Popen = make_fake_popen(respond)
 
     app = QCoreApplication.instance() or QCoreApplication(sys.argv)
     sig = WorkerSignals()

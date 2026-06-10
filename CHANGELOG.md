@@ -4,6 +4,36 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [4.8.0] - 2026-06-10
+
+Oprava pádu při zavírání během skenu, spolehlivější ukládání projektu, funkční
+TestSSL engine a lepší startup dialog.
+
+### Opraveno
+- **Pád / zamrznutí při zavření aplikace, když běžel sken.** UDP sken se mohl
+  zaseknout na `subprocess` (až do timeoutu 20 min), thread pool při ukončení
+  čekal a worker padal na `RuntimeError: Signal source has been deleted`. Nově:
+  nmap procesy jdou tvrdě zabít (`ProcessRegistry`), emise signálů jsou odolné
+  vůči zničenému objektu, a `closeEvent` procesy nejdřív ukončí a počká s
+  timeoutem. (Regresní test `tests/test_shutdown.py`.)
+- **Projekt se neobjevoval ve startup dialogu** — autosave ho nepřidával do
+  „posledních projektů". Nově každý autosave projekt zaregistruje.
+- **Výsledky auditů (TLS/cert/headers/ffuf) se neukládaly do projektu** — nově
+  se po zavření audit dialogu projekt automaticky uloží (je-li otevřený).
+- **TestSSL.sh engine teď funguje.** testssl vrací cipher názvy v OpenSSL stylu
+  (`ECDHE-ECDSA-AES256-GCM-SHA384`), můj parser čekal IANA → bral celý řádek a
+  klasifikoval špatně. Opraveno parsování i `classify_cipher` (rozumí oběma
+  stylům). Ověřeno reálně proti veřejné IP.
+
+### Změněno
+- **Startup dialog** přepsán: ukazuje **názvy projektů** (z `.nmapproj`) a počet
+  běhů/cílů místo dlouhých názvů složek; seznam + Otevřít/Import/Nový.
+- **Qualys**: pro veřejnou IP zkusí reverzní DNS (PTR) na doménu (pak funguje,
+  např. 1.1.1.1 → one.one.one.one). IP bez PTR Qualys odmítá (HTTP 441) — nově
+  s jasnou hláškou „použij doménu nebo TestSSL".
+- Doinstalovány nástroje `testssl` a `ffuf` (na vyžádání).
+- `classify_cipher` ověřuje i OpenSSL-styl názvy (rozšířený test).
+
 ## [4.7.0] - 2026-06-10
 
 Oprava spamu `_pythonToCppCopy` v terminálu.

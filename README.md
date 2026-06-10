@@ -155,6 +155,7 @@ Headless testy (bez GUI a bez nmapu) se spouští jednotlivě, např.:
 .venv/bin/python tests/test_sudo.py                 # sudo heslo jen na stdin (ne v ps)
 .venv/bin/python tests/test_screenshot.py           # screenshot přes Selenium (skip bez Chrome)
 .venv/bin/python tests/test_signal_marshal.py       # žádný _pythonToCppCopy spam (cross-thread)
+.venv/bin/python tests/test_shutdown.py             # kill procesů + odolné emise při zavření
 ```
 
 Verzování (od 2.0.0): velké zásahy → MAJOR, drobné úpravy a fixy → PATCH.
