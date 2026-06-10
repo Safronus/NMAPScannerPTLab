@@ -26,9 +26,15 @@ do přehledné matice a generuje reporty.
 ## Požadavky
 
 ### Python balíčky
+
+Doporučeno ve virtuálním prostředí (PySide6 zatím nemá wheels pro Python 3.14,
+použij 3.12):
 ```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
+`.venv/` je v `.gitignore`, do repozitáře se nedostane.
 
 ### Systémové nástroje
 | Nástroj       | Účel                       | Instalace (macOS)          |
@@ -62,9 +68,25 @@ se commitují jen zdrojové soubory a wordlisty. Aplikaci pouštěj raději mimo
 adresář repozitáře, aby výstupy nevznikaly přímo v něm.
 
 ## Struktura
+
+Od verze 2.0.0 je aplikace rozdělena z jednoho 9100řádkového souboru do balíku:
+
 ```
-nmap-scanner.py     hlavní aplikace (PySide6 GUI)
-wordlists/          slovníky pro ffuf (SecLists apod.)
-requirements.txt    Python závislosti
-.gitignore          ochrana proti úniku dat
+nmap-scanner.py            tenký launcher (startovní kontroly + spuštění okna)
+nmapscanner/               hlavní balík aplikace
+  __init__.py              VERSION (jediný zdroj verze)
+  utils.py                 parsování IP, barvy
+  signals.py               WorkerSignals (Qt signály)
+  core/scan_manager.py     orchestrace fází skenu
+  workers/                 vlákna: scan, tls, certificate, security_headers, screenshot, ffuf
+  widgets/                 LogConsole, StatusMatrix, CheckableComboBox
+  dialogs/                 dialogy: startup, tls, headers, certificate, export, ffuf
+  app.py                   NmapScannerApp (hlavní okno)
+wordlists/                 slovníky pro ffuf (SecLists apod.)
+requirements.txt           Python závislosti
+CHANGELOG.md               historie verzí
+.gitignore                 ochrana proti úniku dat
 ```
+
+Verzování (od 2.0.0): velké zásahy → MAJOR, drobné úpravy a fixy → PATCH.
+Každá změna chování má záznam v `CHANGELOG.md`.

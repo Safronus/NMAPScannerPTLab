@@ -1,0 +1,3805 @@
+import os
+import time
+import json
+from pathlib import Path
+from datetime import datetime
+
+
+from docx import Document
+from docx.shared import RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
+
+from PySide6.QtWidgets import (
+    QApplication, QWidget, QTextEdit, QLineEdit, QPushButton, QVBoxLayout,
+    QTreeWidget, QTreeWidgetItem, QLabel, QGroupBox, QHeaderView, QFileDialog,
+    QTabWidget, QHBoxLayout, QSplitter, QCheckBox, QDialog, QMessageBox, QDialogButtonBox, QComboBox, QProgressDialog,
+    QRadioButton
+)
+from PySide6.QtCore import Slot, QMutex, QMutexLocker, QTimer, Qt, QThread, QSettings
+from PySide6.QtGui import QColor, QPixmap
+from . import VERSION
+from .utils import clean_and_parse_ips, get_color_for_ip
+from .signals import WorkerSignals
+from .core.scan_manager import ScanManager
+from .widgets.log_console import LogConsole
+from .widgets.status_matrix import StatusMatrix
+from .dialogs.startup import StartupDialog
+from .dialogs.tls import TlsAuditDialog
+from .dialogs.headers import SecurityHeadersDialog
+from .dialogs.certificate import CertificateDialog
+from .dialogs.export import ExportMultipleDialog, ExportPortsDialog, ExportServicesDialog
+from .dialogs.ffuf import FfufDialog
+from PySide6.QtWebEngineWidgets import QWebEngineView
+
+
+output_mutex = QMutex()
+
+class NmapScannerApp(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle(f"NMAP Scanner PT Lab - v{VERSION}")
+        self.phases = ['online', 'tcp', 'udp', 'vuln', 'osscan']  # ODSTRANĚNA 'screenshot'
+        self.scan_results = {}
+        self.current_project_path = None
+        self.screenshots = {}
+        self.loading_project = False
+        self.total_tasks = 0
+        self.completed_tasks = 0
+        
+        # PŘIDÁNO: Inicializace FIXNÍCH šířek pro pravé sekce (nemění se)
+        self.ip_summary_width = 1200  # Fixní 1200px
+        self.port_summary_width = 350  # Fixní 300px
+        self.service_summary_width = 270  # Fixní 300px
+
+        
+        # NOVÉ: Detekce rozlišení obrazovky a výpočet adaptivních rozměrů
+        screen = QApplication.primaryScreen()
+        screen_geometry = screen.availableGeometry()
+        self.screen_width = screen_geometry.width()
+        self.screen_height = screen_geometry.height()
+        
+        # Výpočet velikostí panelů podle rozlišení
+        self.calculate_adaptive_sizes()
+        
+        # 1. Nejdříve vytvoříme GUI
+        self.init_ui()
+        
+        # 2. Načteme uložená nastavení (zde se nastaví index ComboBoxu)
+        self.load_settings()
+        
+        # 3. KLÍČOVÝ KROK: Vynutíme aktualizaci šablon podle aktuálního (načteného) stavu ComboBoxu
+        self.update_command_templates()
+        
+        # NOVÉ: Zjistit IP hned po startu
+        self.fetch_public_ip()
+        
+        self.debounce_timer = QTimer(self)
+        self.debounce_timer.setSingleShot(True)
+        self.debounce_timer.setInterval(500)
+        self.debounce_timer.timeout.connect(self.save_settings)
+        
+        self.raw_input_text.textChanged.connect(self.debounce_timer.start)
+        
+        # Inicializace command templates podle vybrané intenzity
+        intensive = self.intensity_combo.currentIndex() == 0  # 0=Light, 1=Intensive
+        initial_templates = {p: self.command_edits[p].text() for p in self.phases}
+        
+        self.manager_thread = QThread()
+        self.worker_signals = WorkerSignals()
+        self.scan_manager = ScanManager(initial_templates, self.worker_signals)
+        self.scan_manager.moveToThread(self.manager_thread)
+        self.manager_thread.start()
+        
+        self.worker_signals.result.connect(self.handle_single_result)
+        self.worker_signals.log.connect(self.log_console.log_message)
+        self.worker_signals.task_started.connect(self.on_task_started)
+        self.worker_signals.finished.connect(self.task_finished)
+        self.worker_signals.screenshot_request.connect(self.handle_screenshot_request)
+        self.worker_signals.screenshot_taken.connect(self.on_screenshot_taken)
+        self.scan_manager.workflow_finished.connect(self.on_workflow_finished)
+        
+        self.scan_button.clicked.connect(self.start_workflow_ui)
+        self.stop_button.clicked.connect(self.scan_manager.stop_workflow)
+        
+        # Startup dialog - výběr projektu s historií
+        recent_projects = self.settings.value("recent_projects", [])
+        if not isinstance(recent_projects, list):
+            recent_projects = []
+        
+        dlg = StartupDialog(recent_projects=recent_projects, parent=self)
+        if dlg.exec() == QDialog.Accepted:
+            if dlg.choice == "import":
+                self.import_project_dialog()
+            elif dlg.choice == "new":
+                # Nový prázdný projekt - nic nedělat
+                pass
+            elif dlg.choice and os.path.exists(dlg.choice):
+                # Otevřít vybraný projekt z historie
+                self.import_project(dlg.choice)
+
+
+    def calculate_adaptive_sizes(self):
+        """Vypočítá adaptivní velikosti panelů podle rozlišení obrazovky."""
+        
+        # Minimální rozlišení pro plný režim
+        FULL_MODE_WIDTH = 3000
+        
+        if self.screen_width >= FULL_MODE_WIDTH:
+            # Velký monitor - původní velikosti
+            self.left_panel_width = 400
+            self.middle_panel_width = 1000
+            self.ip_summary_width = 1200
+            self.ip_summary_col0 = 480
+            self.ip_summary_col1 = 720
+            self.port_summary_width = 300
+            self.port_summary_col0 = 144
+            self.port_summary_col1 = 155
+            self.service_summary_width = 260
+            self.service_summary_col0 = 140
+            self.service_summary_col1 = 119
+            self.font_size = 9  # Normální velikost fontu
+            
+        elif self.screen_width >= 2560:
+            # Střední monitor (2560x1440, 2K) - lehké zmenšení
+            self.left_panel_width = 350
+            self.middle_panel_width = 900
+            self.ip_summary_width = 900
+            self.ip_summary_col0 = 360
+            self.ip_summary_col1 = 540
+            self.port_summary_width = 220
+            self.port_summary_col0 = 120
+            self.port_summary_col1 = 99
+            self.service_summary_width = 280
+            self.service_summary_col0 = 175
+            self.service_summary_col1 = 104
+            self.font_size = 8
+            
+        elif self.screen_width >= 1920:
+            # Full HD (1920x1080) - větší redukce
+            self.left_panel_width = 300
+            self.middle_panel_width = 700
+            self.ip_summary_width = 650
+            self.ip_summary_col0 = 260
+            self.ip_summary_col1 = 390
+            self.port_summary_width = 180
+            self.port_summary_col0 = 100
+            self.port_summary_col1 = 79
+            self.service_summary_width = 220
+            self.service_summary_col0 = 140
+            self.service_summary_col1 = 79
+            self.font_size = 8
+            
+        else:
+            # Malý monitor (1366x768, 1600x900) - maximální komprese
+            self.left_panel_width = 250
+            self.middle_panel_width = 500
+            self.ip_summary_width = 450
+            self.ip_summary_col0 = 180
+            self.ip_summary_col1 = 270
+            self.port_summary_width = 150
+            self.port_summary_col0 = 85
+            self.port_summary_col1 = 64
+            self.service_summary_width = 180
+            self.service_summary_col0 = 115
+            self.service_summary_col1 = 64
+            self.font_size = 7
+        
+        # Výpočet celkové šířky pravého panelu
+        self.right_panel_width = (self.ip_summary_width + 
+                                   self.port_summary_width + 
+                                   self.service_summary_width)
+        
+        # Aplikovat globální styl s menším fontem
+        if self.font_size < 9:
+            self.setStyleSheet(f"QWidget {{ font-size: {self.font_size}pt; }}")
+
+    def fetch_public_ip(self):
+        """Zjistí aktuální veřejnou IP adresu přes API."""
+        self.my_ip_label.setText("Zjišťuji...")
+        self.my_ip_label.setStyleSheet("color: #95A5A6;")
+        
+        # Použijeme QTimer pro lehké zpoždění, aby to neběželo v hlavním vlákně (nebo QThread pro profi řešení)
+        # Pro jednoduchost zde použijeme přímý request, u krátkého API to macOS zvládne bez lagů
+        try:
+            # Využijeme existující import requests
+            import requests
+            def get_ip():
+                try:
+                    # api.ipify.org je rychlá a stabilní služba
+                    response = requests.get('https://api.ipify.org', timeout=5)
+                    if response.status_code == 200:
+                        ip = response.text
+                        self.my_ip_label.setText(ip)
+                        self.my_ip_label.setStyleSheet("font-weight: bold; color: #2ECC71; font-size: 11pt;")
+                    else:
+                        self.my_ip_label.setText("Chyba API")
+                        self.my_ip_label.setStyleSheet("color: #E74C3C;")
+                except Exception as e:
+                    self.my_ip_label.setText("Offline / Error")
+                    self.my_ip_label.setStyleSheet("color: #E74C3C;")
+
+            # Spustíme to po krátké pauze, aby se GUI stihlo překreslit
+            QTimer.singleShot(100, get_ip)
+            
+        except Exception as e:
+            self.my_ip_label.setText("Chyba")
+
+    def init_ui(self):
+        main_layout = QHBoxLayout(self)
+        content_splitter = QSplitter(Qt.Horizontal)
+        
+        # Levý panel
+        left_widget = QWidget()
+        left_panel = QVBoxLayout(left_widget)
+        
+        # --- NOVÉ: Network Info Panel (Tvá IP) ---
+        network_group = QGroupBox("Moje Síťová Identita")
+        network_layout = QHBoxLayout(network_group)
+        
+        self.my_ip_label = QLabel("Zjišťuji IP...")
+        self.my_ip_label.setStyleSheet("font-weight: bold; color: #E67E22; font-size: 11pt;")
+        
+        self.refresh_ip_btn = QPushButton("🔄")
+        self.refresh_ip_btn.setFixedWidth(30)
+        self.refresh_ip_btn.setToolTip("Aktualizovat veřejnou IP")
+        self.refresh_ip_btn.clicked.connect(self.fetch_public_ip)
+        
+        network_layout.addWidget(QLabel("Veřejná IP:"))
+        network_layout.addWidget(self.my_ip_label)
+        network_layout.addStretch()
+        network_layout.addWidget(self.refresh_ip_btn)
+        
+        left_panel.addWidget(network_group)
+        # ------------------------------------------
+
+        input_splitter = QSplitter(Qt.Vertical)
+        
+        # ŽÁDNÝ setStyleSheet - nativní Qt/macOS styl
+        
+        raw_widget = QWidget()
+        raw_layout = QVBoxLayout(raw_widget)
+        raw_layout.addWidget(QLabel("Neočištěný vstup:"))
+        self.raw_input_text = QTextEdit(placeholderText="Vložte text s IP adresami...")
+        raw_layout.addWidget(self.raw_input_text)
+        
+        # Tlačítko pro manuální zpracování IP adres
+        self.process_ips_button = QPushButton("Zpracovat IP adresy →")
+        self.process_ips_button.clicked.connect(self.update_cleaned_output)
+        raw_layout.addWidget(self.process_ips_button)
+        
+        cleaned_widget = QWidget()
+        cleaned_layout = QVBoxLayout(cleaned_widget)
+        self.count_label = QLabel("Počet cílů: 0")
+        cleaned_layout.addWidget(self.count_label)
+        self.cleaned_output_text = QTextEdit()
+        self.cleaned_output_text.setReadOnly(False)
+        self.cleaned_output_text.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.cleaned_output_text.customContextMenuRequested.connect(self.show_context_menu)
+        cleaned_layout.addWidget(self.cleaned_output_text)
+        
+        input_splitter.addWidget(raw_widget)
+        input_splitter.addWidget(cleaned_widget)
+        
+        left_panel.addWidget(input_splitter)
+        
+        # Přidání pole pro název projektu
+        left_panel.addWidget(QLabel("Název projektu:"))
+        self.project_name_edit = QLineEdit("Můj Nmap Projekt")
+        left_panel.addWidget(self.project_name_edit)
+        
+        # Přidání přepínače intenzity skenování
+        intensity_layout = QHBoxLayout()
+        intensity_layout.addWidget(QLabel("Intenzita detekce služeb:"))
+        self.intensity_combo = QComboBox()
+        self.intensity_combo.addItems(["Light (rychlejší)", "Intensive (přesnější)"])
+        
+        # Připojíme signál pro budoucí změny uživatelem
+        self.intensity_combo.currentIndexChanged.connect(self.update_command_templates)
+        intensity_layout.addWidget(self.intensity_combo)
+        left_panel.addLayout(intensity_layout)
+        
+        # Přidání checkboxů a command editů
+        self.command_edits = {}
+        self.phase_checkboxes = {}
+        for phase in self.phases:
+            phase_layout = QHBoxLayout()
+            checkbox = QCheckBox(f"Povolit fázi '{phase.capitalize()}'")
+            checkbox.setChecked(True)
+            self.phase_checkboxes[phase] = checkbox
+            phase_layout.addWidget(checkbox)
+            left_panel.addLayout(phase_layout)
+            
+            left_panel.addWidget(QLabel(f"Šablona příkazu pro fázi '{phase}':"))
+            # Inicializujeme prázdné nebo defaultní, update_command_templates to za chvíli v __init__ přepíše správně
+            edit = QLineEdit()
+            self.command_edits[phase] = edit
+            left_panel.addWidget(edit)
+        
+        btn_layout = QHBoxLayout()
+        self.scan_button = QPushButton("Spustit skenování")
+        self.stop_button = QPushButton("Zastavit skenování")
+        self.stop_button.setEnabled(False)
+        btn_layout.addWidget(self.scan_button)
+        btn_layout.addWidget(self.stop_button)
+        left_panel.addLayout(btn_layout)
+        
+        # Nový layout pro Export / Import tlačítka
+        export_import_layout = QVBoxLayout()
+        self.export_btn = QPushButton("Exportovat projekt")
+        self.export_btn.clicked.connect(self.export_project_dialog)
+        export_import_layout.addWidget(self.export_btn)
+        
+        self.import_btn = QPushButton("Importovat projekt")
+        self.import_btn.clicked.connect(self.import_project_dialog)
+        export_import_layout.addWidget(self.import_btn)
+        left_panel.addLayout(export_import_layout)
+        
+        self.status_label = QLabel("Připraven.")
+        left_panel.addWidget(self.status_label)
+        
+        content_splitter.addWidget(left_widget)
+        
+        # Prostřední panel s toolbarem a tlačítky
+        middle_container = QWidget()
+        middle_main_layout = QVBoxLayout(middle_container)
+        middle_main_layout.setContentsMargins(0, 0, 0, 0)
+        middle_main_layout.setSpacing(5)
+        
+        # === NOVÝ: Toolbar s akcemi (ikony) ===
+        actions_toolbar = QWidget()
+        actions_layout = QHBoxLayout(actions_toolbar)
+        actions_layout.setContentsMargins(5, 2, 5, 2)
+        actions_layout.setSpacing(5)
+        
+        # Akce 1: Export všech výsledků
+        self.export_all_btn = QPushButton("📄")
+        self.export_all_btn.setToolTip("Exportovat vybrané výsledky do jednoho souboru")
+        self.export_all_btn.setFixedSize(35, 35)
+        self.export_all_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 18px;
+                border: 1px solid #CCCCCC;
+                border-radius: 5px;
+                background-color: #F9F9F9;
+                padding: 2px;
+            }
+            QPushButton:hover {
+                background-color: #E8E8E8;
+                border: 1px solid #999999;
+            }
+            QPushButton:pressed {
+                background-color: #D8D8D8;
+            }
+        """)
+        self.export_all_btn.clicked.connect(self.export_multiple_results_dialog)
+        actions_layout.addWidget(self.export_all_btn)
+        
+        # Akce 2: Export přehledu portů
+        self.export_ports_btn = QPushButton("🔌")
+        self.export_ports_btn.setToolTip("Exportovat přehled portů podle stavů")
+        self.export_ports_btn.setFixedSize(35, 35)
+        self.export_ports_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 18px;
+                border: 1px solid #CCCCCC;
+                border-radius: 5px;
+                background-color: #F9F9F9;
+                padding: 2px;
+            }
+            QPushButton:hover {
+                background-color: #E8E8E8;
+                border: 1px solid #999999;
+            }
+            QPushButton:pressed {
+                background-color: #D8D8D8;
+            }
+        """)
+        self.export_ports_btn.clicked.connect(self.export_ports_summary_dialog)
+        actions_layout.addWidget(self.export_ports_btn)
+        
+        # Akce 3: Export přehledu služeb
+        self.export_services_btn = QPushButton("⚙️")
+        self.export_services_btn.setToolTip("Exportovat přehled služeb podle protokolů")
+        self.export_services_btn.setFixedSize(35, 35)
+        self.export_services_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 18px;
+                border: 1px solid #CCCCCC;
+                border-radius: 5px;
+                background-color: #F9F9F9;
+                padding: 2px;
+            }
+            QPushButton:hover {
+                background-color: #E8E8E8;
+                border: 1px solid #999999;
+            }
+            QPushButton:pressed {
+                background-color: #D8D8D8;
+            }
+        """)
+        self.export_services_btn.clicked.connect(self.export_services_summary_dialog)
+        actions_layout.addWidget(self.export_services_btn)
+        
+        # Akce 4: Export do Word dokumentu s analýzou zranitelností
+        self.export_word_btn = QPushButton("📋")
+        self.export_word_btn.setToolTip("Exportovat analýzu zranitelností do Word (.docx)")
+        self.export_word_btn.setFixedSize(35, 35)
+        self.export_word_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 18px;
+                border: 1px solid #CCCCCC;
+                border-radius: 5px;
+                background-color: #F9F9F9;
+                padding: 2px;
+            }
+            QPushButton:hover {
+                background-color: #E8E8E8;
+                border: 1px solid #999999;
+            }
+            QPushButton:pressed {
+                background-color: #D8D8D8;
+            }
+        """)
+        self.export_word_btn.clicked.connect(self.export_vulnerability_report)
+        actions_layout.addWidget(self.export_word_btn)
+        
+        # Akce 5: Export seznamu hostnames
+        self.export_hostnames_btn = QPushButton("🏠")
+        self.export_hostnames_btn.setToolTip("Exportovat seznam IP adres a jejich hostnames")
+        self.export_hostnames_btn.setFixedSize(35, 35)
+        self.export_hostnames_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 18px;
+                border: 1px solid #CCCCCC;
+                border-radius: 5px;
+                background-color: #F9F9F9;
+                padding: 2px;
+            }
+            QPushButton:hover {
+                background-color: #E8E8E8;
+                border: 1px solid #999999;
+            }
+            QPushButton:pressed {
+                background-color: #D8D8D8;
+            }
+        """)
+        self.export_hostnames_btn.clicked.connect(self.export_hostnames_list)
+        actions_layout.addWidget(self.export_hostnames_btn)
+        
+        # === NOVÉ: Tlačítko pro FFUF ===
+        self.ffuf_btn = QPushButton("📂")
+        self.ffuf_btn.setToolTip("Directory Fuzzing (ffuf) - Najít skryté složky na webu")
+        self.ffuf_btn.setFixedSize(35, 35)
+        self.ffuf_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 18px;
+                border: 1px solid #CCCCCC;
+                border-radius: 5px;
+                background-color: #F9F9F9;
+                padding: 2px;
+                color: #8E44AD; /* Fialová barva pro odlišení */
+            }
+            QPushButton:hover {
+                background-color: #E8E8E8;
+                border: 1px solid #999999;
+            }
+            QPushButton:pressed {
+                background-color: #D8D8D8;
+            }
+        """)
+        self.ffuf_btn.clicked.connect(self.open_ffuf_dialog)
+        actions_layout.addWidget(self.ffuf_btn)
+        
+        # === NOVÉ: Tlačítko pro Certifikáty ===
+        self.cert_btn = QPushButton("🔒")
+        self.cert_btn.setToolTip("Inspektor SSL/TLS certifikátů")
+        self.cert_btn.setFixedSize(35, 35)
+        self.cert_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 18px;
+                border: 1px solid #CCCCCC;
+                border-radius: 5px;
+                background-color: #F9F9F9;
+                padding: 2px;
+                color: #27AE60; /* Zelená barva pro SSL */
+            }
+            QPushButton:hover {
+                background-color: #E8E8E8;
+                border: 1px solid #999999;
+            }
+            QPushButton:pressed {
+                background-color: #D8D8D8;
+            }
+        """)
+        self.cert_btn.clicked.connect(self.open_certificate_dialog)
+        actions_layout.addWidget(self.cert_btn)
+        # =================================
+        
+        # Akce: Security Headers
+        self.headers_btn = QPushButton("🛡️")
+        self.headers_btn.setToolTip("Inspektor HTTP Security Headers")
+        self.headers_btn.setFixedSize(35, 35)
+        self.headers_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 18px;
+                border: 1px solid #CCCCCC;
+                border-radius: 5px;
+                background-color: #F9F9F9;
+                padding: 2px;
+                color: #E67E22;
+            }
+            QPushButton:hover { background-color: #E8E8E8; }
+        """)
+        self.headers_btn.clicked.connect(self.open_security_headers_dialog)
+        actions_layout.addWidget(self.headers_btn)
+        
+        # Akce: TLS Audit
+        self.tls_btn = QPushButton("🔐")
+        self.tls_btn.setToolTip("Audit TLS protokolů a šifer")
+        self.tls_btn.setFixedSize(35, 35)
+        self.tls_btn.setStyleSheet("""
+            QPushButton { font-size: 18px; border: 1px solid #CCCCCC; border-radius: 5px; background-color: #F9F9F9; color: #2C3E50; }
+            QPushButton:hover { background-color: #E8E8E8; }
+        """)
+        self.tls_btn.clicked.connect(self.open_tls_audit_dialog)
+        actions_layout.addWidget(self.tls_btn)
+        
+        # Přidat stretch aby akce byly vlevo
+        actions_layout.addStretch()
+        
+        middle_main_layout.addWidget(actions_toolbar)
+        
+        # Horní panel s tlačítky pro skrytí/odkrytí sekcí
+        top_buttons_widget = QWidget()
+        top_buttons_layout = QHBoxLayout(top_buttons_widget)
+        top_buttons_layout.setContentsMargins(0, 0, 0, 0)
+        top_buttons_layout.setSpacing(5)
+        
+        top_buttons_layout.addStretch()
+        
+        self.ip_summary_toggle_btn = QPushButton("📋 Souhrn IP")
+        self.ip_summary_toggle_btn.setCheckable(True)
+        self.ip_summary_toggle_btn.setChecked(True)  # Defaultně zobrazená
+        self.ip_summary_toggle_btn.toggled.connect(self.toggle_ip_summary)
+        self.ip_summary_toggle_btn.setMaximumWidth(120)
+        top_buttons_layout.addWidget(self.ip_summary_toggle_btn)
+        
+        self.port_summary_toggle_btn = QPushButton("🔌 Porty")
+        self.port_summary_toggle_btn.setCheckable(True)
+        self.port_summary_toggle_btn.setChecked(True)  # Defaultně zobrazená
+        self.port_summary_toggle_btn.toggled.connect(self.toggle_port_summary)
+        self.port_summary_toggle_btn.setMaximumWidth(120)
+        top_buttons_layout.addWidget(self.port_summary_toggle_btn)
+        
+        self.service_summary_toggle_btn = QPushButton("⚙️ Služby")
+        self.service_summary_toggle_btn.setCheckable(True)
+        self.service_summary_toggle_btn.setChecked(True)  # Defaultně zobrazená
+        self.service_summary_toggle_btn.toggled.connect(self.toggle_service_summary)
+        self.service_summary_toggle_btn.setMaximumWidth(120)
+        top_buttons_layout.addWidget(self.service_summary_toggle_btn)
+        
+        middle_main_layout.addWidget(top_buttons_widget)
+        
+        # Prostřední panel - obsah
+        middle_widget = QWidget()
+        middle_panel = QVBoxLayout(middle_widget)
+        middle_panel.setContentsMargins(0, 0, 0, 0)
+        middle_panel.addWidget(QLabel("Průběh fází (Matice):"))
+        
+        self.status_matrix = StatusMatrix(self.phases)
+        self.status_matrix.itemClicked.connect(self.on_matrix_ip_clicked)
+        
+        # PŘIDAT: Reagovat i na změnu výběru (šipky)
+        self.status_matrix.currentItemChanged.connect(self.on_matrix_selection_changed)
+        
+        middle_panel.addWidget(self.status_matrix)
+        
+        self.tabs = QTabWidget()
+        self.tree_widgets = {}
+        self.export_buttons = {}
+        
+        for phase in self.phases:
+            tab = self.create_phase_tab(phase)
+            self.tabs.addTab(tab, phase.capitalize())
+        
+        # Nová záložka pro screenshoty s viewerem
+        screenshot_tab = QWidget()
+        screenshot_layout = QVBoxLayout(screenshot_tab)
+        
+        # Informační panel nahoře
+        info_layout = QHBoxLayout()
+        self.screenshot_info_label = QLabel("Žádné screenshoty k zobrazení")
+        self.screenshot_info_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        info_layout.addWidget(self.screenshot_info_label)
+        info_layout.addStretch()
+        screenshot_layout.addLayout(info_layout)
+        
+        # Hlavní oblast pro zobrazení screenshotu
+        self.screenshot_display = QLabel()
+        self.screenshot_display.setAlignment(Qt.AlignCenter)
+        self.screenshot_display.setStyleSheet("border: 2px solid #95A5A6; background-color: #ECF0F1;")
+        self.screenshot_display.setMinimumHeight(600)
+        self.screenshot_display.setScaledContents(False)
+        screenshot_layout.addWidget(self.screenshot_display)
+        
+        # Tlačítka pro navigaci
+        nav_layout = QHBoxLayout()
+        self.prev_screenshot_btn = QPushButton("← Předchozí")
+        self.prev_screenshot_btn.clicked.connect(self.show_previous_screenshot)
+        self.prev_screenshot_btn.setEnabled(False)
+        
+        self.screenshot_counter_label = QLabel("0 / 0")
+        self.screenshot_counter_label.setStyleSheet("font-size: 12px;")
+        self.screenshot_counter_label.setAlignment(Qt.AlignCenter)
+        
+        self.next_screenshot_btn = QPushButton("Další →")
+        self.next_screenshot_btn.clicked.connect(self.show_next_screenshot)
+        self.next_screenshot_btn.setEnabled(False)
+        
+        nav_layout.addWidget(self.prev_screenshot_btn)
+        nav_layout.addStretch()
+        nav_layout.addWidget(self.screenshot_counter_label)
+        nav_layout.addStretch()
+        nav_layout.addWidget(self.next_screenshot_btn)
+        screenshot_layout.addLayout(nav_layout)
+        
+        self.tabs.addTab(screenshot_tab, "Screenshots")
+        
+        # Inicializace screenshot vieweru
+        self.current_screenshot_index = 0
+        self.all_screenshots = []
+        
+        middle_panel.addWidget(self.tabs)
+        
+        middle_panel.addWidget(QLabel("Detailní log:"))
+        self.log_console = LogConsole()
+        self.log_console.setFixedHeight(200)
+        middle_panel.addWidget(self.log_console)
+        
+        middle_main_layout.addWidget(middle_widget)
+        
+        content_splitter.addWidget(middle_container)
+        
+        # Pravá strana - HBOXLAYOUT místo QSplitter (jako v původní verzi)
+        right_side_widget = QWidget()
+        right_side_main_layout = QHBoxLayout(right_side_widget)
+        right_side_main_layout.setContentsMargins(0, 0, 0, 0)
+        right_side_main_layout.setSpacing(5)
+        
+        # Přidat spacer vlevo
+        right_side_main_layout.addStretch()
+        
+        # === Sekce 1: IP Summary (Souhrn vybrané IP) - FIXNÍ 1200px ===
+        self.ip_summary_container = QWidget()
+        ip_summary_layout = QVBoxLayout(self.ip_summary_container)
+        ip_summary_layout.setContentsMargins(0, 0, 0, 0)
+        ip_summary_layout.addWidget(QLabel("Souhrn vybrané IP:"))
+        
+        self.ip_summary_tree = QTreeWidget()
+        self.ip_summary_tree.setHeaderLabels(["Atribut", "Hodnota"])
+        self.ip_summary_tree.setMinimumWidth(self.ip_summary_width)
+        self.ip_summary_tree.setMaximumWidth(self.ip_summary_width)
+        
+        header_ip = self.ip_summary_tree.header()
+        header_ip.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header_ip.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        
+        ip_summary_layout.addWidget(self.ip_summary_tree)
+        
+        default_item = QTreeWidgetItem(self.ip_summary_tree, ["", "Vyberte IP v matici"])
+        default_item.setForeground(1, QColor("#999999"))
+        
+        right_side_main_layout.addWidget(self.ip_summary_container)
+        
+        # === Sekce 2: Port Summary (Přehled portů) - FIXNÍ ===
+        self.port_summary_container = QWidget()
+        port_summary_layout = QVBoxLayout(self.port_summary_container)
+        port_summary_layout.setContentsMargins(0, 0, 0, 0)
+        port_summary_layout.addWidget(QLabel("Přehled portů:"))
+        
+        self.port_summary_tree = QTreeWidget()
+        self.port_summary_tree.setHeaderLabels(["Port/Stav", "Počet IP"])
+        self.port_summary_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.port_summary_tree.customContextMenuRequested.connect(self.show_port_context_menu)
+        self.port_summary_tree.setMinimumWidth(self.port_summary_width)
+        self.port_summary_tree.setMaximumWidth(self.port_summary_width)
+        
+        header_port = self.port_summary_tree.header()
+        header_port.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header_port.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        
+        port_summary_layout.addWidget(self.port_summary_tree)
+        
+        right_side_main_layout.addWidget(self.port_summary_container)
+        
+        # === Sekce 3: Service Summary (Přehled služeb) - FIXNÍ ===
+        self.service_summary_container = QWidget()
+        service_summary_layout = QVBoxLayout(self.service_summary_container)
+        service_summary_layout.setContentsMargins(0, 0, 0, 0)
+        service_summary_layout.addWidget(QLabel("Přehled služeb:"))
+        
+        self.service_summary_tree = QTreeWidget()
+        self.service_summary_tree.setHeaderLabels(["Služba/Port", "Počet IP"])
+        self.service_summary_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.service_summary_tree.customContextMenuRequested.connect(self.show_service_context_menu)
+        self.service_summary_tree.setMinimumWidth(self.service_summary_width)
+        self.service_summary_tree.setMaximumWidth(self.service_summary_width)
+        
+        header_serv = self.service_summary_tree.header()
+        header_serv.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header_serv.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        
+        service_summary_layout.addWidget(self.service_summary_tree)
+        
+        right_side_main_layout.addWidget(self.service_summary_container)
+        
+        content_splitter.addWidget(right_side_widget)
+        
+        # Nastavení stretch faktorů pro hlavní content_splitter
+        content_splitter.setStretchFactor(0, 0)  # Levý panel - fixní
+        content_splitter.setStretchFactor(1, 1)  # Střední panel - PRUŽNÝ
+        content_splitter.setStretchFactor(2, 0)  # Pravý panel - fixní
+        
+        # Defaultní velikosti
+        total_right = self.ip_summary_width + self.port_summary_width + self.service_summary_width
+        content_splitter.setSizes([400, 1200, total_right])
+        
+        self.content_splitter = content_splitter  # Uložit referenci
+        self.right_side_widget = right_side_widget  # Uložit referenci pro toggle funkce
+        
+        main_layout.addWidget(content_splitter)
+        
+    def open_tls_audit_dialog(self):
+        """Otevře dialog pro audit TLS a šifer."""
+        dialog = TlsAuditDialog(self.scan_results, self)
+        dialog.exec()
+        
+    def open_security_headers_dialog(self):
+        """Otevře dialog pro kontrolu Security Headers."""
+        if not any(self.scan_results.get('tcp', {}).values()):
+            QMessageBox.warning(self, "Žádná data", "Nejdříve spusťte TCP sken portů.")
+            return
+        dialog = SecurityHeadersDialog(self.scan_results, self)
+        dialog.exec()
+
+    def open_certificate_dialog(self):
+        """Otevře dialog pro kontrolu certifikátů."""
+        if not any(self.scan_results.get(phase, {}) for phase in ['tcp', 'online']):
+            QMessageBox.warning(self, "Žádná data", "Nejdříve spusťte skenování (TCP), aby bylo možné detekovat webové služby.")
+            return
+            
+        dialog = CertificateDialog(self.scan_results, self)
+        dialog.exec()
+        
+    def open_ffuf_dialog(self):
+        """Otevře ffuf dialog a spravuje předávání dat."""
+        if "ffuf" not in self.scan_results:
+            self.scan_results["ffuf"] = []
+
+        # Předáváme referenci na naše výsledky
+        dialog = FfufDialog(self.scan_results, self)
+        
+        if self.scan_results["ffuf"]:
+            dialog.load_existing_results(self.scan_results["ffuf"])
+        
+        dialog.exec()
+        
+        # Po zavření dialogu pro jistotu znovu synchronizujeme
+        self.scan_results["ffuf"] = dialog.json_results
+        self.auto_save_project()
+
+    def toggle_ip_summary(self, checked):
+        """Přepíná viditelnost sekce Souhrn vybrané IP."""
+        self.ip_summary_container.setVisible(checked)
+        self.update_middle_panel_width()
+    
+    def toggle_port_summary(self, checked):
+        """Přepíná viditelnost sekce Přehled portů."""
+        self.port_summary_container.setVisible(checked)
+        self.update_middle_panel_width()
+    
+    def toggle_service_summary(self, checked):
+        """Přepíná viditelnost sekce Přehled služeb."""
+        self.service_summary_container.setVisible(checked)
+        self.update_middle_panel_width()
+
+    def update_middle_panel_width(self):
+        """
+        Přizpůsobí šířku středního panelu podle viditelnosti pravých sekcí.
+        """
+        if not hasattr(self, 'content_splitter'):
+            return
+        
+        # Získat aktuální velikosti hlavního splitteru
+        main_sizes = self.content_splitter.sizes()
+        if len(main_sizes) < 3:
+            return
+        
+        left_size = main_sizes[0]
+        middle_size = main_sizes[1]
+        right_size = main_sizes[2]
+        
+        # Spočítat potřebnou šířku pro viditelné pravé sekce
+        needed_right_width = 0
+        if self.ip_summary_container.isVisible():
+            needed_right_width += self.ip_summary_width
+        if self.port_summary_container.isVisible():
+            needed_right_width += self.port_summary_width
+        if self.service_summary_container.isVisible():
+            needed_right_width += self.service_summary_width
+        
+        # Celková dostupná šířka pro střední + pravé panely
+        total_available = middle_size + right_size
+        
+        # Nová šířka středního panelu
+        new_middle_size = total_available - needed_right_width
+        
+        # Zajistit minimální šířku
+        if new_middle_size < 600:
+            new_middle_size = 600
+            needed_right_width = total_available - new_middle_size
+        
+        # Nastavit velikosti v hlavním splitteru
+        self.content_splitter.setSizes([left_size, new_middle_size, needed_right_width])
+
+    def update_section_visibility(self):
+        # Přizpůsobí velikosti v pravé části na základě viditelnosti kontejnerů
+        visible_count = sum([
+            self.ip_summary_container.isVisible(),
+            self.port_summary_container.isVisible(),
+            self.service_summary_container.isVisible()
+        ])
+        
+        if visible_count == 0:
+            # Tlačítka zůstanou, ale nic není vidět
+            self.right_side_widget.setVisible(False)
+            return
+        else:
+            self.right_side_widget.setVisible(True)
+        
+        # Nastavit stretch podle viditelných kontejnerů
+        self.right_side_layout.setStretch(0, 1 if self.ip_summary_container.isVisible() else 0)
+        self.right_side_layout.setStretch(1, 1 if self.port_summary_container.isVisible() else 0)
+        self.right_side_layout.setStretch(2, 1 if self.service_summary_container.isVisible() else 0)
+        
+        # Střední panel by měl zabírat zbytek prostoru (nastavím stretch na main layout)
+        # TODO: při implementaci středního panelu použit flexbox, tento krok může být specifický
+
+    def adjust_column_widths(self):
+        # Přizpůsobit sloupce všech přehledů podle obsahu
+        for tree in [self.ip_summary_tree, self.port_summary_tree, self.service_summary_tree]:
+            header = tree.header()
+            for col in range(tree.columnCount()):
+                header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+
+    def update_screenshot_viewer(self):
+        """Aktualizuje seznam screenshotů pro viewer."""
+        self.all_screenshots = []
+        for ip, filepaths in self.screenshots.items():
+            for filepath in filepaths:
+                if os.path.exists(filepath):
+                    self.all_screenshots.append((ip, filepath))
+        
+        self.current_screenshot_index = 0
+        self.show_current_screenshot()
+    
+    def show_current_screenshot(self):
+        """Zobrazí aktuální screenshot podle indexu."""
+        if not self.all_screenshots:
+            self.screenshot_info_label.setText("Žádné screenshoty k zobrazení")
+            self.screenshot_counter_label.setText("0 / 0")
+            self.screenshot_display.clear()
+            self.screenshot_display.setText("Žádné screenshoty k dispozici")
+            self.prev_screenshot_btn.setEnabled(False)
+            self.next_screenshot_btn.setEnabled(False)
+            return
+        
+        total = len(self.all_screenshots)
+        ip, filepath = self.all_screenshots[self.current_screenshot_index]
+        filename = os.path.basename(filepath)
+        
+        # Načíst a zobrazit obrázek
+        pixmap = QPixmap(filepath)
+        if not pixmap.isNull():
+            # Škálovat na rozměry widgetu, zachovat poměr stran
+            scaled_pixmap = pixmap.scaled(
+                self.screenshot_display.width() - 10,
+                self.screenshot_display.height() - 10,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            )
+            self.screenshot_display.setPixmap(scaled_pixmap)
+        else:
+            self.screenshot_display.setText(f"Nelze načíst screenshot: {filename}")
+        
+        # Aktualizovat informace
+        self.screenshot_info_label.setText(f"IP: {ip} | Soubor: {filename}")
+        self.screenshot_counter_label.setText(f"{self.current_screenshot_index + 1} / {total}")
+        
+        # Povolit/zakázat tlačítka
+        self.prev_screenshot_btn.setEnabled(self.current_screenshot_index > 0)
+        self.next_screenshot_btn.setEnabled(self.current_screenshot_index < total - 1)
+    
+    def show_previous_screenshot(self):
+        """Zobrazí předchozí screenshot."""
+        if self.current_screenshot_index > 0:
+            self.current_screenshot_index -= 1
+            self.show_current_screenshot()
+    
+    def show_next_screenshot(self):
+        """Zobrazí následující screenshot."""
+        if self.current_screenshot_index < len(self.all_screenshots) - 1:
+            self.current_screenshot_index += 1
+            self.show_current_screenshot()
+
+    def create_phase_tab(self, phase):
+        """Vytvoří záložku pro specifickou fázi."""
+        tab = QWidget()
+        tab_layout = QVBoxLayout(tab)
+        
+        tree = QTreeWidget()
+        
+        # Pro online fázi speciální hlavičky
+        if phase == 'online':
+            tree.setHeaderLabels(["Cíl", "Stav"])
+        else:
+            tree.setHeaderLabels(["Cíl (Port / Skript)", "Status", "Detaily"])
+        
+        self.tree_widgets[phase] = tree
+        tab_layout.addWidget(tree)
+        
+        # Nastavit automatické přizpůsobení šířky sloupců
+        header = tree.header()
+        if phase == 'online':
+            header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Cíl
+            header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Stav
+        else:
+            header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Cíl
+            header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Status
+            header.setSectionResizeMode(2, QHeaderView.Stretch)  # Detaily - roztáhnout zbytek
+        
+        export_btn = QPushButton(f"Exportovat {phase.capitalize()} jako text")
+        export_btn.setEnabled(True)
+        export_btn.clicked.connect(lambda _, p=phase: self.export_phase_minimal(p))
+        self.export_buttons[phase] = export_btn
+        tab_layout.addWidget(export_btn)
+        
+        return tab
+
+    @Slot(str, str, int, str)
+    def handle_screenshot_request(self, url, ip, port, path):
+        """Vytvoří screenshot v hlavním vlákně."""
+        import requests
+        from urllib3.exceptions import InsecureRequestWarning
+        import warnings
+        
+        # Potlačit varování o SSL
+        warnings.filterwarnings('ignore', category=InsecureRequestWarning)
+        
+        # Nejprve zkusit HTTP request pro získání status kódu
+        try:
+            response = requests.get(url, verify=False, timeout=10, allow_redirects=True)
+            status_code = response.status_code
+            self.worker_signals.log.emit("info", f"📡 HTTP {status_code} pro {url}")
+        except Exception as e:
+            status_code = None
+            self.worker_signals.log.emit("warning", f"⚠️ Chyba HTTP requestu pro {url}: {str(e)[:100]}")
+            self.status_matrix.update_status(ip, 'screenshot', 'chyba')
+            return
+        
+        # Pokud je status code OK (2xx nebo 3xx), pokračovat se screenshotem
+        if status_code and 200 <= status_code < 400:
+            from PySide6.QtWebEngineCore import QWebEngineSettings, QWebEnginePage
+            
+            view = QWebEngineView()
+            view.resize(1920, 1080)  # Nastavit rozlišení pro screenshot
+            
+            # Vytvořit vlastní profil s vypnutými SSL kontrolami
+            profile = view.page().profile()
+            settings = profile.settings()
+            settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, False)
+            settings.setAttribute(QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, True)
+            settings.setAttribute(QWebEngineSettings.WebAttribute.ErrorPageEnabled, False)
+            
+            # Vytvořit vlastní page s ignorováním SSL chyb
+            class CustomWebEnginePage(QWebEnginePage):
+                def certificateError(self, error):
+                    # Ignorovat všechny SSL chyby
+                    error.acceptCertificate()
+                    return True
+            
+            custom_page = CustomWebEnginePage(profile, view)
+            view.setPage(custom_page)
+            
+            # Timeout pro načtení stránky
+            load_timeout = QTimer()
+            load_timeout.setSingleShot(True)
+            load_timeout.setInterval(15000)  # 15 sekund
+            
+            def on_timeout():
+                self.worker_signals.log.emit("warning", f"⏱️ Timeout při načítání {url} - pořizuji screenshot i tak...")
+                # Pokusit se pořídit screenshot i při timeoutu
+                self.capture_and_save(view, self.generate_screenshot_path(ip, port, path), ip, url)
+            
+            load_timeout.timeout.connect(on_timeout)
+            
+            def on_load_finished(ok):
+                load_timeout.stop()
+                
+                if ok:
+                    # Počkat chvíli na dokončení renderování JavaScriptu
+                    QTimer.singleShot(2000, lambda: self.capture_and_save(
+                        view, 
+                        self.generate_screenshot_path(ip, port, path), 
+                        ip, 
+                        url
+                    ))
+                else:
+                    # I když načtení "selhalo", zkusit pořídit screenshot
+                    self.worker_signals.log.emit("warning", f"⚠️ QWebEngine hlásí chybu načtení {url} (HTTP {status_code}), ale pořizuji screenshot...")
+                    QTimer.singleShot(2000, lambda: self.capture_and_save(
+                        view, 
+                        self.generate_screenshot_path(ip, port, path), 
+                        ip, 
+                        url
+                    ))
+            
+            view.page().loadFinished.connect(on_load_finished)
+            load_timeout.start()
+            view.load(url)
+        else:
+            self.worker_signals.log.emit("warning", f"⚠️ Nečekaný status kód {status_code} pro {url}, screenshot přeskočen.")
+            self.status_matrix.update_status(ip, 'screenshot', 'hotovo')
+            
+    def update_service_summary(self):
+        """
+        Aktualizuje přehled služeb - agregace podle názvu služby, protokolu a portu.
+        Struktura: TCP/UDP -> Název služby (počet IP) -> Port (seznam IP)
+        """
+        self.service_summary_tree.clear()
+        
+        # Struktura: {protokol: {service_name: {port: set(ip_addresses)}}}
+        service_data = {
+            'TCP': {},
+            'UDP': {}
+        }
+        
+        # Projít všechny TCP a UDP výsledky
+        for phase in ['tcp', 'udp']:
+            phase_data = self.scan_results.get(phase, {})
+            proto = phase.upper()
+            
+            for ip, ip_data in phase_data.items():
+                if phase not in ip_data:
+                    continue
+                    
+                for port, port_info in ip_data[phase].items():
+                    state = port_info.get('state', 'unknown')
+                    
+                    # Pouze otevřené a open|filtered porty
+                    if state not in ['open', 'open|filtered']:
+                        continue
+                    
+                    service_name = port_info.get('name', 'unknown')
+                    if not service_name or service_name == '':
+                        service_name = 'unknown'
+                    
+                    # Inicializovat strukturu
+                    if service_name not in service_data[proto]:
+                        service_data[proto][service_name] = {}
+                    
+                    if port not in service_data[proto][service_name]:
+                        service_data[proto][service_name][port] = set()
+                    
+                    service_data[proto][service_name][port].add(ip)
+        
+        # Vytvořit tree strukturu
+        for proto in ['TCP', 'UDP']:
+            if not service_data[proto]:
+                continue
+            
+            # Hlavní položka protokolu
+            proto_item = QTreeWidgetItem(self.service_summary_tree, [proto, ""])
+            proto_item.setForeground(0, QColor("#16A085") if proto == 'TCP' else QColor("#9B59B6"))
+            proto_item.setExpanded(True)
+            
+            # Seřadit služby ABECEDNĚ (a-z)
+            sorted_services = sorted(
+                service_data[proto].items(),
+                key=lambda x: x[0].lower()
+            )
+            
+            for service_name, ports_dict in sorted_services:
+                # Celkový počet unikátních IP pro tuto službu
+                all_ips = set()
+                for port_ips in ports_dict.values():
+                    all_ips.update(port_ips)
+                
+                total_ip_count = len(all_ips)
+                
+                # Položka služby
+                service_item = QTreeWidgetItem(proto_item, [service_name, str(total_ip_count)])
+                service_item.setForeground(0, QColor("#2980B9"))
+                service_item.setExpanded(False)
+                
+                # Uložit data pro context menu včetně detailů portů
+                service_item.setData(0, Qt.UserRole, {
+                    'type': 'service',
+                    'protocol': proto,
+                    'service': service_name,
+                    'ips': all_ips,
+                    'ports_dict': ports_dict
+                })
+                
+                # Seřadit porty numericky
+                sorted_ports = sorted(ports_dict.items(), key=lambda x: int(x[0]))
+                
+                for port, ip_set in sorted_ports:
+                    # Položka portu
+                    port_item = QTreeWidgetItem(service_item, [port, str(len(ip_set))])
+                    port_item.setForeground(0, QColor("#27AE60"))
+                    
+                    # Uložit data pro context menu
+                    port_item.setData(0, Qt.UserRole, {
+                        'type': 'port',
+                        'protocol': proto,
+                        'service': service_name,
+                        'port': port,
+                        'ips': ip_set
+                    })
+        
+        # Automaticky přizpůsobit šířku sloupců podle obsahu
+        self.service_summary_tree.resizeColumnToContents(0)
+        self.service_summary_tree.resizeColumnToContents(1)
+        
+        # Rozšířit sloupec "Počet IP" aby se vešel nadpis
+        min_width = self.service_summary_tree.fontMetrics().horizontalAdvance("Počet IP") + 20
+        if self.service_summary_tree.columnWidth(1) < min_width:
+            self.service_summary_tree.setColumnWidth(1, min_width)
+
+
+    def show_service_context_menu(self, position):
+        """Zobrazí kontextové menu pro služby."""
+        item = self.service_summary_tree.itemAt(position)
+        if not item:
+            return
+        
+        item_data = item.data(0, Qt.UserRole)
+        if not item_data:
+            return
+        
+        from PySide6.QtWidgets import QMenu
+        from PySide6.QtGui import QAction
+        
+        menu = QMenu()
+        
+        if item_data['type'] == 'service':
+            # Pro službu: zobrazit IP adresy + detailní výpis IP:PORT
+            show_ips_action = QAction("Zobrazit IP adresy", self)
+            show_ips_action.triggered.connect(lambda: self.show_ips_for_service(item_data))
+            menu.addAction(show_ips_action)
+            
+            show_details_action = QAction("Zobrazit detailní výpis IP:PORT", self)
+            show_details_action.triggered.connect(lambda: self.show_service_details(item_data))
+            menu.addAction(show_details_action)
+            
+        elif item_data['type'] == 'port':
+            # Pro port: pouze zobrazit IP adresy
+            show_ips_action = QAction("Zobrazit IP adresy", self)
+            show_ips_action.triggered.connect(lambda: self.show_ips_for_service(item_data))
+            menu.addAction(show_ips_action)
+        
+        menu.exec(self.service_summary_tree.mapToGlobal(position))
+
+    def show_service_details(self, service_data):
+        """Zobrazí detailní dialog s výpisem IP:PORT pro službu."""
+        dialog = QDialog(self)
+        title = f"{service_data['protocol']}: {service_data['service']}"
+        dialog.setWindowTitle(f"Detailní výpis - {title}")
+        dialog.resize(500, 450)
+        
+        layout = QVBoxLayout(dialog)
+        
+        label = QLabel(f"<b>{title}</b><br>Detailní výpis IP:PORT")
+        layout.addWidget(label)
+        
+        details_text = QTextEdit()
+        details_text.setReadOnly(True)
+        details_text.setFontFamily("Courier New")  # Monospace font pro lepší zarovnání
+        
+        # Vytvořit strukturu: {ip: [port1, port2, ...]}
+        ip_port_map = {}
+        ports_dict = service_data.get('ports_dict', {})
+        
+        for port, ip_set in ports_dict.items():
+            for ip in ip_set:
+                if ip not in ip_port_map:
+                    ip_port_map[ip] = []
+                ip_port_map[ip].append(port)
+        
+        # Seřadit IP adresy numericky
+        sorted_ips = sorted(
+            ip_port_map.keys(),
+            key=lambda ip: tuple(int(p) for p in ip.split('.'))
+        )
+        
+        # Vytvořit výpis
+        output_lines = [f"{service_data['service']}"]
+        
+        for ip in sorted_ips:
+            # Seřadit porty numericky pro danou IP
+            sorted_ports = sorted(ip_port_map[ip], key=lambda p: int(p))
+            
+            for port in sorted_ports:
+                output_lines.append(f"  - {ip}:{port}")
+        
+        details_text.setPlainText('\n'.join(output_lines))
+        layout.addWidget(details_text)
+        
+        # Tlačítka
+        button_layout = QHBoxLayout()
+        
+        copy_button = QPushButton("Kopírovat do schránky")
+        copy_button.clicked.connect(lambda: QApplication.clipboard().setText(details_text.toPlainText()))
+        button_layout.addWidget(copy_button)
+        
+        close_button = QPushButton("Zavřít")
+        close_button.clicked.connect(dialog.accept)
+        button_layout.addWidget(close_button)
+        
+        layout.addLayout(button_layout)
+        
+        dialog.exec()
+
+
+    def show_ips_for_service(self, service_data):
+        """Zobrazí dialog se seznamem IP adres pro danou službu/port."""
+        dialog = QDialog(self)
+        
+        if service_data['type'] == 'service':
+            title = f"{service_data['protocol']}: {service_data['service']}"
+        else:  # port
+            title = f"{service_data['protocol']}: {service_data['service']}:{service_data['port']}"
+        
+        dialog.setWindowTitle(f"IP adresy - {title}")
+        dialog.resize(450, 350)
+        
+        layout = QVBoxLayout(dialog)
+        
+        label = QLabel(f"<b>{title}</b><br>Celkem IP adres: {len(service_data['ips'])}")
+        layout.addWidget(label)
+        
+        iplist = QTextEdit()
+        iplist.setReadOnly(True)
+        
+        # Seřadit IP adresy
+        sorted_ips = sorted(
+            list(service_data['ips']),
+            key=lambda ip: tuple(int(p) for p in ip.split('.'))
+        )
+        
+        iplist.setPlainText('\n'.join(sorted_ips))
+        layout.addWidget(iplist)
+        
+        buttonbox = QDialogButtonBox(QDialogButtonBox.Ok)
+        buttonbox.accepted.connect(dialog.accept)
+        layout.addWidget(buttonbox)
+        
+        dialog.exec()
+
+    
+    def generate_screenshot_path(self, ip, port, path):
+        """Helper funkce pro generování cesty k souboru screenshotu."""
+        now_str = datetime.now().strftime('%Y%m%d_%H%M%S')
+        ip_safe = ip.replace('.', '_')
+        filename = f"{ip_safe}_{port}_{now_str}.png"
+        return os.path.join(path, filename)
+    
+    def capture_and_save(self, view, filepath, ip, url):
+        """Helper funkce pro zachycení a uložení screenshotu."""
+        try:
+            pixmap = view.grab()
+            if not pixmap.isNull():
+                pixmap.save(filepath)
+                self.worker_signals.log.emit("info", f"📸 Screenshot pro {url} uložen do {filepath}")
+                self.worker_signals.screenshot_taken.emit(ip, filepath)
+                self.status_matrix.update_status(ip, 'screenshot', 'hotovo')
+            else:
+                self.worker_signals.log.emit("error", f"❌ Screenshot pro {url} je prázdný (null pixmap)")
+                self.status_matrix.update_status(ip, 'screenshot', 'chyba')
+        except Exception as e:
+            self.worker_signals.log.emit("error", f"❌ Chyba při ukládání screenshotu {url}: {str(e)}")
+            self.status_matrix.update_status(ip, 'screenshot', 'chyba')
+        finally:
+            view.deleteLater()
+
+
+    def handle_screenshot_request_selenium(self, url, ip, port, path):
+        """Alternativní screenshot pomocí Selenium."""
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+        from selenium.common.exceptions import WebDriverException, TimeoutException
+        import requests
+        
+        # HTTP request pro status kód
+        try:
+            response = requests.get(url, verify=False, timeout=10)
+            status_code = response.status_code
+            self.worker_signals.log.emit("info", f"📡 HTTP {status_code} pro {url}")
+        except Exception as e:
+            self.worker_signals.log.emit("warning", f"⚠️ HTTP request selhal: {str(e)[:100]}")
+            self.status_matrix.update_status(ip, 'screenshot', 'chyba')
+            return
+        
+        if 200 <= status_code < 400:
+            chrome_options = Options()
+            chrome_options.add_argument('--headless')
+            chrome_options.add_argument('--no-sandbox')
+            chrome_options.add_argument('--disable-dev-shm-usage')
+            chrome_options.add_argument('--ignore-certificate-errors')
+            chrome_options.add_argument('--allow-insecure-localhost')
+            
+            try:
+                driver = webdriver.Chrome(options=chrome_options)
+                driver.set_page_load_timeout(15)
+                driver.get(url)
+                
+                now_str = datetime.now().strftime('%Y%m%d_%H%M%S')
+                ip_safe = ip.replace('.', '_')
+                filename = f"{ip_safe}_{port}_{now_str}.png"
+                filepath = os.path.join(path, filename)
+                
+                driver.save_screenshot(filepath)
+                self.worker_signals.log.emit("info", f"📸 Screenshot pro {url} (HTTP {status_code}) uložen")
+                self.worker_signals.screenshot_taken.emit(ip, filepath)
+                self.status_matrix.update_status(ip, 'screenshot', 'hotovo')
+                
+                driver.quit()
+            except (WebDriverException, TimeoutException) as e:
+                self.worker_signals.log.emit("warning", f"⚠️ Screenshot selhal: {str(e)[:100]}")
+                self.status_matrix.update_status(ip, 'screenshot', 'chyba')
+        else:
+            self.worker_signals.log.emit("warning", f"⚠️ Status {status_code}, screenshot přeskočen")
+            self.status_matrix.update_status(ip, 'screenshot', 'hotovo')
+
+    @Slot(str, str)
+    def on_screenshot_taken(self, ip, filepath):
+        """Reaguje na pořízení screenshotu a aktualizuje GUI."""
+        if ip not in self.screenshots:
+            self.screenshots[ip] = []
+        self.screenshots[ip].append(filepath)
+        
+        # Aktualizovat screenshot viewer
+        self.update_screenshot_viewer()
+
+    @Slot(QTreeWidgetItem, int)
+    def on_matrix_ip_clicked(self, item, column):
+        """Zobrazí souhrn výsledků pro vybranou IP z matici."""
+        ip_address = item.text(0)
+        
+        # Automaticky odkrýt sekci "Souhrn vybrané IP" POUZE pokud je PRÁZDNÁ
+        is_empty = self.ip_summary_tree.topLevelItemCount() == 0 or \
+                   (self.ip_summary_tree.topLevelItemCount() == 1 and 
+                    self.ip_summary_tree.topLevelItem(0).text(1) == "Vyberte IP v matici")
+        
+        if is_empty and not self.ip_summary_toggle_btn.isChecked():
+            self.ip_summary_toggle_btn.setChecked(True)
+        
+        self.ip_summary_tree.clear()
+        
+        # IP Adresa
+        ip_item = QTreeWidgetItem(self.ip_summary_tree, ["IP Adresa", ip_address])
+        ip_item.setForeground(0, QColor("#2980B9"))
+        ip_item.setForeground(1, QColor("#2ECC71"))
+        
+        # Hostname
+        hostname = "N/A"
+        for phase in ['online', 'tcp', 'udp', 'vuln', 'osscan']:
+            phase_data = self.scan_results.get(phase, {}).get(ip_address, {})
+            if 'hostnames' in phase_data and phase_data['hostnames']:
+                hostname_list = phase_data['hostnames']
+                if isinstance(hostname_list, list) and len(hostname_list) > 0:
+                    hostname = hostname_list[0].get('name', 'N/A')
+                    break
+        
+        hostname_item = QTreeWidgetItem(self.ip_summary_tree, ["Hostname", hostname])
+        hostname_item.setForeground(0, QColor("#2980B9"))
+        
+        # Souhrn portů podle stavů
+        port_stats = {
+            'tcp': {'open': 0, 'filtered': 0, 'closed': 0, 'open|filtered': 0},
+            'udp': {'open': 0, 'filtered': 0, 'closed': 0, 'open|filtered': 0}
+        }
+        
+        # Spočítat porty podle protokolu a stavu
+        for phase in ['tcp', 'udp']:
+            phase_data = self.scan_results.get(phase, {}).get(ip_address, {})
+            if phase in phase_data:
+                for port, info in phase_data[phase].items():
+                    port_state = info.get('state', 'unknown')
+                    if port_state in port_stats[phase]:
+                        port_stats[phase][port_state] += 1
+        
+        # Zobrazit souhrn portů
+        ports_summary_parent = QTreeWidgetItem(self.ip_summary_tree, ["Souhrn portů", ""])
+        ports_summary_parent.setForeground(0, QColor("#3498DB"))
+        ports_summary_parent.setExpanded(True)
+        
+        # TCP souhrn
+        tcp_total = sum(port_stats['tcp'].values())
+        tcp_parent = QTreeWidgetItem(ports_summary_parent, ["TCP", f"Celkem: {tcp_total}"])
+        tcp_parent.setForeground(0, QColor("#16A085"))
+        tcp_parent.setExpanded(True)
+        
+        if port_stats['tcp']['open'] > 0:
+            tcp_open = QTreeWidgetItem(tcp_parent, ["Otevřené", str(port_stats['tcp']['open'])])
+            tcp_open.setForeground(0, QColor("#2ECC71"))
+        
+        if port_stats['tcp']['filtered'] > 0:
+            tcp_filtered = QTreeWidgetItem(tcp_parent, ["Filtrované", str(port_stats['tcp']['filtered'])])
+            tcp_filtered.setForeground(0, QColor("#F39C12"))
+        
+        if port_stats['tcp']['open|filtered'] > 0:
+            tcp_open_filtered = QTreeWidgetItem(tcp_parent, ["Otevřené/Filtrované", str(port_stats['tcp']['open|filtered'])])
+            tcp_open_filtered.setForeground(0, QColor("#E67E22"))
+        
+        if port_stats['tcp']['closed'] > 0:
+            tcp_closed = QTreeWidgetItem(tcp_parent, ["Zavřené", str(port_stats['tcp']['closed'])])
+            tcp_closed.setForeground(0, QColor("#95A5A6"))
+        
+        # UDP souhrn
+        udp_total = sum(port_stats['udp'].values())
+        udp_parent = QTreeWidgetItem(ports_summary_parent, ["UDP", f"Celkem: {udp_total}"])
+        udp_parent.setForeground(0, QColor("#9B59B6"))
+        udp_parent.setExpanded(True)
+        
+        if port_stats['udp']['open'] > 0:
+            udp_open = QTreeWidgetItem(udp_parent, ["Otevřené", str(port_stats['udp']['open'])])
+            udp_open.setForeground(0, QColor("#2ECC71"))
+        
+        if port_stats['udp']['filtered'] > 0:
+            udp_filtered = QTreeWidgetItem(udp_parent, ["Filtrované", str(port_stats['udp']['filtered'])])
+            udp_filtered.setForeground(0, QColor("#F39C12"))
+        
+        if port_stats['udp']['open|filtered'] > 0:
+            udp_open_filtered = QTreeWidgetItem(udp_parent, ["Otevřené/Filtrované", str(port_stats['udp']['open|filtered'])])
+            udp_open_filtered.setForeground(0, QColor("#E67E22"))
+        
+        if port_stats['udp']['closed'] > 0:
+            udp_closed = QTreeWidgetItem(udp_parent, ["Zavřené", str(port_stats['udp']['closed'])])
+            udp_closed.setForeground(0, QColor("#95A5A6"))
+        
+        # Operační systém
+        osscan_data = self.scan_results.get('osscan', {}).get(ip_address, {})
+        if 'osmatch' in osscan_data and osscan_data['osmatch']:
+            os_parent = QTreeWidgetItem(self.ip_summary_tree, ["OS", ""])
+            os_parent.setForeground(0, QColor("#8E44AD"))
+            os_parent.setExpanded(True)
+            
+            for idx, match in enumerate(osscan_data['osmatch'][:3]):  # Top 3
+                os_name = match.get('name', 'Neznámý')
+                accuracy = match.get('accuracy', 'N/A')
+                os_child = QTreeWidgetItem(os_parent, [f"#{idx+1}", f"{os_name} ({accuracy}%)"])
+                os_child.setForeground(1, QColor("#555555"))
+        else:
+            os_item = QTreeWidgetItem(self.ip_summary_tree, ["OS", "Nedostupný"])
+            os_item.setForeground(0, QColor("#8E44AD"))
+            os_item.setForeground(1, QColor("#999999"))
+        
+        # Služby a verze - shromáždit z TCP a UDP fází
+        services = []
+        
+        for phase in ['tcp', 'udp']:
+            phase_data = self.scan_results.get(phase, {}).get(ip_address, {})
+            if phase in phase_data:
+                for port, info in phase_data[phase].items():
+                    port_state = info.get('state', 'unknown')
+                    
+                    # Zobrazit otevřené i filtrované porty (ale ne closed)
+                    if port_state in ['open', 'filtered', 'open|filtered']:
+                        service_name = info.get('name', 'unknown')
+                        service_version = info.get('version', '')
+                        service_product = info.get('product', '')
+                        
+                        # Pouze pokud existuje nějaká služba (ne "unknown")
+                        if service_name != 'unknown' or service_product or service_version:
+                            # Sestavit popis služby
+                            service_desc = service_name
+                            if service_product:
+                                service_desc = f"{service_product}"
+                            if service_version:
+                                service_desc += f" {service_version}"
+                            
+                            services.append({
+                                'port': port,
+                                'protocol': phase.upper(),
+                                'service': service_desc,
+                                'state': port_state
+                            })
+        
+        # Přidat služby do tree
+        if services:
+            services_parent = QTreeWidgetItem(self.ip_summary_tree, ["Služby", f"({len(services)} portů se službami)"])
+            services_parent.setForeground(0, QColor("#E67E22"))
+            services_parent.setExpanded(True)
+            
+            # Seřadit podle portu
+            services.sort(key=lambda x: int(x['port']))
+            
+            for svc in services:
+                port_label = f"{svc['port']}/{svc['protocol']} ({svc['state']})"
+                svc_child = QTreeWidgetItem(services_parent, [port_label, svc['service']])
+                
+                # Barevné rozlišení podle stavu
+                if svc['state'] == 'open':
+                    svc_child.setForeground(0, QColor("#16A085"))
+                elif svc['state'] == 'filtered':
+                    svc_child.setForeground(0, QColor("#F39C12"))
+                else:
+                    svc_child.setForeground(0, QColor("#95A5A6"))
+                
+                svc_child.setForeground(1, QColor("#555555"))
+        else:
+            services_item = QTreeWidgetItem(self.ip_summary_tree, ["Služby", "Žádné služby nenalezeny"])
+            services_item.setForeground(0, QColor("#E67E22"))
+            services_item.setForeground(1, QColor("#999999"))
+        
+        # Zranitelnosti - shromáždit z fáze vuln - POUZE POTVRZENÉ
+        vulnerabilities = []
+        vuln_data = self.scan_results.get('vuln', {}).get(ip_address, {})
+        
+        # Klíčová slova, která indikují potvrzenou zranitelnost
+        confirmed_keywords = [
+            'VULNERABLE',
+            'EXPLOITABLE',
+            'CONFIRMED',
+            'State: VULNERABLE',
+            'IDS: CVE',
+            'Risk factor:'
+        ]
+        
+        # Klíčová slova, která indikují nepotvrcenou/negativní výsledek
+        negative_keywords = [
+            'NOT vulnerable',
+            'Not vulnerable',
+            'No vulnerability',
+            'not affected',
+            'LIKELY NOT vulnerable',
+            'false positive',
+            'State: NOT VULNERABLE'
+        ]
+        
+        for proto in ['tcp', 'udp']:
+            if proto in vuln_data:
+                for port, info in vuln_data[proto].items():
+                    if 'script' in info:
+                        for script_name, script_output in info['script'].items():
+                            output_upper = script_output.upper()
+                            
+                            # Zkontrolovat, zda výstup obsahuje potvrzení zranitelnosti
+                            is_confirmed = any(keyword.upper() in output_upper for keyword in confirmed_keywords)
+                            is_negative = any(keyword.upper() in output_upper for keyword in negative_keywords)
+                            
+                            # Přidat pouze pokud je potvrzená a není negativní
+                            if is_confirmed and not is_negative:
+                                vuln_entry = {
+                                    'port': port,
+                                    'protocol': proto.upper(),
+                                    'service': info.get('name', 'unknown'),
+                                    'script': script_name,
+                                    'details': script_output.strip()
+                                }
+                                vulnerabilities.append(vuln_entry)
+        
+        # Přidat zranitelnosti do tree
+        if vulnerabilities:
+            vuln_parent = QTreeWidgetItem(self.ip_summary_tree, ["Zranitelnosti", f"({len(vulnerabilities)} potvrzeno)"])
+            vuln_parent.setForeground(0, QColor("#E74C3C"))
+            vuln_parent.setForeground(1, QColor("#E74C3C"))
+            vuln_parent.setExpanded(True)
+            
+            for idx, vuln in enumerate(vulnerabilities):
+                # Hlavní položka zranitelnosti
+                vuln_label = f"Port {vuln['port']}/{vuln['protocol']}"
+                vuln_item = QTreeWidgetItem(vuln_parent, [vuln_label, vuln['service']])
+                vuln_item.setForeground(0, QColor("#C0392B"))
+                vuln_item.setForeground(1, QColor("#555555"))
+                vuln_item.setExpanded(True)
+                
+                # Název skriptu
+                script_item = QTreeWidgetItem(vuln_item, ["Skript", vuln['script']])
+                script_item.setForeground(0, QColor("#95A5A6"))
+                script_item.setForeground(1, QColor("#7F8C8D"))
+                
+                # Detaily zranitelnosti - rozdělit na řádky pro lepší čitelnost
+                details_lines = vuln['details'].split('\n')
+                if len(details_lines) > 5:
+                    # Zobrazit pouze prvních 5 řádků a přidat "..." pro delší výstupy
+                    display_text = '\n'.join(details_lines[:5]) + "\n..."
+                else:
+                    display_text = vuln['details']
+                
+                details_item = QTreeWidgetItem(vuln_item, ["Detaily", display_text[:500]])  # Limit 500 znaků
+                details_item.setForeground(0, QColor("#95A5A6"))
+                details_item.setForeground(1, QColor("#555555"))
+        else:
+            vuln_item = QTreeWidgetItem(self.ip_summary_tree, ["Zranitelnosti", "Žádné potvrzené nenalezeny"])
+            vuln_item.setForeground(0, QColor("#E74C3C"))
+            vuln_item.setForeground(1, QColor("#2ECC71"))
+        
+        # Screenshoty
+        if ip_address in self.screenshots:
+            screenshot_parent = QTreeWidgetItem(self.ip_summary_tree, ["Screenshots", f"({len(self.screenshots[ip_address])} nalezeno)"])
+            screenshot_parent.setForeground(0, QColor("#1ABC9C"))
+            screenshot_parent.setExpanded(True)
+            
+            for filepath in self.screenshots[ip_address]:
+                filename = os.path.basename(filepath)
+                screenshot_item = QTreeWidgetItem(screenshot_parent, ["", filename])
+                screenshot_item.setForeground(1, QColor("#555555"))
+        else:
+            screenshot_item = QTreeWidgetItem(self.ip_summary_tree, ["Screenshots", "Žádné nenalezeny"])
+            screenshot_item.setForeground(0, QColor("#1ABC9C"))
+            screenshot_item.setForeground(1, QColor("#999999"))
+            
+        # Na konci funkce - přizpůsobit šířku sloupců
+        self.ip_summary_tree.resizeColumnToContents(0)
+        self.ip_summary_tree.resizeColumnToContents(1)
+        
+        # Rozšířit sloupce pokud jsou příliš úzké
+        min_width_attr = self.ip_summary_tree.fontMetrics().horizontalAdvance("Atribut") + 30
+        min_width_value = self.ip_summary_tree.fontMetrics().horizontalAdvance("Hodnota") + 30
+        
+        if self.ip_summary_tree.columnWidth(0) < min_width_attr:
+            self.ip_summary_tree.setColumnWidth(0, min_width_attr)
+        if self.ip_summary_tree.columnWidth(1) < min_width_value:
+            self.ip_summary_tree.setColumnWidth(1, min_width_value)
+            
+    def on_matrix_selection_changed(self, current, previous):
+        """
+        Reaguje na změnu výběru v matici (např. šipkami nahoru/dolů).
+        Volá se i při kliknutí, ale v tom případě se data aktualizují dvakrát
+        (jednou z itemClicked, podruhé z currentItemChanged), což je v pořádku.
+        """
+        if not current:
+            return
+        
+        # Získat IP adresu z aktuální položky
+        ip_address = current.text(0)
+        
+        # Zavolat stejnou logiku jako při kliknutí
+        # ale použít column=0 jako defaultní hodnotu
+        self.on_matrix_ip_clicked(current, 0)
+
+    def update_port_summary(self):
+        """Aktualizuje přehled portů podle stavů s počtem IP adres."""
+        # Struktura: {stav: {port_key: set(ips)}}
+        port_data = {}
+        
+        for phase in ['tcp', 'udp']:
+            if phase not in self.scan_results:
+                continue
+            
+            for target, data in self.scan_results[phase].items():
+                if phase in data:
+                    for port, info in data[phase].items():
+                        port_state = info.get('state', 'unknown')
+                        port_key = f"{port}/{phase.upper()}"
+                        
+                        if port_state not in port_data:
+                            port_data[port_state] = {}
+                        
+                        if port_key not in port_data[port_state]:
+                            port_data[port_state][port_key] = set()
+                        
+                        port_data[port_state][port_key].add(target)
+        
+        self.port_summary_tree.clear()
+        
+        # Barvy podle stavů
+        state_colors = {
+            'open': QColor("#2ECC71"),
+            'closed': QColor("#E74C3C"),
+            'filtered': QColor("#F39C12"),
+            'unfiltered': QColor("#FFB74D"),
+            'open|filtered': QColor("#FFD54F"),
+            'closed|filtered': QColor("#E57373"),
+            'unknown': QColor("#9E9E9E")
+        }
+        
+        # Vytvořit skupiny podle stavů
+        sorted_states = sorted(port_data.keys())
+        for state in sorted_states:
+            
+            # Seskupit podle protokolu (TCP, UDP)
+            sorted_ports = sorted(port_data[state].items(), 
+                                key=lambda x: (x[0].split('/')[1], int(x[0].split('/')[0])))
+            
+            protocol_groups = {'TCP': [], 'UDP': []}
+            for port_key, ip_set in sorted_ports:
+                port, proto = port_key.split('/')
+                protocol_groups[proto].append((port, ip_set))
+            
+            # Hlavní položka pro stav
+            # Spočítat celkový počet různých portů a celkový počet výskytů
+            total_unique_ports = len(port_data[state])
+            total_occurrences = sum(len(ip_set) for ip_set in port_data[state].values())
+            
+            state_label = f"{state.upper()} - {total_unique_ports} portů ({total_occurrences}×)"
+            state_item = QTreeWidgetItem(self.port_summary_tree, [state_label, ""])
+            state_item.setForeground(0, state_colors.get(state, QColor("black")))
+            state_item.setExpanded(True)
+            
+            for proto in ['TCP', 'UDP']:
+                if not protocol_groups[proto]:
+                    continue
+                
+                # Spočítat pro skupinu TCP/UDP
+                proto_unique_ports = len(protocol_groups[proto])
+                proto_occurrences = sum(len(ip_set) for _, ip_set in protocol_groups[proto])
+                
+                proto_label = f"{proto} - {proto_unique_ports} portů ({proto_occurrences}×)"
+                proto_item = QTreeWidgetItem(state_item, [proto_label, ""])
+                proto_item.setExpanded(True)
+                
+                for port, ip_set in protocol_groups[proto]:
+                    port_item = QTreeWidgetItem(proto_item, [f"  {port}", str(len(ip_set))])
+                    port_item.setForeground(0, state_colors.get(state, QColor("black")))
+                    port_item.setData(0, Qt.UserRole, {'port': f"{port}/{proto}", 'state': state, 'ips': list(ip_set)})
+        
+        # Automaticky přizpůsobit šířku sloupců podle obsahu
+        self.port_summary_tree.resizeColumnToContents(0)
+        self.port_summary_tree.resizeColumnToContents(1)
+        
+        # Rozšířit sloupec "Počet IP" aby se vešel nadpis
+        min_width = self.port_summary_tree.fontMetrics().horizontalAdvance("Počet IP") + 20
+        if self.port_summary_tree.columnWidth(1) < min_width:
+            self.port_summary_tree.setColumnWidth(1, min_width)
+
+    def show_port_context_menu(self, position):
+        """Zobrazí kontextové menu pro port summary."""
+        from PySide6.QtWidgets import QMenu
+        from PySide6.QtGui import QAction
+        
+        item = self.port_summary_tree.itemAt(position)
+        if not item:
+            return
+        
+        # Zkontrolovat, zda má položka data (port detail)
+        port_data = item.data(0, Qt.UserRole)
+        if not port_data:
+            return
+        
+        menu = QMenu()
+        
+        show_ips_action = QAction("Zobrazit IP adresy", self)
+        show_ips_action.triggered.connect(lambda: self.show_ips_for_port(port_data))
+        menu.addAction(show_ips_action)
+        
+        menu.exec(self.port_summary_tree.mapToGlobal(position))
+
+    def show_ips_for_port(self, port_data):
+        """Zobrazí dialog se seznamem IP adres pro daný port."""
+        port = port_data['port']
+        state = port_data['state']
+        ips = port_data['ips']
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"IP adresy s portem {port} ({state})")
+        dialog.resize(400, 300)
+        
+        layout = QVBoxLayout(dialog)
+        
+        label = QLabel(f"Port: {port}\nStav: {state}\nPočet IP adres: {len(ips)}")
+        layout.addWidget(label)
+        
+        ip_list = QTextEdit()
+        ip_list.setReadOnly(True)
+        ip_list.setPlainText('\n'.join(sorted(ips, key=lambda ip: tuple(int(p) for p in ip.split('.')))))
+        layout.addWidget(ip_list)
+        
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok)
+        button_box.accepted.connect(dialog.accept)
+        layout.addWidget(button_box)
+        
+        dialog.exec()
+
+    def start_workflow_ui(self):
+        # Zkontrolovat, zda již existují data z předchozího testu
+        has_existing_data = any(len(self.scan_results.get(phase, {})) > 0 for phase in self.phases)
+        
+        if has_existing_data:
+            # Zobrazit dialog pro vytvoření nového projektu
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Warning)
+            msg_box.setWindowTitle("Upozornění - Existující data")
+            msg_box.setText("V aplikaci již existují data z předchozího testování.")
+            msg_box.setInformativeText(
+                "Chcete vytvořit nový projekt?\n\n"
+                "• ANO - Vytvoří nový projekt a smaže aktuální data\n"
+                "• NE - Zruší spuštění testu a zachová současný projekt\n"
+                "• ULOŽIT A POKRAČOVAT - Uloží aktuální projekt a vytvoří nový"
+            )
+            
+            new_btn = msg_box.addButton("Ano (Smazat a spustit)", QMessageBox.YesRole)
+            save_and_new_btn = msg_box.addButton("Uložit a pokračovat", QMessageBox.AcceptRole)
+            cancel_btn = msg_box.addButton("Ne (Zrušit)", QMessageBox.NoRole)
+            
+            msg_box.setDefaultButton(save_and_new_btn)
+            msg_box.exec()
+            
+            clicked_button = msg_box.clickedButton()
+            
+            if clicked_button == cancel_btn:
+                # Zrušit spuštění
+                self.worker_signals.log.emit("warning", "Spuštění nového testu zrušeno uživatelem.")
+                return
+            elif clicked_button == save_and_new_btn:
+                # Uložit aktuální projekt před pokračováním
+                self.export_project_dialog()
+                self.worker_signals.log.emit("info", "Aktuální projekt uložen. Spouštím nový projekt...")
+            elif clicked_button == new_btn:
+                # Pouze logovat
+                self.worker_signals.log.emit("info", "Zahajuji nový projekt, předchozí data budou smazána...")
+        
+        cleaned_text = self.cleaned_output_text.toPlainText()
+        
+        # Filtrovat zakomentované řádky (začínající #) a prázdné řádky
+        targets = [
+            line.strip()
+            for line in cleaned_text.splitlines()
+            if line.strip() and not line.strip().startswith('#')
+        ]
+        
+        if not targets:
+            self.status_label.setText("Žádné cíle k testování (všechny jsou zakomentované nebo prázdné).")
+            return
+        
+        # Zjistit které fáze jsou povoleny
+        enabled_phases = {phase: checkbox.isChecked() for phase, checkbox in self.phase_checkboxes.items()}
+        self.scan_manager.set_enabled_phases(enabled_phases)
+        
+        # Aktualizovat command templates
+        self.scan_manager.command_templates = {p: self.command_edits[p].text() for p in self.phases}
+        
+        self.scan_button.setEnabled(False)
+        self.stop_button.setEnabled(True)
+        self.log_console.clear()
+        
+        for tree in self.tree_widgets.values():
+            tree.clear()
+        
+        self.scan_results = {p: {} for p in self.phases}
+        self.status_matrix.populate_targets(targets)
+        
+        # Označit zakázané fáze v matici
+        for target in targets:
+            for phase in self.phases:
+                if not enabled_phases[phase]:
+                    self.status_matrix.update_status(target, phase, 'skipped_by_user')
+        
+        self.total_tasks = len(targets)
+        self.completed_tasks = 0
+        
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        self.base_export_path = Path.cwd() / f"nmap_scan_results_{timestamp}"
+        self.base_export_path.mkdir(parents=True, exist_ok=True)
+        
+        self.worker_signals.log.emit("info", f"Výsledky se budou ukládat do: {self.base_export_path}")
+        
+        # NOVÉ: Při startu nového testování vytvořit autosave projekt pokud neexistuje
+        if not self.current_project_path:
+            home_dir = os.path.expanduser("~")
+            autosave_dir = os.path.join(home_dir, ".nmap_scanner_autosave")
+            os.makedirs(autosave_dir, exist_ok=True)
+            
+            project_name = self.project_name_edit.text().replace(" ", "_").replace("/", "_")
+            timestamp_auto = datetime.now().strftime('%Y%m%d_%H%M%S')
+            self.current_project_path = os.path.join(autosave_dir, f"{project_name}_{timestamp_auto}_autosave.nmapproj")
+            
+            self.worker_signals.log.emit("info", f"🔄 Vytvořen dočasný autosave projekt: {self.current_project_path}")
+        
+        self.scan_manager.start_workflow(targets)
+
+    def show_startup_dialog(self):
+        """Zobrazí startup dialog pro výběr projektu."""
+        last_project_path = self.settings.value("last_project_path", None)
+        has_last = last_project_path and os.path.exists(last_project_path)
+
+        dialog = StartupDialog(has_last_project=has_last, parent=self)
+        if dialog.exec() == QDialog.Accepted:
+            if dialog.choice == "last":
+                self.import_project(last_project_path)
+            elif dialog.choice == "import":
+                self.import_project_dialog()
+            # "new" -> nic nedělat, pokračovat s prázdným projektem
+
+    def export_project_dialog(self):
+        """Export projektu do JSON (.nmapproj). Povoleno jen, když neběží testování."""
+        if self.scan_manager.is_running:
+            QMessageBox.warning(self, "Export nelze", "Export není možný během probíhajícího testování.")
+            return
+        
+        path, _ = QFileDialog.getSaveFileName(self, "Exportovat projekt", "", "Nmap Project (*.nmapproj)")
+        if not path:
+            return
+        
+        project_data = self.gather_project_data()
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(project_data, f, indent=2, ensure_ascii=False)
+            
+            self.current_project_path = path  # NOVÉ: Uložit jako aktuální projekt
+            self.add_to_recent_projects(path)
+            
+            self.settings.setValue("last_project_path", path)
+            self.status_label.setText(f"Projekt exportován do {path}")
+            self.worker_signals.log.emit("export", f"Projekt úspěšně exportován do {path}.")
+        except Exception as e:
+            QMessageBox.critical(self, "Chyba exportu", f"Nelze uložit projekt: {e}")
+
+    def import_project_dialog(self):
+        """Import projektu ze souboru JSON (.nmapproj). Povoleno jen, když neběží testování."""
+        if self.scan_manager.is_running:
+            QMessageBox.warning(self, "Import nelze", "Import není možný během probíhajícího testování.")
+            return
+
+        path, _ = QFileDialog.getOpenFileName(self, "Importovat projekt", "", "Nmap Project (*.nmapproj)")
+        if not path:
+            return
+        self.import_project(path)
+
+    def import_project(self, path):
+        """Načte projekt ze souboru s detailním progress dialogem."""
+        try:
+            self.current_project_path = path
+            
+            # Načíst soubor
+            with open(path, 'r', encoding='utf-8') as f:
+                project_data = json.load(f)
+            
+            # Spočítat celkový počet kroků
+            total_steps = 0
+            total_steps += 1  # Základní data (název projektu atd.)
+            total_steps += len(project_data.get('scan_results', {}))  # Fáze
+            total_steps += len(project_data.get('screenshots', {}))  # Screenshoty
+            total_steps += 2  # Aktualizace UI
+            
+            # Vytvořit progress dialog
+            progress = QProgressDialog("Načítám projekt...", "Zrušit", 0, total_steps, self)
+            progress.setWindowTitle("Import projektu")
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setMinimumDuration(0)
+            
+            current_step = 0
+            
+            # Načíst základní data
+            progress.setLabelText("Načítám základní informace...")
+            current_step += 1
+            progress.setValue(current_step)
+            QApplication.processEvents()
+            
+            if progress.wasCanceled():
+                return
+            
+            # Načíst scan results
+            for phase in project_data.get('scan_results', {}):
+                progress.setLabelText(f"Načítám výsledky fáze: {phase}...")
+                current_step += 1
+                progress.setValue(current_step)
+                QApplication.processEvents()
+                
+                if progress.wasCanceled():
+                    return
+            
+            # Načíst screenshoty
+            for ip in project_data.get('screenshots', {}):
+                progress.setLabelText(f"Načítám screenshoty pro: {ip}...")
+                current_step += 1
+                progress.setValue(current_step)
+                QApplication.processEvents()
+                
+                if progress.wasCanceled():
+                    return
+            
+            # Aplikovat data
+            progress.setLabelText("Aplikuji data do rozhraní...")
+            current_step += 1
+            progress.setValue(current_step)
+            QApplication.processEvents()
+            
+            self.apply_project_data(project_data)
+            
+            # Finalizace
+            progress.setLabelText("Dokončuji...")
+            current_step += 1
+            progress.setValue(current_step)
+            QApplication.processEvents()
+            
+            self.add_to_recent_projects(path)
+            self.status_label.setText(f"Projekt načten z {path}")
+            self.worker_signals.log.emit("info", f"Projekt úspěšně načten z {path}.")
+            
+            progress.setValue(total_steps)
+            progress.close()
+            
+        except Exception as e:
+            if 'progress' in locals():
+                progress.close()
+            QMessageBox.critical(self, "Chyba importu", f"Nelze načíst projekt: {e}")
+
+    def add_to_recent_projects(self, path):
+        """Přidá projekt do historie posledních projektů."""
+        recent_projects = self.settings.value("recent_projects", [])
+        if not isinstance(recent_projects, list):
+            recent_projects = []
+        
+        # Odebrat cestu pokud už existuje (aby se přesunula nahoru)
+        if path in recent_projects:
+            recent_projects.remove(path)
+        
+        # Přidat na začátek seznamu
+        recent_projects.insert(0, path)
+        
+        # Zachovat pouze posledních 5
+        recent_projects = recent_projects[:5]
+        
+        # Uložit zpět do nastavení
+        self.settings.setValue("recent_projects", recent_projects)
+
+    def gather_project_data(self):
+        """Sestaví dict se stavem projektu pro export. Včetně certifikátů v scan_results."""
+        return {
+            "project_name": self.project_name_edit.text(),
+            "intensity_mode": self.intensity_combo.currentIndex(),
+            "raw_input_text": self.raw_input_text.toPlainText(),
+            "cleaned_output_text": self.cleaned_output_text.toPlainText(),
+            "phase_settings": {
+                phase: {
+                    "enabled": self.phase_checkboxes[phase].isChecked(),
+                    "command": self.command_edits[phase].text()
+                }
+                for phase in self.phases
+            },
+            "scan_results": self.scan_results, # Zde jsou již certifikáty uloženy
+            "screenshots": self.screenshots
+        }
+
+    def apply_project_data(self, data):
+        """Načte data z .nmapproj a zajistí persistenci certifikátů."""
+        self.loading_project = True
+        
+        p_name = data.get("project_name") or data.get("name") or "Můj Nmap Projekt"
+        self.project_name_edit.setText(p_name)
+        
+        self.intensity_combo.blockSignals(True)
+        idx = int(data.get("intensity_mode", 1))
+        self.intensity_combo.setCurrentIndex(idx)
+        self.intensity_combo.blockSignals(False)
+
+        phase_settings = data.get("phase_settings", {})
+        for phase in self.phases:
+            settings = phase_settings.get(phase, {})
+            if phase in self.phase_checkboxes:
+                self.phase_checkboxes[phase].setChecked(settings.get("enabled", True))
+            if phase in self.command_edits:
+                cmd_text = settings.get("command", self.get_command_template(phase, intensive=(idx==1)))
+                self.command_edits[phase].setText(cmd_text)
+    
+        # Načtení výsledků skenů
+        self.scan_results = data.get("scan_results", {})
+        # Inicializace klíče pro certifikáty, pokud v projektu chybí
+        if 'certificates' not in self.scan_results:
+            self.scan_results['certificates'] = {}
+            
+        self.raw_input_text.setPlainText(data.get("raw_input_text", ""))
+        self.cleaned_output_text.setPlainText(data.get("cleaned_output_text", ""))
+        
+        if hasattr(self, 'scan_manager'):
+            self.scan_manager.command_templates = {p: self.command_edits[p].text() for p in self.phases}
+
+        self.loading_project = False
+        self.repopulate_ui_from_results()
+        self.status_label.setText(f"Projekt '{p_name}' načten včetně SSL auditů.")
+
+    def repopulate_ui_from_results(self):
+        """OPRAVA PÁDU: Vynechání persistence klíčů z matice IP adres."""
+        for tree in self.tree_widgets.values():
+            tree.clear()
+        
+        all_targets = set()
+        for phase, phase_data in self.scan_results.items():
+            if phase in ["ffuf", "certificates", "security_headers", "tls_audit"]:
+                continue
+            all_targets.update(phase_data.keys())
+        
+        if not all_targets:
+            return
+        
+        # Robustní seřazení IP adres (ignoruijeme klíče, které nejsou ve formátu IP)
+        def safe_ip_sort(ip):
+            try: 
+                clean_ip = ip.split(':')[0] # Odstranění portu pro jistotu
+                return tuple(int(p) for p in clean_ip.split("."))
+            except: 
+                return (0, 0, 0, 0)
+
+        self.status_matrix.populate_targets(sorted(all_targets, key=safe_ip_sort))
+        
+        self.loading_project = True
+        
+        for phase in self.phases:
+            if phase not in self.scan_results:
+                continue
+            phase_data = self.scan_results[phase]
+            # Handle_single_result voláme pouze pro standardní nmap fáze
+            if isinstance(phase_data, dict) and phase != "certificates":
+                for target, data in phase_data.items():
+                    self.handle_single_result(phase, target, data)
+        
+        self.loading_project = False
+        if hasattr(self, "port_summary_tree"):
+            self.update_port_summary()
+            self.update_service_summary()
+            self.update_online_display_with_ports()
+
+    @Slot(str, str)
+    def on_task_started(self, phase, target):
+        # Pokud fáze obsahuje -Pn, pošli status "probíhá -Pn", jinak jen "probíhá"
+        if '-Pn' in phase:
+            self.status_matrix.update_status(target, phase, 'probíhá -Pn')
+        else:
+            self.status_matrix.update_status(target, phase, 'probíhá')
+
+
+    @Slot(str, str, dict)
+    def handle_single_result(self, phase, target, data):
+        with QMutexLocker(output_mutex):
+            base_phase = phase.replace("-Pn", "")  # OPRAVA: Odstranit -Pn (bez mezer a závorek)
+            self.scan_results[base_phase][target] = data
+            
+            self.update_cumulative_reports(target)
+            
+            tree = self.tree_widgets[base_phase]
+            items = tree.findItems(target, Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive, 0)
+            
+            if not items:
+                target_item = QTreeWidgetItem(tree, [target])
+                target_item.setForeground(0, get_color_for_ip(target))
+            else:
+                target_item = items[0]
+            
+            status = "hotovo"
+            
+            if data.get('status') == 'skipped_by_user':
+                status = 'zakázáno'
+                target_item.setText(1, 'Fáze zakázána uživatelem')
+                target_item.setForeground(1, QColor("#95A5A6"))
+            
+            elif 'error' in data:
+                status = "chyba"
+                QTreeWidgetItem(target_item, ["Chyba", data['error']]).setForeground(0, QColor("#E74C3C"))
+            
+            elif data.get("status") == "skipped":
+                status = "přeskočeno"
+            
+            elif base_phase == 'online':
+                is_online = data.get('status', {}).get('state') == 'up'
+                status = 'online' if is_online else 'offline'
+                target_item.setText(1, status)
+                target_item.setForeground(1, QColor("#2ECC71") if is_online else QColor("#95A5A6"))
+            
+            elif base_phase == 'osscan':
+                if 'osmatch' in data and data['osmatch']:
+                    for match in data['osmatch']:
+                        name = match.get('name', 'Neznámý OS')
+                        accuracy = match.get('accuracy', 'N/A')
+                        os_item = QTreeWidgetItem(target_item, [f"OS: {name}", f"Přesnost: {accuracy}%"])
+                        os_item.setForeground(0, QColor("#8E44AD"))
+                else:
+                    QTreeWidgetItem(target_item, ["OS", "Detekce selhala"]).setForeground(0, QColor("#E74C3C"))
+            
+            else:  # tcp, udp, vuln
+                if not data or ('tcp' not in data and 'udp' not in data):
+                    if status != "přeskočeno":
+                        status = "hotovo"
+                else:
+                    has_http = False
+                    
+                    for proto in ['tcp', 'udp']:
+                        if proto in data:
+                            for port, info in data[proto].items():
+                                port_state = info.get('state', 'unknown')
+                                service = f"{info.get('name', 'n/a')} {info.get('version', '')}".strip()
+                                port_item = QTreeWidgetItem(target_item, [f"{port}/{proto}", f"{port_state} | {service}"])
+                                
+                                if port_state == 'open':
+                                    port_item.setForeground(1, QColor("#2ECC71"))
+                                elif port_state == 'closed':
+                                    port_item.setForeground(1, QColor("#E74C3C"))
+                                else:
+                                    port_item.setForeground(1, QColor("#F39C12"))
+                                
+                                if 'script' in info:
+                                    for script_name, script_out in info['script'].items():
+                                        QTreeWidgetItem(port_item, [f" -> {script_name}", script_out.strip().replace('\n', ' ')]).setForeground(0, QColor("#E74C3C"))
+                                
+                                # Detekce HTTP/HTTPS služeb pro screenshot - POUZE TCP A SPECIFICKÉ PORTY
+                                service_name = info.get('name', '').lower()
+                                port_num = int(port)
+                                
+                                # Definice webových portů
+                                common_web_ports = [80, 443, 8080, 8000, 8008]
+                                
+                                # Screenshot pouze pro TCP, specifické porty NEBO detekovanou HTTP/HTTPS službu
+                                should_screenshot = (
+                                    base_phase == 'tcp' and  # Pouze TCP protokol
+                                    (port_num in common_web_ports or 'http' in service_name)  # Port v seznamu NEBO HTTP služba
+                                )
+                                
+                                if should_screenshot:
+                                    has_http = True
+                                    
+                                    # Kontrola, zda neprobíhá načítání projektu
+                                    if not hasattr(self, 'loading_project') or not self.loading_project:
+                                        # Určit správné schéma
+                                        if 'https' in service_name or port_num == 443:
+                                            scheme = 'https'
+                                        else:
+                                            scheme = 'http'
+                                        
+                                        url = f"{scheme}://{target}:{port}"
+                                        ip_dir = self.base_export_path / target.replace('.', '_')
+                                        ip_dir.mkdir(exist_ok=True, parents=True)
+                                        
+                                        # Označit v matici, že screenshot probíhá
+                                        self.status_matrix.update_status(target, 'screenshot', 'probíhá')
+                                        
+                                        # Logovat pokus o screenshot
+                                        self.worker_signals.log.emit("info", f"🌐 Plánuji screenshot pro {url} (port {port}, služba: {service_name or 'nedetekována'})")
+                                        
+                                        # Emitovat screenshot request signál
+                                        self.worker_signals.screenshot_request.emit(url, target, port_num, str(ip_dir))
+                    
+                    # Pokud TCP fáze nemá žádné HTTP služby, označit screenshot jako hotovo
+                    if base_phase == 'tcp' and not has_http:
+                        if not hasattr(self, 'loading_project') or not self.loading_project:
+                            self.status_matrix.update_status(target, 'screenshot', 'hotovo')
+    
+            
+            # DŮLEŽITÉ: Aktualizovat status v matici s původním názvem fáze (včetně -Pn)
+            self.status_matrix.update_status(target, phase, status)  # Poslat 'phase' místo 'base_phase'
+            
+            self.sort_tree_by_ip(tree)
+            
+            # Aktualizace přehledu portů
+            if hasattr(self, 'port_summary_tree'):
+                self.update_port_summary()
+                self.update_service_summary()
+                self.update_online_display_with_ports()
+
+
+    @Slot()
+    def task_finished(self):
+        with QMutexLocker(output_mutex):
+            self.completed_tasks += 1
+            
+            # Aktualizovat progress pro aktuální fázi
+            # (detekce fáze z posledního výsledku)
+            phase_completed = None
+            for phase in self.phases:
+                if phase in self.scan_results and self.scan_results[phase]:
+                    if self.scan_manager.phase_progress[phase]['completed'] < self.scan_manager.phase_progress[phase]['total']:
+                        self.scan_manager.phase_progress[phase]['completed'] += 1
+                        progress = self.scan_manager.phase_progress[phase]
+                        percent = (progress['completed'] / progress['total'] * 100) if progress['total'] > 0 else 0
+                        self.worker_signals.log.emit("info", f"📈 [{phase.upper()}] Průběh: {progress['completed']}/{progress['total']} ({percent:.1f}%)")
+                        
+                        # Zjistit, zda byla fáze právě dokončena
+                        if progress['completed'] == progress['total']:
+                            phase_completed = phase
+                        
+                        break
+            
+            # NOVÉ: Automatické uložení projektu po dokončení fáze
+            if phase_completed:
+                self.worker_signals.log.emit("info", f"✅ Fáze {phase_completed.upper()} dokončena - spouštím autosave...")
+                self.auto_save_project()
+            
+            # Původní logika
+            if self.completed_tasks >= self.total_tasks:
+                if len(self.scan_results.get('tcp', {})) == 0 and len(self.scan_results.get('udp', {})) == 0:
+                    all_targets = list(self.status_matrix.ip_items.keys())
+                    self.total_tasks = len(all_targets) * (len(self.phases) - 1)
+                    self.completed_tasks = 0
+                    
+                    if self.scan_manager.is_running:
+                        self.scan_manager.handle_online_phase_done(self.scan_results['online'])
+                else:
+                    if self.scan_manager.is_running:
+                        self.on_workflow_finished()
+
+    @Slot()
+    def on_workflow_finished(self):
+        """Voláno při dokončení celého workflow všech fází."""
+        self.scan_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
+        self.status_label.setText("Skenování dokončeno! Připraveno k exportu.")
+        self.worker_signals.log.emit("export", "Všechny fáze dokončeny. Výsledky jsou k dispozici pro export.")
+        
+        # NOVÉ: Finální autosave po dokončení všech fází
+        self.worker_signals.log.emit("info", "✅ Všechny fáze dokončeny - spouštím finální autosave...")
+        self.auto_save_project()
+
+    def update_online_display_with_ports(self):
+        """Aktualizuje záložku Online s aktuálními stavy (včetně 'online bez pingu')."""
+        tree = self.tree_widgets.get('online')
+        if not tree:
+            return
+        
+        tree.clear()
+        
+        # Získat všechny cíle
+        cleaned_text = self.cleaned_output_text.toPlainText()
+        active_targets = [line.strip() for line in cleaned_text.splitlines() 
+                        if line.strip() and not line.strip().startswith('#')]
+        sorted_targets = sorted(active_targets, key=lambda ip: tuple(int(p) for p in ip.split('.')))
+        
+        for ip in sorted_targets:
+            actual_status = self.get_actual_ip_status(ip)
+            
+            # Určit text, barvu a stav pro matici
+            if actual_status == 'up':
+                status_text = "Online"
+                color = QColor("#2ECC71")
+                matrix_status = 'online'
+            elif actual_status == 'up_no_ping':
+                status_text = "Online bez pingu"
+                color = QColor("#F39C12")
+                matrix_status = 'online bez ping'
+            else:
+                status_text = "Offline"
+                color = QColor("#95A5A6")
+                matrix_status = 'offline'
+            
+            # Přidat do tree
+            item = QTreeWidgetItem(tree, [ip, status_text])
+            item.setForeground(1, color)
+            tree.addTopLevelItem(item)
+            
+            # Aktualizovat matici
+            self.status_matrix.update_status(ip, 'online', matrix_status)
+        
+        # Přizpůsobit šířku sloupců po naplnění dat
+        tree.resizeColumnToContents(0)
+        tree.resizeColumnToContents(1)
+        
+        # Rozšířit sloupec "Stav" aby se vešel nadpis
+        min_width = tree.fontMetrics().horizontalAdvance("Stav") + 20
+        if tree.columnWidth(1) < min_width:
+            tree.setColumnWidth(1, min_width)
+
+    def update_cleaned_output(self):
+        formatted_ips, ip_count = clean_and_parse_ips(self.raw_input_text.toPlainText())
+        self.cleaned_output_text.setPlainText("\n".join(formatted_ips))
+        self.count_label.setText(f"Počet cílů: {ip_count}")
+        self.status_matrix.populate_targets([line for line in formatted_ips if line])
+
+    def get_command_template(self, phase, intensive=True):
+        """Vrací šablonu příkazu podle fáze a intenzity."""
+        if intensive:
+            # Intensive mode - maximální přesnost
+            return {
+                'online': "nmap -sn -T4 -oX - {target}",
+                'tcp': "nmap -T4 -sS -sV --version-intensity 9 -p- -oX - {target}",
+                'udp': "nmap -T4 -sU -sV --version-intensity 7 -p- -oX - {target}",
+                'vuln': "nmap -T4 -sV --version-intensity 9 --script vuln -oX - {target}",
+                'osscan': "nmap -O -T4 -oX - {target}"
+            }.get(phase, "")
+        else:
+            # Light mode - rychlejší
+            return {
+                'online': "nmap -sn -T4 -oX - {target}",
+                'tcp': "nmap -T4 -sS -sV --version-light -p- -oX - {target}",
+                'udp': "nmap -T4 -sU -sV --version-light --top-ports 1000 -oX - {target}",
+                'vuln': "nmap -T4 -sV --version-light --script vuln -oX - {target}",
+                'osscan': "nmap -O -T4 -oX - {target}"
+            }.get(phase, "")
+        
+    @Slot()
+    def update_command_templates(self):
+        """Aktualizuje šablony příkazů v UI podle vybrané intenzity v ComboBoxu."""
+        # Zjištění stavu přímo z ComboBoxu
+        is_intensive = self.intensity_combo.currentIndex() == 1
+        
+        for phase in self.phases:
+            new_template = self.get_command_template(phase, intensive=is_intensive)
+            if phase in self.command_edits:
+                self.command_edits[phase].setText(new_template)
+        
+        # Synchronizace šablon do manažera skenování, pokud již existuje
+        if hasattr(self, 'scan_manager'):
+            self.scan_manager.command_templates = {p: self.command_edits[p].text() for p in self.phases}
+
+        # Logování
+        if hasattr(self, 'worker_signals') and self.worker_signals:
+            mode = "Intensive" if is_intensive else "Light"
+            self.worker_signals.log.emit("info", f"🔄 Příkazy synchronizovány s režimem: {mode}")
+
+    def update_cumulative_reports(self, target_ip):
+        if not hasattr(self, 'base_export_path'):
+            return
+        
+        ip_full_data = {p: self.scan_results[p].get(target_ip, {}) for p in self.phases}
+        safe_name = target_ip.replace('/', '_')
+        ip_dir = self.base_export_path / safe_name
+        ip_dir.mkdir(parents=True, exist_ok=True)
+        
+        with open(ip_dir / "full_report.json", 'w', encoding='utf-8') as f:
+            json.dump(ip_full_data, f, indent=4, ensure_ascii=False)
+        
+        with open(self.base_export_path / "master_report.json", 'w', encoding='utf-8') as f:
+            json.dump(self.scan_results, f, indent=4, ensure_ascii=False)
+            
+    def get_actual_ip_status(self, ip_address):
+        """
+        Určí skutečný stav IP adresy na základě online check a nalezených portů.
+        Vrací: 'up', 'down', nebo 'up_no_ping'
+        """
+        online_status = self.scan_results.get('online', {}).get(ip_address, {}).get('status', {}).get('state', 'unknown')
+        
+        # Zkontrolovat, zda má IP otevřené porty v TCP nebo UDP
+        # ALE POUZE pokud nebylo skenování přeskočeno
+        has_open_ports = False
+        
+        for phase in ['tcp', 'udp']:
+            phase_data = self.scan_results.get(phase, {}).get(ip_address, {})
+            
+            # Pokud je fáze označena jako "skipped" nebo "skipped_by_user", ignorovat ji
+            if phase_data.get('status') in ['skipped', 'skipped_by_user']:
+                continue
+            
+            # Kontrolovat otevřené porty pouze pokud není přeskočeno
+            if phase in phase_data:
+                for port, info in phase_data[phase].items():
+                    if info.get('state') == 'open':
+                        has_open_ports = True
+                        break
+            
+            if has_open_ports:
+                break
+        
+        # Určit skutečný stav
+        if online_status == 'up':
+            return 'up'
+        elif has_open_ports:
+            return 'up_no_ping'  # Online bez ping odpovědi (má otevřené porty)
+        else:
+            return 'down'  # Offline (žádné porty nebo vše přeskočeno)
+
+    def export_phase_minimal(self, phase):
+        with QMutexLocker(output_mutex):
+            data = self.scan_results.get(phase, {})
+            
+            if not data:
+                # Detailnější diagnostika
+                available_phases = [p for p, d in self.scan_results.items() if d]
+                self.worker_signals.log.emit("warning", f"Pro fázi '{phase}' nejsou žádná data k exportu.")
+                if available_phases:
+                    self.worker_signals.log.emit("info", f"Dostupné fáze s daty: {', '.join(available_phases)}")
+                else:
+                    self.worker_signals.log.emit("warning", "Žádná fáze nemá data. Byl sken dokončen?")
+                return
+            
+            filename, _ = QFileDialog.getSaveFileName(
+                self, 
+                f"Exportovat souhrn fáze '{phase}'", 
+                f"nmap_summary_{phase}.txt", 
+                "Text Files (*.txt)"
+            )
+            
+            if not filename:
+                self.worker_signals.log.emit("info", "Export zrušen uživatelem.")
+                return
+            
+            try:
+                with open(filename, 'w', encoding='utf-8') as f:
+                    # Hlavička s názvem projektu a timestampem
+                    project_name = self.project_name_edit.text()
+                    if hasattr(self, 'base_export_path') and self.base_export_path:
+                        timestamp = self.base_export_path.name.replace('nmap_scan_results_', '')
+                    else:
+                        timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+                    
+                    f.write(f"Projekt: {project_name}\n")
+                    f.write(f"Čas testování: {timestamp}\n")
+                    f.write(f"Souhrn výsledků skenování pro fázi: {phase.upper()}\n")
+                    f.write(f"Exportováno: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write("="*40 + "\n\n")
+                    
+                    # Speciální formát pro fázi ONLINE - UPRAVENO
+                    if phase == 'online':
+                        cleaned_text = self.cleaned_output_text.toPlainText()
+                        active_targets = [
+                            line.strip() for line in cleaned_text.splitlines()
+                            if line.strip() and not line.strip().startswith('#')
+                        ]
+                        sorted_targets = sorted(
+                            active_targets, key=lambda ip: tuple(int(p) for p in ip.split('.'))
+                        )
+                        
+                        f.write("Seznam testovaných cílů:\n")
+                        f.write("=" * 40 + "\n\n")
+                        
+                        # Kategorizovat IP podle skutečného stavu
+                        online_ips = []
+                        online_no_ping_ips = []
+                        offline_ips = []
+                        
+                        for target in sorted_targets:
+                            actual_status = self.get_actual_ip_status(target)
+                            if actual_status == 'up':
+                                online_ips.append(target)
+                            elif actual_status == 'up_no_ping':
+                                online_no_ping_ips.append(target)
+                            else:
+                                offline_ips.append(target)
+                        
+                        # Sekce: Online
+                        f.write(f"Online ({len(online_ips)}):\n")
+                        f.write("-" * 40 + "\n")
+                        for ip in online_ips:
+                            f.write(f"{ip}\n")
+                        f.write("\n")
+                        
+                        # Sekce: Online bez pingu
+                        f.write(f"Online bez pingu ({len(online_no_ping_ips)}):\n")
+                        f.write("-" * 40 + "\n")
+                        for ip in online_no_ping_ips:
+                            f.write(f"{ip}\n")
+                        f.write("\n")
+                        
+                        # Sekce: Offline
+                        f.write(f"Offline ({len(offline_ips)}):\n")
+                        f.write("-" * 40 + "\n")
+                        for ip in offline_ips:
+                            f.write(f"{ip}\n")
+                    
+                    # Speciální formát pro fázi OSSCAN
+                    elif phase == 'osscan':
+                        sorted_ips = sorted(data.keys(), key=lambda ip: tuple(int(p) for p in ip.split('.')))
+                        
+                        for ip in sorted_ips:
+                            res = data[ip]
+                            f.write(f"Cíl: {ip}\n")
+                            
+                            if res.get("status") == "skipped_by_user":
+                                f.write("  Status: Fáze zakázána uživatelem\n")
+                            elif res.get("status") == "skipped":
+                                f.write("  Status: Přeskočeno (cíl byl offline)\n")
+                            elif 'error' in res:
+                                f.write(f"  Chyba: {res['error']}\n")
+                            else:
+                                # Export OS detekce
+                                if 'osmatch' in res and res['osmatch']:
+                                    f.write("  Detekované operační systémy:\n")
+                                    for match in res['osmatch']:
+                                        os_name = match.get('name', 'Neznámý OS')
+                                        accuracy = match.get('accuracy', 'N/A')
+                                        f.write(f"    - {os_name} (Přesnost: {accuracy}%)\n")
+                                        
+                                        # Pokud jsou dostupné další detaily (OS class)
+                                        if 'osclass' in match:
+                                            for osclass in match['osclass']:
+                                                vendor = osclass.get('vendor', '')
+                                                osfamily = osclass.get('osfamily', '')
+                                                osgen = osclass.get('osgen', '')
+                                                f.write(f"      Vendor: {vendor}, Family: {osfamily}, Gen: {osgen}\n")
+                                else:
+                                    f.write("  - Detekce operačního systému selhala nebo nebyla nalezena žádná shoda.\n")
+                            
+                            f.write("\n" + "-"*40 + "\n\n")
+                    
+                    # Původní formát pro ostatní fáze (tcp, udp, vuln)
+                    else:
+                        sorted_ips = sorted(data.keys(), key=lambda ip: tuple(int(p) for p in ip.split('.')))
+                        
+                        for ip in sorted_ips:
+                            res = data[ip]
+                            f.write(f"Cíl: {ip}\n")
+                            
+                            if res.get("status") == "skipped_by_user":
+                                f.write("  Status: Fáze zakázána uživatelem\n")
+                            elif res.get("status") == "skipped":
+                                f.write("  Status: Přeskočeno (cíl byl offline)\n")
+                            elif 'error' in res:
+                                f.write(f"  Chyba: {res['error']}\n")
+                            else:
+                                found_ports = False
+                                for proto in ['tcp', 'udp']:
+                                    if proto in res:
+                                        for port, info in res[proto].items():
+                                            found_ports = True
+                                            port_state = info.get('state', 'unknown')
+                                            service = f"{info.get('name', 'n/a')} {info.get('version', '')}".strip()
+                                            f.write(f"  - Port {port}/{proto}: {port_state} | Služba: {service}\n")
+                                            
+                                            if 'script' in info:
+                                                for script_name, script_out in info['script'].items():
+                                                    f.write(f"    -> Skript '{script_name}': {script_out.strip().replace(chr(10), ' ')}\n")
+                                
+                                if not found_ports:
+                                    f.write("  - Žádné relevantní porty nebo zranitelnosti nenalezeny.\n")
+                            
+                            f.write("\n" + "-"*40 + "\n\n")
+                
+                self.worker_signals.log.emit("export", f"Výsledky fáze '{phase}' úspěšně exportovány do {filename}.")
+            
+            except Exception as e:
+                self.worker_signals.log.emit("error", f"Při exportu fáze '{phase}' nastala chyba: {e}")
+
+
+    def sort_tree_by_ip(self, tree):
+        items = []
+        for i in range(tree.topLevelItemCount()):
+            items.append(tree.takeTopLevelItem(0))
+        def ip_sort_key(item):
+            try: return tuple(int(p) for p in item.text(0).split('.'))
+            except: return (0,0,0,0)
+        items.sort(key=ip_sort_key)
+        tree.addTopLevelItems(items)
+        
+        
+        
+        
+        
+        
+    def show_context_menu(self, position):
+        """Zobrazí kontextové menu pro zakomentování/odkomentování IP adres."""
+        from PySide6.QtWidgets import QMenu
+        from PySide6.QtGui import QAction
+        
+        menu = QMenu()
+        
+        comment_action = QAction("Zakomentovat vybrané řádky (# prefix)", self)
+        comment_action.triggered.connect(self.comment_selected_lines)
+        menu.addAction(comment_action)
+        
+        uncomment_action = QAction("Odkomentovat vybrané řádky", self)
+        uncomment_action.triggered.connect(self.uncomment_selected_lines)
+        menu.addAction(uncomment_action)
+        
+        menu.exec(self.cleaned_output_text.mapToGlobal(position))
+        
+    def comment_selected_lines(self):
+        """Zakomentuje vybrané řádky přidáním # na začátek."""
+        cursor = self.cleaned_output_text.textCursor()
+        
+        # Získat celý text
+        full_text = self.cleaned_output_text.toPlainText()
+        lines = full_text.split('\n')
+        
+        # Zjistit, které řádky jsou vybrané
+        start = cursor.selectionStart()
+        end = cursor.selectionEnd()
+        
+        if start == end:
+            # Žádný výběr - použít aktuální řádek
+            current_pos = cursor.position()
+            text_before = full_text[:current_pos]
+            current_line = text_before.count('\n')
+            
+            if current_line < len(lines):
+                line = lines[current_line]
+                if line.strip() and not line.strip().startswith('#'):
+                    lines[current_line] = '# ' + line
+        else:
+            # Má výběr - zjistit rozsah řádků
+            text_before_start = full_text[:start]
+            text_before_end = full_text[:end]
+            start_line = text_before_start.count('\n')
+            end_line = text_before_end.count('\n')
+            
+            # Zakomentovat všechny řádky v rozsahu
+            for i in range(start_line, end_line + 1):
+                if i < len(lines):
+                    line = lines[i]
+                    if line.strip() and not line.strip().startswith('#'):
+                        lines[i] = '# ' + line
+        
+        # Nastavit zpět celý text
+        new_text = '\n'.join(lines)
+        self.cleaned_output_text.setPlainText(new_text)
+        
+        # Aktualizovat počet cílů
+        active_count = sum(1 for line in lines if line.strip() and not line.strip().startswith('#'))
+        self.count_label.setText(f"Počet cílů: {active_count}")
+
+    def uncomment_selected_lines(self):
+        """Odkomentuje vybrané řádky odstraněním # z začátku."""
+        cursor = self.cleaned_output_text.textCursor()
+        
+        # Získat celý text
+        full_text = self.cleaned_output_text.toPlainText()
+        lines = full_text.split('\n')
+        
+        # Zjistit, které řádky jsou vybrané
+        start = cursor.selectionStart()
+        end = cursor.selectionEnd()
+        
+        if start == end:
+            # Žádný výběr - použít aktuální řádek
+            current_pos = cursor.position()
+            text_before = full_text[:current_pos]
+            current_line = text_before.count('\n')
+            
+            if current_line < len(lines):
+                line = lines[current_line]
+                if line.strip().startswith('#'):
+                    lines[current_line] = line.lstrip('#').lstrip()
+        else:
+            # Má výběr - zjistit rozsah řádků
+            text_before_start = full_text[:start]
+            text_before_end = full_text[:end]
+            start_line = text_before_start.count('\n')
+            end_line = text_before_end.count('\n')
+            
+            # Odkomentovat všechny řádky v rozsahu
+            for i in range(start_line, end_line + 1):
+                if i < len(lines):
+                    line = lines[i]
+                    if line.strip().startswith('#'):
+                        lines[i] = line.lstrip('#').lstrip()
+        
+        # Nastavit zpět celý text
+        new_text = '\n'.join(lines)
+        self.cleaned_output_text.setPlainText(new_text)
+        
+        # Aktualizovat počet cílů
+        active_count = sum(1 for line in lines if line.strip() and not line.strip().startswith('#'))
+        self.count_label.setText(f"Počet cílů: {active_count}")
+
+
+
+
+
+
+    def export_multiple_results_dialog(self):
+        """Zobrazí dialog pro výběr záložek a následný export do jednoho souboru."""
+        # Zkontrolovat, zda jsou nějaké výsledky
+        if not any(self.scan_results.get(phase, {}) for phase in self.phases):
+            QMessageBox.information(self, "Export", "Nejsou k dispozici žádné výsledky k exportu.")
+            return
+        
+        # Zobrazit dialog pro výběr záložek
+        dialog = ExportMultipleDialog(self.phases, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        
+        selected_phases = dialog.selected_phases
+        
+        # Vybrat kam uložit
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        default_filename = f"nmap_export_{timestamp}.txt"
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Uložit export výsledků",
+            default_filename,
+            "Text Files (*.txt);;All Files (*)"
+        )
+        
+        if not path:
+            return
+        
+        # Exportovat vybrané záložky do jednoho souboru
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write("=" * 80 + "\n")
+                f.write("NMAP SCANNER - EXPORT VÝSLEDKŮ\n")
+                f.write("=" * 80 + "\n")
+                f.write(f"Datum exportu: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Projekt: {self.project_name_edit.text()}\n")
+                f.write(f"Exportované záložky: {', '.join([p.capitalize() for p in selected_phases])}\n")
+                f.write("=" * 80 + "\n\n")
+                
+                # Exportovat každou vybranou záložku
+                for phase in selected_phases:
+                    f.write("\n" + "=" * 80 + "\n")
+                    f.write(f"ZÁLOŽKA: {phase.upper()}\n")
+                    f.write("=" * 80 + "\n\n")
+                    
+                    # Získat data ze záložky
+                    tree = self.tree_widgets.get(phase)
+                    if not tree:
+                        f.write("  [Žádná data]\n\n")
+                        continue
+                    
+                    # Export struktury záložky
+                    root = tree.invisibleRootItem()
+                    self._export_tree_item(f, root, 0)
+                
+                f.write("\n" + "=" * 80 + "\n")
+                f.write("KONEC EXPORTU\n")
+                f.write("=" * 80 + "\n")
+            
+            QMessageBox.information(self, "Export", f"Výsledky úspěšně exportovány do:\n{path}")
+            self.worker_signals.log.emit("info", f"Export výsledků dokončen: {path}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Chyba exportu", f"Nelze uložit soubor: {e}")
+            
+    def _export_tree_item(self, file, item, indent):
+        """Rekurzivně exportuje položky stromu do souboru."""
+        for i in range(item.childCount()):
+            child = item.child(i)
+            
+            # Získat text ze všech sloupců
+            columns = []
+            for col in range(child.columnCount()):
+                text = child.text(col)
+                if text:
+                    columns.append(text)
+            
+            # Zapsat s odsazením
+            if columns:
+                indent_str = "  " * indent
+                file.write(f"{indent_str}{' | '.join(columns)}\n")
+            
+            # Rekurzivně zpracovat potomky
+            if child.childCount() > 0:
+                self._export_tree_item(file, child, indent + 1)
+
+    def export_ports_summary_dialog(self):
+        """Zobrazí dialog pro výběr stavů portů a následný export."""
+        # Získat dostupné stavy z port_summary_tree
+        available_states = set()
+        root = self.port_summary_tree.invisibleRootItem()
+        
+        for i in range(root.childCount()):
+            state_item = root.child(i)
+            state_text = state_item.text(0)
+            # Extrahovat stav z textu (např. "OPEN - 5 portů (10×)")
+            if ' - ' in state_text:
+                state = state_text.split(' - ')[0].lower()
+                available_states.add(state)
+        
+        if not available_states:
+            QMessageBox.information(self, "Export portů", "Nejsou k dispozici žádné porty k exportu.")
+            return
+        
+        # Zobrazit dialog pro výběr stavů
+        dialog = ExportPortsDialog(sorted(available_states), self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        
+        selected_states = dialog.selected_states
+        include_ips = dialog.include_ips  # Získat volbu zahrnutí IP adres
+        
+        # Vygenerovat název souboru s timestampem
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        project_name = self.project_name_edit.text().replace(" ", "_")
+        default_filename = f"port_summary_{project_name}_{timestamp}.txt"
+        
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Uložit export přehledu portů",
+            default_filename,
+            "Text Files (*.txt);;All Files (*)"
+        )
+        
+        if not path:
+            return
+        
+        # Exportovat vybrané stavy portů
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write("=" * 80 + "\n")
+                f.write("PŘEHLED PORTŮ - EXPORT\n")
+                f.write("=" * 80 + "\n")
+                f.write(f"Datum exportu: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Projekt: {self.project_name_edit.text()}\n")
+                f.write(f"Exportované stavy: {', '.join([s.upper() for s in selected_states])}\n")
+                f.write(f"Zahrnout IP adresy: {'Ano' if include_ips else 'Ne'}\n")
+                f.write("=" * 80 + "\n\n")
+                
+                # Projít port_summary_tree a exportovat vybrané stavy
+                root = self.port_summary_tree.invisibleRootItem()
+                
+                for i in range(root.childCount()):
+                    state_item = root.child(i)
+                    state_text = state_item.text(0)
+                    
+                    # Extrahovat stav
+                    if ' - ' in state_text:
+                        state = state_text.split(' - ')[0].lower()
+                    else:
+                        continue
+                    
+                    # Přeskočit pokud není ve vybraných stavech
+                    if state not in selected_states:
+                        continue
+                    
+                    # Zapsat stav
+                    f.write("\n" + "=" * 80 + "\n")
+                    f.write(f"STAV: {state_text}\n")
+                    f.write("=" * 80 + "\n\n")
+                    
+                    # Exportovat protokoly (TCP/UDP)
+                    for j in range(state_item.childCount()):
+                        proto_item = state_item.child(j)
+                        proto_text = proto_item.text(0)
+                        f.write(f"\n{proto_text}\n")
+                        f.write("-" * 40 + "\n")
+                        
+                        # Exportovat jednotlivé porty
+                        for k in range(proto_item.childCount()):
+                            port_item = proto_item.child(k)
+                            port_text = port_item.text(0).strip()
+                            count_text = port_item.text(1)
+                            
+                            # Získat seznam IP z UserRole (pokud existuje)
+                            port_data = port_item.data(0, Qt.UserRole)
+                            if port_data and isinstance(port_data, dict):
+                                port_num = port_data.get('port', port_text)
+                                ips = port_data.get('ips', [])
+                                
+                                if include_ips and ips:
+                                    # PODROBNÝ export s IP adresami
+                                    f.write(f"  Port {port_num}: {count_text} IP adres\n")
+                                    f.write(f"    IP: {', '.join(sorted(ips))}\n")
+                                else:
+                                    # ZÁKLADNÍ export bez IP adres
+                                    f.write(f"  Port {port_num}: {count_text} IP adres\n")
+                            else:
+                                f.write(f"  {port_text}: {count_text} IP adres\n")
+                
+                f.write("\n" + "=" * 80 + "\n")
+                f.write("KONEC EXPORTU\n")
+                f.write("=" * 80 + "\n")
+            
+            QMessageBox.information(self, "Export", f"Přehled portů úspěšně exportován do:\n{path}")
+            self.worker_signals.log.emit("info", f"Export přehledu portů dokončen: {path}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Chyba exportu", f"Nelze uložit soubor: {e}")
+
+    def export_services_summary_dialog(self):
+        """Zobrazí dialog pro výběr protokolů služeb a následný export."""
+        # Získat dostupné protokoly z service_summary_tree
+        available_protocols = set()
+        root = self.service_summary_tree.invisibleRootItem()
+        
+        for i in range(root.childCount()):
+            proto_item = root.child(i)
+            proto_text = proto_item.text(0)
+            if proto_text in ['TCP', 'UDP']:
+                available_protocols.add(proto_text)
+        
+        if not available_protocols:
+            QMessageBox.information(self, "Export služeb", "Nejsou k dispozici žádné služby k exportu.")
+            return
+        
+        # Zobrazit dialog pro výběr protokolů
+        dialog = ExportServicesDialog(sorted(available_protocols), self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        
+        selected_protocols = dialog.selected_protocols
+        detail_level = dialog.detail_level  # summary / ports / full
+        
+        # Vygenerovat název souboru s timestampem
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        project_name = self.project_name_edit.text().replace(" ", "_")
+        level_names = {"summary": "summary", "ports": "ports", "full": "detailed"}
+        detail_suffix = level_names.get(detail_level, "export")
+        default_filename = f"service_{detail_suffix}_{project_name}_{timestamp}.txt"
+        
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Uložit export přehledu služeb",
+            default_filename,
+            "Text Files (*.txt);;All Files (*)"
+        )
+        
+        if not path:
+            return
+        
+        # Exportovat vybrané protokoly služeb
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write("=" * 80 + "\n")
+                if detail_level == "summary":
+                    f.write("PŘEHLED SLUŽEB - SOUHRN\n")
+                    export_desc = "Souhrn (pouze služby)"
+                elif detail_level == "ports":
+                    f.write("PŘEHLED SLUŽEB - STŘEDNÍ EXPORT\n")
+                    export_desc = "Střední (služby + porty)"
+                else:
+                    f.write("PŘEHLED SLUŽEB - DETAILNÍ EXPORT\n")
+                    export_desc = "Detailní (služby + porty + IP adresy)"
+                
+                f.write("=" * 80 + "\n")
+                f.write(f"Datum exportu: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Projekt: {self.project_name_edit.text()}\n")
+                f.write(f"Exportované protokoly: {', '.join(selected_protocols)}\n")
+                f.write(f"Typ exportu: {export_desc}\n")
+                f.write("=" * 80 + "\n\n")
+                
+                # Projít service_summary_tree a exportovat vybrané protokoly
+                root = self.service_summary_tree.invisibleRootItem()
+                
+                for i in range(root.childCount()):
+                    proto_item = root.child(i)
+                    proto_text = proto_item.text(0)
+                    
+                    # Přeskočit pokud není ve vybraných protokolech
+                    if proto_text not in selected_protocols:
+                        continue
+                    
+                    # Zapsat protokol
+                    f.write("\n" + "=" * 80 + "\n")
+                    f.write(f"PROTOKOL: {proto_text}\n")
+                    f.write("=" * 80 + "\n\n")
+                    
+                    if detail_level == "summary":
+                        # ===== SOUHRN - Jen seznam služeb =====
+                        for j in range(proto_item.childCount()):
+                            service_item = proto_item.child(j)
+                            service_name = service_item.text(0)
+                            total_count = service_item.text(1)
+                            f.write(f"  {service_name}: {total_count} IP adres\n")
+                    
+                    elif detail_level == "ports":
+                        # ===== STŘEDNÍ - Služby + porty (bez IP) =====
+                        for j in range(proto_item.childCount()):
+                            service_item = proto_item.child(j)
+                            service_name = service_item.text(0)
+                            total_count = service_item.text(1)
+                            
+                            f.write(f"\n{'─' * 70}\n")
+                            f.write(f"Služba: {service_name}\n")
+                            f.write(f"Celkem: {total_count} IP adres\n")
+                            f.write(f"{'─' * 70}\n")
+                            
+                            # Exportovat porty bez IP adres
+                            for k in range(service_item.childCount()):
+                                port_item = service_item.child(k)
+                                port_num = port_item.text(0)
+                                port_count = port_item.text(1)
+                                f.write(f"  Port {port_num}: {port_count} IP adres\n")
+                    
+                    else:
+                        # ===== DETAILNÍ - Porty a IP adresy =====
+                        for j in range(proto_item.childCount()):
+                            service_item = proto_item.child(j)
+                            service_name = service_item.text(0)
+                            total_count = service_item.text(1)
+                            
+                            f.write(f"\n{'─' * 70}\n")
+                            f.write(f"Služba: {service_name}\n")
+                            f.write(f"Celkem: {total_count} IP adres\n")
+                            f.write(f"{'─' * 70}\n")
+                            
+                            # Exportovat porty pro tuto službu
+                            for k in range(service_item.childCount()):
+                                port_item = service_item.child(k)
+                                port_num = port_item.text(0)
+                                port_count = port_item.text(1)
+                                
+                                # Získat seznam IP z UserRole
+                                port_data = port_item.data(0, Qt.UserRole)
+                                
+                                if port_data and isinstance(port_data, dict):
+                                    ips = port_data.get('ips', set())
+                                    
+                                    if ips:
+                                        f.write(f"\n  Port {port_num} ({port_count} IP adres):\n")
+                                        # IP adresy pod sebou bez čárek
+                                        for ip in sorted(ips):
+                                            f.write(f"    {ip}\n")
+                                    else:
+                                        f.write(f"\n  Port {port_num}: {port_count} IP adres\n")
+                                else:
+                                    f.write(f"\n  Port {port_num}: {port_count} IP adres\n")
+                            
+                            # Pokud služba nemá žádné podpoložky portů
+                            if service_item.childCount() == 0:
+                                service_data = service_item.data(0, Qt.UserRole)
+                                if service_data and isinstance(service_data, dict):
+                                    all_ips = service_data.get('ips', set())
+                                    if all_ips:
+                                        f.write(f"\n  IP adresy:\n")
+                                        # IP adresy pod sebou bez čárek
+                                        for ip in sorted(all_ips):
+                                            f.write(f"    {ip}\n")
+                
+                f.write("\n" + "=" * 80 + "\n")
+                f.write("KONEC EXPORTU\n")
+                f.write("=" * 80 + "\n")
+            
+            level_names_cz = {"summary": "souhrnný", "ports": "střední", "full": "detailní"}
+            export_type = level_names_cz.get(detail_level, "export")
+            QMessageBox.information(self, "Export", f"Přehled služeb ({export_type}) úspěšně exportován do:\n{path}")
+            self.worker_signals.log.emit("info", f"Export přehledu služeb ({export_type}) dokončen: {path}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Chyba exportu", f"Nelze uložit soubor: {e}")
+
+    def export_vulnerability_report(self):
+        """Exportuje analýzu zranitelností do Word dokumentu s použitím vzorové šablony."""
+        if not any(self.scan_results.get(phase, {}) for phase in ['tcp', 'udp']):
+            QMessageBox.information(self, "Export", "Nejsou k dispozici žádné výsledky pro export.")
+            return
+        
+        # Najít šablonu ve složce skriptu
+        import os
+        import re
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        template_path = os.path.join(script_dir, "Pentest-Report.docx")
+        
+        if not os.path.exists(template_path):
+            QMessageBox.warning(self, "Varování", f"Šablona 'Pentest-Report.docx' nebyla nalezena ve složce:\n{script_dir}")
+            return
+        
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        project_name = self.project_name_edit.text().replace(" ", "_")
+        default_filename = f"vulnerability_report_{project_name}_{timestamp}.docx"
+        
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Uložit analýzu zranitelností",
+            default_filename,
+            "Word Documents (*.docx);;All Files (*)"
+        )
+        
+        if not path:
+            return
+        
+        try:
+            from copy import deepcopy
+            
+            # Načíst vzorový dokument
+            template_doc = Document(template_path)
+            
+            # Uložit vzorovou tabulku
+            template_table_element = None
+            if len(template_doc.tables) > 0:
+                template_table_element = template_doc.tables[0]._element
+            
+            # Vyčistit dokument
+            for paragraph in template_doc.paragraphs[:]:
+                p = paragraph._element
+                p.getparent().remove(p)
+            
+            for table in template_doc.tables[:]:
+                tbl = table._element
+                tbl.getparent().remove(tbl)
+            
+            doc = template_doc
+            
+            # Přidat nadpis a metadata
+            title = doc.add_heading('Analýza zranitelností sítě', 0)
+            title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
+            doc.add_paragraph(f"Projekt: {self.project_name_edit.text()}")
+            doc.add_paragraph(f"Datum vytvoření: {time.strftime('%d.%m.%Y %H:%M:%S')}")
+            doc.add_paragraph()
+            
+            # Získat všechny IP adresy
+            all_targets = set()
+            for phase in ['tcp', 'udp']:
+                if phase in self.scan_results:
+                    all_targets.update(self.scan_results[phase].keys())
+            
+            # Pro každý cíl
+            for target_idx, target in enumerate(sorted(all_targets)):
+                # Získat porty
+                ports_data = []
+                
+                # NAČÍST DATA Z VULN FÁZE (tam jsou CVE)
+                vuln_data = {}
+                if 'vuln' in self.scan_results and target in self.scan_results['vuln']:
+                    vuln_data = self.scan_results['vuln'][target]
+                
+                for phase in ['tcp', 'udp']:
+                    if phase not in self.scan_results:
+                        continue
+                    
+                    target_data = self.scan_results[phase].get(target, {})
+                    
+                    if phase in target_data:
+                        for port_num, port_info in target_data[phase].items():
+                            state = port_info.get('state', 'unknown')
+                            
+                            if state in ['open', 'open|filtered']:
+                                service = port_info.get('name', 'unknown')
+                                version = port_info.get('version', '')
+                                product = port_info.get('product', '')
+                                cves = port_info.get('cves', [])
+                                
+                                # ZÍSKAT SCRIPTS Z VULN FÁZE!
+                                scripts = {}
+                                if phase in vuln_data and port_num in vuln_data[phase]:
+                                    scripts = vuln_data[phase][port_num].get('script', {})
+                                
+                                service_desc = service if service != 'unknown' else ''
+                                
+                                has_vulnerability = False
+                                vuln_text = ""
+                                risk_level = ""
+                                risk_color = None
+                                max_cvss = 0.0
+                                
+                                # PARSOVAT VULNERS SCRIPT PRO CVE A CVSS
+                                cve_list = []
+                                if 'vulners' in scripts:
+                                    vulners_output = str(scripts['vulners'])
+                                    
+                                    # Regex: CVE-rok-číslo následované whitespace a pak číslem
+                                    cve_pattern = r'CVE-(\d{4}-\d+)\s+([\d.]+)'
+                                    matches = re.findall(cve_pattern, vulners_output)
+                                    
+                                    for cve_year_num, cvss_str in matches:
+                                        cve_id = f"CVE-{cve_year_num}"
+                                        try:
+                                            cvss = float(cvss_str)
+                                            # Filtrovat jenom čísla 0.1 - 10.0 (validní CVSS)
+                                            if 0.1 <= cvss <= 10.0:
+                                                cve_list.append((cve_id, cvss))
+                                                if cvss > max_cvss:
+                                                    max_cvss = cvss
+                                        except ValueError:
+                                            continue
+                                
+                                # Hledat EXPLOIT v jakémkoliv scriptu
+                                exploit_found = False
+                                if scripts:
+                                    for script_name, script_output in scripts.items():
+                                        if 'EXPLOIT' in str(script_output).upper():
+                                            exploit_found = True
+                                            break
+                                
+                                # Pokud jsou CVE ze scriptu nebo z cves pole nebo exploit
+                                if cve_list or cves or exploit_found:
+                                    has_vulnerability = True
+                                    vuln_lines = ["A06 - zranitelná komponenta"]
+                                    
+                                    if exploit_found:
+                                        vuln_lines[0] = "A06 - zranitelná komponenta se známým exploitem"
+                                        risk_level = "C."
+                                        risk_color = "800080"  # Tmavě fialová
+                                    
+                                    # Přidat CVE ze scriptu (s nejvyšším skóre první)
+                                    if cve_list:
+                                        cve_list.sort(key=lambda x: x[1], reverse=True)
+                                        # Vzít top 5 CVE
+                                        for cve_id, cvss in cve_list[:5]:
+                                            vuln_lines.append(f"{cve_id} (CVSS: {cvss})")
+                                    
+                                    # Přidat CVE z pole (pokud tam jsou a nejsou ve scriptu)
+                                    existing_cves = {cve_id for cve_id, _ in cve_list}
+                                    for cve in cves:
+                                        if cve not in existing_cves:
+                                            vuln_lines.append(f"{cve}")
+                                    
+                                    vuln_text = '\n'.join(vuln_lines)
+                                    
+                                    # Určit risk level podle CVSS 3.0 (pokud už není nastaveno exploit)
+                                    if not risk_level:
+                                        if max_cvss >= 9.0:
+                                            risk_level = "C."
+                                            risk_color = "800080"  # Tmavě fialová
+                                        elif max_cvss >= 7.0:
+                                            risk_level = "H."
+                                            risk_color = "FF0000"  # Červená
+                                        elif max_cvss >= 4.0:
+                                            risk_level = "M."
+                                            risk_color = "FFC000"  # Oranžová
+                                        elif max_cvss > 0.0:
+                                            risk_level = "L."
+                                            risk_color = "00B050"  # ← ZMĚNA: Zelená (místo žluté)
+                                        else:
+                                            risk_level = "M."
+                                            risk_color = "FFC000"  # Default oranžová
+                                
+                                # ========================================
+                                # DETEKCE ZÁKLADNÍCH ZRANITELNOSTÍ
+                                # ========================================
+                                
+                                # 1. Identifikovaná verze služby
+                                if version and version.strip() and version.lower() not in ['unknown', 'n/a', '']:
+                                    if not has_vulnerability:
+                                        has_vulnerability = True
+                                        vuln_lines = []
+                                    else:
+                                        vuln_lines = vuln_text.split('\n')
+                                    
+                                    vuln_lines.append("A05 - Identifikovaná verze")
+                                    
+                                    # Sestavit popis: product + version
+                                    version_desc = ""
+                                    if product and product.strip():
+                                        version_desc = f"{product} {version}"
+                                    else:
+                                        version_desc = version
+                                    
+                                    vuln_lines.append(version_desc)
+                                    vuln_text = '\n'.join(vuln_lines)
+                                    
+                                    # Nastavit LOW risk pokud není vyšší
+                                    if not risk_level or risk_level == "L.":
+                                        risk_level = "L."
+                                        risk_color = "00B050"  # Zelená
+
+                                
+                                # 2. MSRPC služba
+                                if 'msrpc' in service.lower():
+                                    if not has_vulnerability:
+                                        has_vulnerability = True
+                                        vuln_lines = []
+                                    else:
+                                        vuln_lines = vuln_text.split('\n')
+                                    
+                                    vuln_lines.append("A04 - Nezabezpečený design")
+                                    vuln_lines.append("Exponovaná systémová služba MSRPC")
+                                    vuln_text = '\n'.join(vuln_lines)
+                                    
+                                    # Nastavit MEDIUM pokud není vyšší
+                                    if not risk_level or risk_level in ["L."]:
+                                        risk_level = "M."
+                                        risk_color = "FFC000"  # Oranžová
+                                
+                                # 3. RDP služba (port 3389)
+                                if port_num == '3389' or 'rdp' in service.lower() or 'ms-wbt-server' in service.lower():
+                                    if not has_vulnerability:
+                                        has_vulnerability = True
+                                        vuln_lines = []
+                                    else:
+                                        vuln_lines = vuln_text.split('\n')
+                                    
+                                    vuln_lines.append("A05 - Bezpečnostní chybná konfigurace")
+                                    vuln_lines.append("Exponovaná služba RDP")
+                                    vuln_text = '\n'.join(vuln_lines)
+                                    
+                                    # Nastavit MEDIUM pokud není vyšší
+                                    if not risk_level or risk_level in ["L."]:
+                                        risk_level = "M."
+                                        risk_color = "FFC000"  # Oranžová
+                                
+                                ports_data.append({
+                                    'port': f"{port_num}/{phase.upper()}",
+                                    'service': service_desc,
+                                    'vulnerability': vuln_text,
+                                    'risk': risk_level,
+                                    'risk_color': risk_color,
+                                    'has_vuln': has_vulnerability
+                                })
+                
+                # VYTVOŘ HEADING
+                heading = doc.add_heading(target, level=3)
+                
+                if not ports_data:
+                    doc.add_paragraph("Žádné otevřené porty nebyly nalezeny.")
+                    doc.add_paragraph()
+                    continue
+                
+                ports_data.sort(key=lambda x: int(x['port'].split('/')[0]))
+                
+                # ZKOPÍRUJ A VLOŽ TABULKU
+                if template_table_element is not None:
+                    new_tbl_element = deepcopy(template_table_element)
+                    
+                    # Vlož tabulku přímo za heading element
+                    heading._element.addnext(new_tbl_element)
+                    
+                    # Najdi nově přidanou tabulku
+                    table = doc.tables[-1]
+                    
+                    # Upravit počet řádků
+                    needed_rows = len(ports_data) + 1
+                    while len(table.rows) < needed_rows:
+                        table.add_row()
+                    while len(table.rows) > needed_rows:
+                        tr = table.rows[-1]._element
+                        tr.getparent().remove(tr)
+                else:
+                    table = doc.add_table(rows=len(ports_data) + 1, cols=5)
+                
+                # Vyplnit hlavičku
+                hdr_cells = table.rows[0].cells
+                headers = ['IP', 'Porty', 'Služba', 'Zranitelnost', 'Risk']
+                for i, header_text in enumerate(headers):
+                    if i < len(hdr_cells):
+                        hdr_cells[i].text = header_text
+                
+                # Vyplnit data
+                for idx, port_data in enumerate(ports_data, start=1):
+                    if idx >= len(table.rows):
+                        break
+                    
+                    row_cells = table.rows[idx].cells
+                    
+                    for cell in row_cells:
+                        cell.text = ''
+                    
+                    row_cells[0].text = target
+                    row_cells[1].text = port_data['port']
+                    row_cells[2].text = port_data['service']
+                    
+                    if port_data['has_vuln']:
+                        row_cells[3].text = port_data['vulnerability']
+                        shading = OxmlElement('w:shd')
+                        shading.set(qn('w:fill'), port_data['risk_color'])
+                        row_cells[3]._element.get_or_add_tcPr().append(shading)
+                        
+                        row_cells[4].text = port_data['risk']
+                        shading = OxmlElement('w:shd')
+                        shading.set(qn('w:fill'), port_data['risk_color'])
+                        row_cells[4]._element.get_or_add_tcPr().append(shading)
+                
+                # Přidat mezeru
+                doc.add_paragraph()
+            
+            doc.save(path)
+            
+            QMessageBox.information(self, "Export", f"Analýza zranitelností úspěšně exportována do:\n{path}")
+            self.worker_signals.log.emit("info", f"Export analýzy zranitelností dokončen: {path}")
+            
+        except Exception as e:
+            import traceback
+            QMessageBox.critical(self, "Chyba exportu", f"Nelze uložit dokument: {e}\n\n{traceback.format_exc()}")
+
+    def export_hostnames_list(self):
+        """Exportuje seznam IP adres a jejich hostnames do TXT."""
+        # Zkontrolovat, zda jsou k dispozici výsledky
+        if not any(self.scan_results.get(phase, {}) for phase in ['tcp', 'udp', 'online']):
+            QMessageBox.information(self, "Export", "Nejsou k dispozici žádné výsledky pro export.")
+            return
+        
+        # Dialog pro výběr filtrování
+        filter_dialog = QDialog(self)
+        filter_dialog.setWindowTitle("Nastavení exportu hostnames")
+        filter_dialog.setModal(True)
+        
+        layout = QVBoxLayout()
+        
+        label = QLabel("Vyberte, které cíle exportovat:")
+        layout.addWidget(label)
+        
+        # Radio buttons
+        only_with_hostname = QRadioButton("Pouze cíle s určeným hostname")
+        only_with_hostname.setChecked(True)  # Default
+        all_targets = QRadioButton("Všechny cíle (včetně neurčených)")
+        
+        layout.addWidget(only_with_hostname)
+        layout.addWidget(all_targets)
+        
+        # Tlačítka
+        button_box = QHBoxLayout()
+        ok_btn = QPushButton("OK")
+        cancel_btn = QPushButton("Zrušit")
+        
+        ok_btn.clicked.connect(filter_dialog.accept)
+        cancel_btn.clicked.connect(filter_dialog.reject)
+        
+        button_box.addWidget(ok_btn)
+        button_box.addWidget(cancel_btn)
+        
+        layout.addLayout(button_box)
+        filter_dialog.setLayout(layout)
+        
+        # Zobrazit dialog
+        if filter_dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        
+        # Zjistit volbu
+        export_all = all_targets.isChecked()
+        
+        # Vygenerovat název souboru
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        project_name = self.project_name_edit.text().replace(" ", "_")
+        default_filename = f"hostnames_{project_name}_{timestamp}.txt"
+        
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Uložit seznam hostnames",
+            default_filename,
+            "Text Files (*.txt);;All Files (*)"
+        )
+        
+        if not path:
+            return
+        
+        try:
+            # Získat všechny IP adresy a jejich hostnames
+            hostnames_data = {}
+            
+            # Projít všechny fáze
+            for phase in ['online', 'tcp', 'udp', 'vuln']:
+                if phase not in self.scan_results:
+                    continue
+                
+                for ip, ip_data in self.scan_results[phase].items():
+                    if ip not in hostnames_data:
+                        hostnames_data[ip] = set()
+                    
+                    # Získat hostnames
+                    if 'hostnames' in ip_data:
+                        hostnames = ip_data['hostnames']
+                        if isinstance(hostnames, list):
+                            for hostname in hostnames:
+                                if isinstance(hostname, dict):
+                                    name = hostname.get('name', '')
+                                    if name:
+                                        hostnames_data[ip].add(name)
+                                elif isinstance(hostname, str) and hostname:
+                                    hostnames_data[ip].add(hostname)
+            
+            # Filtrovat podle volby
+            if not export_all:
+                hostnames_data = {ip: hostnames for ip, hostnames in hostnames_data.items() if hostnames}
+            
+            # Spočítat statistiky
+            total_hosts = len(hostnames_data)
+            hosts_with_hostname = sum(1 for hostnames in hostnames_data.values() if hostnames)
+            hosts_without_hostname = total_hosts - hosts_with_hostname
+            
+            # Zapsat do TXT
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write("=" * 80 + "\n")
+                f.write(f"SEZNAM HOSTNAMES - {self.project_name_edit.text()}\n")
+                f.write(f"Datum exportu: {time.strftime('%d.%m.%Y %H:%M:%S')}\n")
+                if not export_all:
+                    f.write("Filtr: Pouze cíle s určeným hostname\n")
+                f.write("=" * 80 + "\n\n")
+                
+                # Data
+                for ip in sorted(hostnames_data.keys(), key=lambda x: tuple(map(int, x.split('.')))):
+                    hostnames_list = sorted(hostnames_data[ip]) if hostnames_data[ip] else []
+                    
+                    if hostnames_list:
+                        # Pokud má více hostnames, každý na řádek
+                        for hostname in hostnames_list:
+                            f.write(f"IP: {ip} -> {hostname}\n")
+                    else:
+                        f.write(f"IP: {ip} -> Neurčeno\n")
+                
+                # Statistiky
+                f.write("\n")
+                f.write("=" * 80 + "\n")
+                f.write("STATISTIKY\n")
+                f.write("=" * 80 + "\n")
+                f.write(f"Celkem exportovaných cílů: {total_hosts}\n")
+                if export_all:
+                    f.write(f"Cílů s hostname: {hosts_with_hostname}\n")
+                    f.write(f"Cílů bez hostname: {hosts_without_hostname}\n")
+                f.write("=" * 80 + "\n")
+            
+            QMessageBox.information(self, "Export", f"Seznam hostnames úspěšně exportován do:\n{path}\n\nExportováno cílů: {total_hosts}")
+            self.worker_signals.log.emit("info", f"Export hostnames dokončen: {path}")
+            
+        except Exception as e:
+            import traceback
+            QMessageBox.critical(self, "Chyba exportu", f"Nelze uložit soubor: {e}\n\n{traceback.format_exc()}")
+
+    def analyze_vulnerabilities(self, service_name, version, cves):
+        """
+        Analyzuje zranitelnosti podle OWASP TOP 10 a vrací seznam kategorií.
+        
+        Returns:
+            list: Seznam tuple (kategorie, popis)
+        """
+        vulnerabilities = []
+        
+        # A05 - Security Misconfiguration (pokud má identifikovanou verzi)
+        if version and version.lower() not in ['unknown', '', 'n/a']:
+            vulnerabilities.append(("A05", "Identifikovaná verze služby"))
+        
+        # A06 - Vulnerable and Outdated Components (pokud má CVE)
+        if cves:
+            vulnerabilities.append(("A06", "Zranitelná komponenta"))
+            for cve in cves:
+                vulnerabilities.append(("A06", f"CVE: {cve}"))
+        
+        # Specifické služby a jejich typické zranitelnosti
+        service_lower = service_name.lower()
+        
+        # A01 - Broken Access Control
+        if any(s in service_lower for s in ['ftp', 'telnet', 'rlogin', 'rsh']):
+            vulnerabilities.append(("A01", "Nezabezpečený protokol - riziko neoprávněného přístupu"))
+        
+        # A02 - Cryptographic Failures
+        if any(s in service_lower for s in ['http', 'ftp', 'telnet', 'smtp']) and 'ssl' not in service_lower and 'tls' not in service_lower:
+            vulnerabilities.append(("A02", "Nešifrovaná komunikace"))
+        
+        # A04 - Insecure Design
+        if 'msrpc' in service_lower or 'microsoft-ds' in service_lower:
+            vulnerabilities.append(("A04", "Exponovaná systémová služba"))
+        
+        # A07 - Identification and Authentication Failures
+        if any(s in service_lower for s in ['ssh', 'rdp', 'vnc', 'mysql', 'postgresql', 'mssql']):
+            vulnerabilities.append(("A07", "Autentizační služba - riziko brute-force útoku"))
+        
+        return vulnerabilities if vulnerabilities else [("INFO", "Služba detekována")]
+    
+    def get_cvss_risk_level(self, cvss_score):
+        """
+        Vrací úroveň rizika podle CVSS 3.0 skóre.
+        
+        CVSS 3.0 rating:
+        0.0: None
+        0.1-3.9: LOW
+        4.0-6.9: MEDIUM
+        7.0-8.9: HIGH
+        9.0-10.0: CRITICAL
+        """
+        if cvss_score is None:
+            return "UNKNOWN", RGBColor(128, 128, 128)  # Šedá
+        
+        if cvss_score == 0.0:
+            return "NONE", RGBColor(0, 128, 0)  # Zelená
+        elif cvss_score < 4.0:
+            return "LOW", RGBColor(255, 255, 0)  # Žlutá
+        elif cvss_score < 7.0:
+            return "MEDIUM", RGBColor(255, 165, 0)  # Oranžová
+        elif cvss_score < 9.0:
+            return "HIGH", RGBColor(255, 0, 0)  # Červená
+        else:
+            return "CRITICAL", RGBColor(139, 0, 139)  # Fialová
+    
+
+
+
+
+
+    def auto_save_project(self):
+        """Automaticky uloží projekt na pozadí během testování."""
+        if not self.current_project_path:
+            # Pokud není otevřený žádný projekt, vytvořit dočasný autosave
+            home_dir = os.path.expanduser("~")
+            autosave_dir = os.path.join(home_dir, ".nmap_scanner_autosave")
+            os.makedirs(autosave_dir, exist_ok=True)
+            
+            project_name = self.project_name_edit.text().replace(" ", "_").replace("/", "_")
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            autosave_path = os.path.join(autosave_dir, f"{project_name}_{timestamp}_autosave.nmapproj")
+            
+            self.current_project_path = autosave_path
+            self.worker_signals.log.emit("info", f"🔄 Autosave: Vytvořen dočasný projekt {autosave_path}")
+        
+        try:
+            project_data = self.gather_project_data()
+            with open(self.current_project_path, 'w', encoding='utf-8') as f:
+                json.dump(project_data, f, indent=2, ensure_ascii=False)
+            
+            self.worker_signals.log.emit("info", f"💾 Autosave: Projekt automaticky uložen do {self.current_project_path}")
+        except Exception as e:
+            self.worker_signals.log.emit("error", f"⚠️ Autosave: Chyba při automatickém ukládání: {e}")
+
+
+    def save_settings(self):
+        settings = QSettings("UTB", "NmapScannerApp")
+        settings.setValue("last_input", self.raw_input_text.toPlainText())
+        settings.setValue("cleaned_output", self.cleaned_output_text.toPlainText())
+        settings.setValue("intensity_mode", self.intensity_combo.currentIndex())
+    
+    def load_settings(self):
+        self.settings = QSettings("UTB", "NmapScannerApp")
+        last_input = self.settings.value("last_input", "")
+        self.raw_input_text.setPlainText(last_input)
+        
+        cleaned_output = self.settings.value("cleaned_output", "")
+        if cleaned_output:
+            self.cleaned_output_text.setPlainText(cleaned_output)
+            lines = cleaned_output.split('\n')
+            active_count = sum(1 for line in lines if line.strip() and not line.strip().startswith('#'))
+            self.count_label.setText(f"Počet cílů: {active_count}")
+        else:
+            self.update_cleaned_output()
+        
+        # Načtení intenzity (výchozí: 1 = Intensive)
+        intensity_index = self.settings.value("intensity_mode", 1, type=int)
+        
+        # Blokovat signály během načítání nastavení
+        self.intensity_combo.blockSignals(True)
+        self.intensity_combo.setCurrentIndex(intensity_index)
+        self.intensity_combo.blockSignals(False)
+
+    def closeEvent(self, event):
+        """Při zavření aplikace nabídnout uložení projektu."""
+        self.save_settings()
+        
+        # Pokud běží skenování, nejdřív ho zastavit
+        if self.scan_manager.is_running:
+            reply = QMessageBox.question(
+                self,
+                "Probíhá skenování",
+                "Skenování stále probíhá. Opravdu chcete ukončit aplikaci?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply == QMessageBox.No:
+                event.ignore()
+                return
+            
+            self.scan_manager.stop_workflow()
+        
+        # Dialog pro uložení projektu
+        msgbox = QMessageBox(self)
+        msgbox.setIcon(QMessageBox.Question)
+        msgbox.setWindowTitle("Uložit projekt")
+        msgbox.setText("Chcete před zavřením uložit aktuální projekt?")
+        
+        # Tlačítka
+        save_current_btn = None
+        if self.current_project_path:
+            # Projekt byl otevřen ze souboru - nabídnout přepsat
+            msgbox.setInformativeText(f"Aktuálně otevřený projekt:\n{self.current_project_path}")
+            save_current_btn = msgbox.addButton("Uložit do současného", QMessageBox.AcceptRole)
+        
+        save_new_btn = msgbox.addButton("Uložit jako nový...", QMessageBox.ActionRole)
+        dont_save_btn = msgbox.addButton("Neukládat", QMessageBox.RejectRole)
+        cancel_btn = msgbox.addButton("Zrušit zavření", QMessageBox.NoRole)
+        
+        msgbox.setDefaultButton(save_new_btn if not self.current_project_path else save_current_btn)
+        msgbox.exec()
+        
+        clicked = msgbox.clickedButton()
+        
+        if clicked == cancel_btn:
+            # Zrušit zavření
+            event.ignore()
+            return
+        
+        elif clicked == save_current_btn and self.current_project_path:
+            # Uložit do současného projektu
+            try:
+                project_data = self.gather_project_data()
+                with open(self.current_project_path, 'w', encoding='utf-8') as f:
+                    json.dump(project_data, f, indent=2, ensure_ascii=False)
+                self.worker_signals.log.emit("export", f"Projekt uložen do {self.current_project_path}")
+            except Exception as e:
+                QMessageBox.critical(self, "Chyba uložení", f"Nelze uložit projekt: {e}")
+                event.ignore()
+                return
+        
+        elif clicked == save_new_btn:
+            # Uložit jako nový projekt
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Uložit projekt jako",
+                "",
+                "Nmap Project (*.nmapproj)"
+            )
+            if path:
+                try:
+                    project_data = self.gather_project_data()
+                    with open(path, 'w', encoding='utf-8') as f:
+                        json.dump(project_data, f, indent=2, ensure_ascii=False)
+                    self.worker_signals.log.emit("export", f"Projekt uložen do {path}")
+                except Exception as e:
+                    QMessageBox.critical(self, "Chyba uložení", f"Nelze uložit projekt: {e}")
+                    event.ignore()
+                    return
+            else:
+                # Uživatel zrušil dialog - zeptat se, zda chce pokračovat bez uložení
+                reply = QMessageBox.question(
+                    self,
+                    "Neuloženo",
+                    "Projekt nebyl uložen. Opravdu chcete ukončit bez uložení?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                if reply == QMessageBox.No:
+                    event.ignore()
+                    return
+        
+        # elif clicked == dont_save_btn - nic nedělat, jen zavřít
+        
+        # Korektní ukončení vláken
+        self.manager_thread.quit()
+        self.manager_thread.wait()
+        event.accept()
+
