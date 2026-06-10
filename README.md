@@ -24,7 +24,9 @@ do přehledné matice a generuje reporty.
 - **Verzování běhů** — každé spuštění je samostatná verze výsledků; lze mezi
   nimi přepínat, **navázat** na zastavený běh (doskenuje jen chyby a nedoběhlé),
   spustit **retest** bez ztráty předchozích dat a **porovnat dvě verze** (nové/
-  zmizelé porty, změny služeb/OS). Master seznam cílů + přepínání mezi projekty.
+  zmizelé porty, změny služeb/OS). **Kontextový re-scan** cíle v matici (pravé
+  tlačítko — TCP/UDP/vuln/OS/screenshoty) merguje do aktuální verze a píše se do
+  **timeline** běhu. Master seznam cílů + přepínání mezi projekty.
 - **TLS / SSL audit** — tři enginy: lokální `nmap` (ssl-enum-ciphers, rychlý),
   `testssl.sh` (detailní, i pro interní IP) a Qualys SSL Labs API (jen veřejné
   domény). Klasifikace šifer (WEAK/INSECURE/SECURE) i celková známka jsou

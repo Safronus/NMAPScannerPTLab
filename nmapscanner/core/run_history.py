@@ -80,6 +80,12 @@ class ScanRun:
         self.enabled_phases = dict(enabled_phases or {})
         self.phase_status = {}             # target -> {phase -> status}
         self.snapshot_path = None          # relativní cesta k snapshot.json (vůči kořeni projektu)
+        self.timeline = []                 # historie událostí běhu (vytvořeno/navázáno/re-scan…)
+
+    # ---- timeline (historie událostí) --------------------------------
+    def add_event(self, when, action, detail=""):
+        """Přidá událost do timeline běhu. ``when`` = ISO čas (dodá volající)."""
+        self.timeline.append({"time": when, "action": action, "detail": detail})
 
     # ---- stav fází ----------------------------------------------------
     def set_status(self, target, phase, status):
@@ -130,6 +136,7 @@ class ScanRun:
             "enabled_phases": dict(self.enabled_phases),
             "phase_status": {t: dict(ph) for t, ph in self.phase_status.items()},
             "snapshot_path": self.snapshot_path,
+            "timeline": list(self.timeline),
         }
 
     @classmethod
@@ -147,6 +154,7 @@ class ScanRun:
         run.status = d.get("status", "completed")
         run.phase_status = {t: dict(ph) for t, ph in d.get("phase_status", {}).items()}
         run.snapshot_path = d.get("snapshot_path")
+        run.timeline = list(d.get("timeline", []))
         return run
 
 

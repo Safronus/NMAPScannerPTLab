@@ -73,9 +73,16 @@ def main():
     if h.next_label() != "Běh 2":
         fails.append(f"next_label špatně: {h.next_label()}")
 
+    # timeline událostí přežije serializaci
+    run.add_event("2026-01-01T10:00:00", "vytvořeno", "2 cíle")
+    run.add_event("2026-01-01T10:05:00", "re-scan", "1.1.1.1: tcp (merge)")
+
     h2 = RunHistory.from_dict(h.to_dict())
     if h2.master_targets != h.master_targets or h2.active_run_id != h.active_run_id:
         fails.append("RunHistory roundtrip: master/active nesedí")
+    tl = h2.runs[0].timeline
+    if len(tl) != 2 or tl[1].get("action") != "re-scan" or "merge" not in tl[1].get("detail", ""):
+        fails.append(f"timeline roundtrip nesedí: {tl}")
     if len(h2.runs) != 1 or h2.runs[0].get_status("1.1.1.1", "tcp") != "hotovo":
         fails.append("RunHistory roundtrip: stav fáze nesedí")
     if h2.remove("scan_1") is None or h2.active_run_id is not None:

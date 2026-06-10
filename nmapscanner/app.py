@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QTextEdit, QLineEdit, QPushButton, QVBoxLayout,
     QTreeWidget, QTreeWidgetItem, QLabel, QGroupBox, QHeaderView, QFileDialog,
     QTabWidget, QHBoxLayout, QSplitter, QCheckBox, QDialog, QMessageBox, QDialogButtonBox, QComboBox, QProgressDialog,
-    QRadioButton, QInputDialog
+    QRadioButton, QInputDialog, QMenu
 )
 from PySide6.QtCore import Slot, Signal, QMutex, QMutexLocker, QTimer, Qt, QThread, QSettings
 from PySide6.QtGui import QColor, QPixmap
@@ -145,79 +145,33 @@ class NmapScannerApp(QWidget):
 
 
     def calculate_adaptive_sizes(self):
-        """Vypočítá adaptivní velikosti panelů podle rozlišení obrazovky."""
-        
-        # Minimální rozlišení pro plný režim
-        FULL_MODE_WIDTH = 3000
-        
-        if self.screen_width >= FULL_MODE_WIDTH:
-            # Velký monitor - původní velikosti
-            self.left_panel_width = 400
-            self.middle_panel_width = 1000
-            self.ip_summary_width = 1200
-            self.ip_summary_col0 = 480
-            self.ip_summary_col1 = 720
-            self.port_summary_width = 300
-            self.port_summary_col0 = 144
-            self.port_summary_col1 = 155
-            self.service_summary_width = 260
-            self.service_summary_col0 = 140
-            self.service_summary_col1 = 119
-            self.font_size = 9  # Normální velikost fontu
-            
-        elif self.screen_width >= 2560:
-            # Střední monitor (2560x1440, 2K) - lehké zmenšení
-            self.left_panel_width = 350
-            self.middle_panel_width = 900
-            self.ip_summary_width = 900
-            self.ip_summary_col0 = 360
-            self.ip_summary_col1 = 540
-            self.port_summary_width = 220
-            self.port_summary_col0 = 120
-            self.port_summary_col1 = 99
-            self.service_summary_width = 280
-            self.service_summary_col0 = 175
-            self.service_summary_col1 = 104
-            self.font_size = 8
-            
-        elif self.screen_width >= 1920:
-            # Full HD (1920x1080) - větší redukce
-            self.left_panel_width = 300
-            self.middle_panel_width = 700
-            self.ip_summary_width = 650
-            self.ip_summary_col0 = 260
-            self.ip_summary_col1 = 390
-            self.port_summary_width = 180
-            self.port_summary_col0 = 100
-            self.port_summary_col1 = 79
-            self.service_summary_width = 220
-            self.service_summary_col0 = 140
-            self.service_summary_col1 = 79
-            self.font_size = 8
-            
-        else:
-            # Malý monitor (1366x768, 1600x900) - maximální komprese
-            self.left_panel_width = 250
-            self.middle_panel_width = 500
-            self.ip_summary_width = 450
-            self.ip_summary_col0 = 180
-            self.ip_summary_col1 = 270
-            self.port_summary_width = 150
-            self.port_summary_col0 = 85
-            self.port_summary_col1 = 64
-            self.service_summary_width = 180
-            self.service_summary_col0 = 115
-            self.service_summary_col1 = 64
-            self.font_size = 7
-        
-        # Výpočet celkové šířky pravého panelu
-        self.right_panel_width = (self.ip_summary_width + 
-                                   self.port_summary_width + 
-                                   self.service_summary_width)
-        
-        # Aplikovat globální styl s menším fontem
-        if self.font_size < 9:
-            self.setStyleSheet(f"QWidget {{ font-size: {self.font_size}pt; }}")
+        """Adaptivní (preferované) velikosti panelů — proporčně k oknu, použitelné
+        od FullHD po 4K, s normálním systémovým fontem. Panely nejsou tvrdě
+        omezené — jdou roztáhnout splitterem."""
+        w = max(int(self.screen_width or 1920), 1280)
+
+        def clamp(value, lo, hi):
+            return max(lo, min(int(value), hi))
+
+        self.left_panel_width = clamp(w * 0.18, 300, 460)
+        self.middle_panel_width = clamp(w * 0.42, 600, 2200)
+        self.ip_summary_width = clamp(w * 0.26, 360, 1000)
+        self.port_summary_width = clamp(w * 0.11, 160, 320)
+        self.service_summary_width = clamp(w * 0.13, 190, 360)
+
+        # Orientační šířky sloupců (stromy stejně používají ResizeToContents).
+        self.ip_summary_col0 = int(self.ip_summary_width * 0.42)
+        self.ip_summary_col1 = self.ip_summary_width - self.ip_summary_col0
+        self.port_summary_col0 = int(self.port_summary_width * 0.55)
+        self.port_summary_col1 = self.port_summary_width - self.port_summary_col0
+        self.service_summary_col0 = int(self.service_summary_width * 0.6)
+        self.service_summary_col1 = self.service_summary_width - self.service_summary_col0
+
+        self.right_panel_width = (self.ip_summary_width
+                                  + self.port_summary_width
+                                  + self.service_summary_width)
+        # Normální font (na velmi velkých monitorech o kousek větší).
+        self.font_size = 10 if w >= 3440 else 9
 
     def fetch_public_ip(self):
         """Zjistí aktuální veřejnou IP adresu přes API."""
@@ -660,6 +614,10 @@ class NmapScannerApp(QWidget):
         # PŘIDAT: Reagovat i na změnu výběru (šipky)
         self.status_matrix.currentItemChanged.connect(self.on_matrix_selection_changed)
 
+        # Kontextová akce nad cílem: re-scan (merge do aktuální verze + timeline)
+        self.status_matrix.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.status_matrix.customContextMenuRequested.connect(self.on_matrix_context_menu)
+
         middle_panel.addWidget(self.status_matrix)
 
         self.tabs = QTabWidget()
@@ -737,10 +695,7 @@ class NmapScannerApp(QWidget):
         right_side_main_layout.setContentsMargins(0, 0, 0, 0)
         right_side_main_layout.setSpacing(5)
         
-        # Přidat spacer vlevo
-        right_side_main_layout.addStretch()
-        
-        # === Sekce 1: IP Summary (Souhrn vybrané IP) - FIXNÍ 1200px ===
+        # === Sekce 1: IP Summary (Souhrn vybrané IP) ===
         self.ip_summary_container = QWidget()
         ip_summary_layout = QVBoxLayout(self.ip_summary_container)
         ip_summary_layout.setContentsMargins(0, 0, 0, 0)
@@ -748,8 +703,7 @@ class NmapScannerApp(QWidget):
         
         self.ip_summary_tree = QTreeWidget()
         self.ip_summary_tree.setHeaderLabels(["Atribut", "Hodnota"])
-        self.ip_summary_tree.setMinimumWidth(self.ip_summary_width)
-        self.ip_summary_tree.setMaximumWidth(self.ip_summary_width)
+        self.ip_summary_tree.setMinimumWidth(280)
         
         header_ip = self.ip_summary_tree.header()
         header_ip.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -760,9 +714,9 @@ class NmapScannerApp(QWidget):
         default_item = QTreeWidgetItem(self.ip_summary_tree, ["", "Vyberte IP v matici"])
         default_item.setForeground(1, QColor("#999999"))
         
-        right_side_main_layout.addWidget(self.ip_summary_container)
-        
-        # === Sekce 2: Port Summary (Přehled portů) - FIXNÍ ===
+        right_side_main_layout.addWidget(self.ip_summary_container, 3)
+
+        # === Sekce 2: Port Summary (Přehled portů) ===
         self.port_summary_container = QWidget()
         port_summary_layout = QVBoxLayout(self.port_summary_container)
         port_summary_layout.setContentsMargins(0, 0, 0, 0)
@@ -772,8 +726,7 @@ class NmapScannerApp(QWidget):
         self.port_summary_tree.setHeaderLabels(["Port/Stav", "Počet IP"])
         self.port_summary_tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.port_summary_tree.customContextMenuRequested.connect(self.show_port_context_menu)
-        self.port_summary_tree.setMinimumWidth(self.port_summary_width)
-        self.port_summary_tree.setMaximumWidth(self.port_summary_width)
+        self.port_summary_tree.setMinimumWidth(140)
         
         header_port = self.port_summary_tree.header()
         header_port.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -781,9 +734,9 @@ class NmapScannerApp(QWidget):
         
         port_summary_layout.addWidget(self.port_summary_tree)
         
-        right_side_main_layout.addWidget(self.port_summary_container)
-        
-        # === Sekce 3: Service Summary (Přehled služeb) - FIXNÍ ===
+        right_side_main_layout.addWidget(self.port_summary_container, 1)
+
+        # === Sekce 3: Service Summary (Přehled služeb) ===
         self.service_summary_container = QWidget()
         service_summary_layout = QVBoxLayout(self.service_summary_container)
         service_summary_layout.setContentsMargins(0, 0, 0, 0)
@@ -793,8 +746,7 @@ class NmapScannerApp(QWidget):
         self.service_summary_tree.setHeaderLabels(["Služba/Port", "Počet IP"])
         self.service_summary_tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.service_summary_tree.customContextMenuRequested.connect(self.show_service_context_menu)
-        self.service_summary_tree.setMinimumWidth(self.service_summary_width)
-        self.service_summary_tree.setMaximumWidth(self.service_summary_width)
+        self.service_summary_tree.setMinimumWidth(160)
         
         header_serv = self.service_summary_tree.header()
         header_serv.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -802,18 +754,19 @@ class NmapScannerApp(QWidget):
         
         service_summary_layout.addWidget(self.service_summary_tree)
         
-        right_side_main_layout.addWidget(self.service_summary_container)
-        
+        right_side_main_layout.addWidget(self.service_summary_container, 2)
+
         content_splitter.addWidget(right_side_widget)
-        
-        # Nastavení stretch faktorů pro hlavní content_splitter
-        content_splitter.setStretchFactor(0, 0)  # Levý panel - fixní
-        content_splitter.setStretchFactor(1, 1)  # Střední panel - PRUŽNÝ
-        content_splitter.setStretchFactor(2, 0)  # Pravý panel - fixní
-        
-        # Defaultní velikosti
-        total_right = self.ip_summary_width + self.port_summary_width + self.service_summary_width
-        content_splitter.setSizes([400, 1200, total_right])
+
+        # Stretch: levý panel fixní, střední i pravý se pružně dělí o zbytek šířky.
+        content_splitter.setStretchFactor(0, 0)
+        content_splitter.setStretchFactor(1, 3)
+        content_splitter.setStretchFactor(2, 2)
+
+        # Výchozí velikosti proporčně k oknu (uživatel může přetáhnout).
+        content_splitter.setSizes([self.left_panel_width,
+                                   self.middle_panel_width,
+                                   self.right_panel_width])
         
         self.content_splitter = content_splitter  # Uložit referenci
         self.right_side_widget = right_side_widget  # Uložit referenci pro toggle funkce
@@ -1861,6 +1814,8 @@ class NmapScannerApp(QWidget):
                       profile=profile, custom_command=custom_command,
                       targets=targets, enabled_phases=enabled_phases)
         self.run_history.add_run(run)
+        run.add_event(run.created_at, "vytvořeno",
+                      f"{len(targets)} cílů, profil {sp.PROFILE_LABELS.get(profile, profile)}")
         self.viewing_run_id = run_id
 
         # Čistá data pro nový běh (verzi)
@@ -1875,6 +1830,7 @@ class NmapScannerApp(QWidget):
         self._stop_requested = False
         self._lock_run_ui()
         self.refresh_runs_combo()
+        self.status_label.setText(f"Skenuji '{run.label}' — {len(targets)} cílů…")
         # Předat sudo kontext manažeru (queued emit zajistí viditelnost ve vlákně manažeru).
         self.scan_manager.sudo_password = self._sudo_pw
         self.scan_manager.use_sudo = self._use_sudo
@@ -1903,12 +1859,15 @@ class NmapScannerApp(QWidget):
 
         ctx = self._build_resume_ctx(run)
         run.status = "running"
+        run.add_event(datetime.now().isoformat(timespec="seconds"), "navázáno",
+                      "doskenování chyb a nedoběhlých")
 
         self.log_console.clear()
         self.live_task_panel.reset()
         self.phase_progress_bars.reset(self.phases, run.enabled_phases)
         if hasattr(self, 'tabs'):
             self.tabs.setCurrentWidget(self.live_task_panel)
+        self.status_label.setText(f"Navazuji na běh '{run.label}'…")
 
         paths = self._ensure_project_folder()
         self.base_export_path = paths.run_dir(run.id)
@@ -1960,6 +1919,109 @@ class NmapScannerApp(QWidget):
     def on_stop_clicked(self):
         self._stop_requested = True
         self.scan_manager.stop_workflow()
+
+    # ---- kontextový re-scan cíle (merge do aktuální verze + timeline) ----
+    def on_matrix_context_menu(self, pos):
+        item = self.status_matrix.itemAt(pos)
+        if item is None:
+            return
+        target = item.text(0).split(' ')[0].strip()
+        if not target:
+            return
+        menu = QMenu(self)
+        menu.addAction(f"🔁 Re-scan TCP — {target}", lambda: self.rescan_target(target, ["tcp"]))
+        menu.addAction(f"🔁 Re-scan UDP — {target}", lambda: self.rescan_target(target, ["udp"]))
+        menu.addAction(f"🔁 Re-scan Vuln — {target}", lambda: self.rescan_target(target, ["vuln"]))
+        menu.addAction(f"🔁 Re-scan OS — {target}", lambda: self.rescan_target(target, ["osscan"]))
+        menu.addSeparator()
+        menu.addAction(f"📸 Re-scan screenshoty (HTTP/HTTPS) — {target}",
+                       lambda: self.rescan_screenshots(target))
+        menu.addAction(f"🔁 Re-scan vše (TCP+UDP+vuln+OS) — {target}",
+                       lambda: self.rescan_target(target, ["tcp", "udp", "osscan", "vuln"]))
+        menu.exec(self.status_matrix.viewport().mapToGlobal(pos))
+
+    def rescan_target(self, target, phases):
+        """Znovu proskenuje vybrané fáze daného cíle a výsledky vmerguje do AKTUÁLNÍ
+        verze (běhu). Událost se zapíše do timeline."""
+        if self.scan_manager.is_running:
+            self.status_label.setText("Sken už běží — počkej na dokončení.")
+            return
+        run = self.run_history.active()
+        if run is None:
+            self.status_label.setText("Nejdřív spusť běh (re-scan merguje do aktuální verze).")
+            return
+        if run.profile == "custom":
+            self.status_label.setText("Re-scan není dostupný pro profil Vlastní příkaz.")
+            return
+        # Re-scan se vždy týká aktivní verze — případně na ni přepnout.
+        if self.viewing_run_id != run.id:
+            self._switch_view(run.id)
+        if not self._ensure_sudo():
+            self.status_label.setText("Re-scan zrušen — bez root oprávnění (sudo).")
+            return
+
+        if target not in run.targets:
+            run.targets.append(target)
+        self.run_history.merge_master_targets([target])
+
+        when = datetime.now().isoformat(timespec="seconds")
+        run.add_event(when, "re-scan", f"{target}: {', '.join(phases)} (merge)")
+        run.status = "running"
+
+        enabled_phases = {p: (p in phases) for p in self.phases}
+        ctx = self._build_resume_ctx(run)  # seed open_ports/needs_pn z aktuálních dat
+
+        # UI: nečistit data, jen reset progressu pro re-scanované fáze + označit buňky.
+        self.live_task_panel.reset()
+        self.phase_progress_bars.reset(self.phases, enabled_phases)
+        for phase in phases:
+            self.status_matrix.update_status(target, phase, 'čeká')
+        if hasattr(self, 'tabs'):
+            self.tabs.setCurrentWidget(self.live_task_panel)
+
+        paths = self._ensure_project_folder()
+        self.base_export_path = paths.run_dir(run.id)
+        self.worker_signals.log.emit("info", f"🔁 Re-scan {target}: {', '.join(phases)} → merge do '{run.label}'")
+        self.status_label.setText(f"Re-scan {target} ({', '.join(phases)})…")
+
+        self._stop_requested = False
+        self._lock_run_ui()
+        self.refresh_runs_combo()
+        self.scan_manager.sudo_password = self._sudo_pw
+        self.scan_manager.use_sudo = self._use_sudo
+        self.start_scan_requested.emit([target], run.profile, enabled_phases, run.custom_command, False, ctx)
+
+    def rescan_screenshots(self, target):
+        """Znovu pořídí screenshoty HTTP/HTTPS portů daného cíle (z aktuálních dat)."""
+        run = self.run_history.active()
+        tcp_data = (self.scan_results.get("tcp", {}) or {}).get(target, {}) or {}
+        web_ports = []
+        common_web_ports = [80, 443, 8080, 8000, 8008, 8443]
+        for port, info in (tcp_data.get("tcp", {}) or {}).items():
+            if not isinstance(info, dict) or info.get("state") != "open":
+                continue
+            name = (info.get("name") or "").lower()
+            try:
+                pnum = int(port)
+            except (TypeError, ValueError):
+                continue
+            if pnum in common_web_ports or "http" in name:
+                scheme = "https" if ("https" in name or pnum in (443, 8443)) else "http"
+                web_ports.append((pnum, scheme))
+        if not web_ports:
+            self.status_label.setText(f"{target}: žádné webové (HTTP/HTTPS) porty pro screenshot.")
+            return
+        paths = self._ensure_project_folder()
+        self.base_export_path = paths.run_dir(run.id) if run else paths.run_dir("rescan")
+        for pnum, scheme in web_ports:
+            url = f"{scheme}://{target}:{pnum}"
+            ip_dir = self.base_export_path / target.replace('.', '_')
+            ip_dir.mkdir(exist_ok=True, parents=True)
+            self.worker_signals.screenshot_request.emit(url, target, pnum, str(ip_dir))
+        if run is not None:
+            run.add_event(datetime.now().isoformat(timespec="seconds"),
+                          "re-scan screenshoty", f"{target}: {len(web_ports)} portů")
+        self.status_label.setText(f"📸 Re-scan screenshotů {target}: {len(web_ports)} portů…")
 
     # ---- přepínač / ovládání běhů ------------------------------------
     def refresh_runs_combo(self):
@@ -2506,7 +2568,35 @@ class NmapScannerApp(QWidget):
                 status = 'zakázáno'
                 target_item.setText(1, 'Fáze zakázána uživatelem')
                 target_item.setForeground(1, QColor("#95A5A6"))
-            
+
+            elif base_phase == 'vuln':
+                # Vuln tab: žádný red ERROR — neúspěch/nic = "Žádné zranitelnosti nenalezeny".
+                status = "hotovo"
+                findings = []
+                for proto in ('tcp', 'udp'):
+                    for port, info in (data.get(proto, {}) or {}).items():
+                        scripts = info.get('script') if isinstance(info, dict) else None
+                        if isinstance(scripts, dict):
+                            for sname, sout in scripts.items():
+                                findings.append((f"{port}/{proto}", sname, str(sout)))
+                if findings:
+                    for portproto, sname, sout in findings:
+                        it = QTreeWidgetItem(target_item,
+                                             [f"{portproto} → {sname}", sout.strip().replace('\n', ' ')[:300]])
+                        it.setForeground(0, QColor("#E74C3C"))
+                        it.setForeground(1, QColor("#E74C3C"))
+                    target_item.setText(1, f"{len(findings)} nálezů")
+                else:
+                    msg = QTreeWidgetItem(target_item, ["✓ Žádné zranitelnosti nenalezeny", ""])
+                    msg.setForeground(0, QColor("#2ECC71"))
+                    target_item.setText(1, "bez nálezů")
+                    target_item.setForeground(1, QColor("#2ECC71"))
+                    if 'error' in data:
+                        note = QTreeWidgetItem(target_item,
+                                               ["(vuln sken nedoběhl úplně)", str(data.get('error', ''))[:200]])
+                        note.setForeground(0, QColor("#95A5A6"))
+                        note.setForeground(1, QColor("#95A5A6"))
+
             elif 'error' in data:
                 status = "chyba"
                 QTreeWidgetItem(target_item, ["Chyba", data['error']]).setForeground(0, QColor("#E74C3C"))

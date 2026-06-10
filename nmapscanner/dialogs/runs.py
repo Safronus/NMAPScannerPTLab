@@ -162,14 +162,16 @@ class RunsManagerDialog(QDialog):
         self.view_btn = QPushButton("Zobrazit verzi")
         self.rename_btn = QPushButton("Přejmenovat")
         self.delete_btn = QPushButton("Smazat")
+        self.timeline_btn = QPushButton("📜 Timeline")
         self.diff_btn = QPushButton("Porovnat verze…")
         close_btn = QPushButton("Zavřít")
         self.view_btn.clicked.connect(self._view)
         self.rename_btn.clicked.connect(self._rename)
         self.delete_btn.clicked.connect(self._delete)
+        self.timeline_btn.clicked.connect(self._timeline)
         self.diff_btn.clicked.connect(self._diff)
         close_btn.clicked.connect(self.accept)
-        for b in (self.view_btn, self.rename_btn, self.delete_btn, self.diff_btn):
+        for b in (self.view_btn, self.rename_btn, self.delete_btn, self.timeline_btn, self.diff_btn):
             row.addWidget(b)
         row.addStretch()
         row.addWidget(close_btn)
@@ -229,6 +231,27 @@ class RunsManagerDialog(QDialog):
             self.delete_files(run)
         self.history.remove(run.id)
         self._reload()
+
+    def _timeline(self):
+        run = self._selected_run()
+        if not run:
+            return
+        events = getattr(run, "timeline", []) or []
+        if not events:
+            QMessageBox.information(self, "Timeline", f"Běh '{run.label}' nemá zaznamenané události.")
+            return
+        lines = []
+        for e in events:
+            t = str(e.get("time", ""))[:19].replace("T", " ")
+            action = e.get("action", "")
+            detail = e.get("detail", "")
+            lines.append(f"• {t}  —  {action}" + (f": {detail}" if detail else ""))
+        box = QMessageBox(self)
+        box.setWindowTitle(f"Timeline — {run.label}")
+        box.setText(f"Historie událostí běhu '{run.label}':")
+        box.setDetailedText("\n".join(lines))
+        box.setInformativeText("\n".join(lines[:12]) + ("\n…" if len(lines) > 12 else ""))
+        box.exec()
 
     def _diff(self):
         if len(self.history.runs) < 2:

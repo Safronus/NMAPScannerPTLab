@@ -4,6 +4,29 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [4.6.0] - 2026-06-10
+
+Drobnosti: adaptivní layout, vuln „bez nálezů", kontextový re-scan + timeline.
+
+### Přidáno
+- **Kontextový re-scan nad cílem v matici** (pravé tlačítko): re-scan TCP / UDP /
+  Vuln / OS / screenshoty (HTTP/HTTPS porty) / vše. Výsledky se **merguje do
+  aktuální verze** a událost se zapíše do **timeline** běhu — historie je vidět
+  ve „Správa běhů → 📜 Timeline". Timeline zaznamenává i vytvoření běhu a navázání.
+- Re-scan zaměřuje vuln na již nalezené otevřené porty (seed z aktuálních dat).
+
+### Změněno / opraveno
+- **Adaptivní layout** přepsán z pevných „bucketů" (na Retina/4K padal do
+  nejmenšího → drobný font, úzké panely) na **proporční velikosti s normálním
+  fontem**. Pravé souhrnné panely už nejsou tvrdě omezené — jdou roztáhnout
+  splitterem; použitelné od FullHD po 4K.
+- **Záložka Vuln:** když vuln sken nic nenajde (nebo nedoběhne), zobrazí se
+  neutrální **„✓ Žádné zranitelnosti nenalezeny"** místo červeného ERROR; u
+  skutečného selhání jemná šedá poznámka. Matice ukáže `hotovo`, ne `chyba`.
+- Stavový řádek vlevo dole nově ukazuje i `Skenuji…/Navazuji…/Re-scan…` (dřív
+  jen „Připraven").
+- `ScanRun` má pole `timeline` (serializuje se do projektu); pokryto testem.
+
 ## [4.5.0] - 2026-06-10
 
 Oprava screenshotů webových služeb — přechod na Selenium (headless Chrome).
