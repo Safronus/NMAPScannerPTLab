@@ -75,6 +75,12 @@ pip install -r requirements.txt
 python nmap-scanner.py
 ```
 
+> 🔄 **Auto-update:** po startu si aplikace ověří GitHub a když je novější verze,
+> sama udělá `git pull --ff-only`, doinstaluje závislosti a restartuje se (aby
+> neběžel starý kód). Vypnutí: spusť s `NMAPSCANNER_NO_UPDATE=1`. Přeskočí se
+> bez sítě i při lokálních změnách (špinavý strom). Po startu se vypíše banner
+> s **verzí a cestou** běžícího kódu.
+
 > 🔒 **Sudo:** nmap potřebuje root (SYN/UDP/OS sken). Když sudo žádá heslo,
 > aplikace si o něj řekne v **dialogu** a předá ho nmap na stdin (`sudo -S`,
 > heslo není vidět v `ps`). Heslo se drží **jen v RAM** (nikdy na disk) a jde
@@ -173,6 +179,7 @@ Headless testy (bez GUI a bez nmapu) se spouští jednotlivě, např.:
 .venv/bin/python tests/test_shutdown.py             # kill procesů + odolné emise při zavření
 .venv/bin/python tests/test_project_store.py        # projektový formát v4 + migrace
 .venv/bin/python tests/test_autosave_resilience.py  # zápis selže čistě při blokovaných právech (macOS)
+.venv/bin/python tests/test_vuln_classify.py        # vuln: nález vs chyba/timeout vs čistý výstup
 ```
 
 Verzování (od 2.0.0): velké zásahy → MAJOR, drobné úpravy a fixy → PATCH.

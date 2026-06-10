@@ -4,6 +4,33 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.3.0] - 2026-06-10
+
+### Přidáno
+- **Automatický update po startu.** Launcher při spuštění zkontroluje GitHub,
+  a když je novější verze, udělá `git pull --ff-only`, doinstaluje závislosti
+  z `requirements.txt` a restartuje se na novou verzi — aby se nestávalo, že
+  běží starý kód kvůli zapomenutému `git pull`. Bezpečně přeskočí bez sítě, se
+  špinavým pracovním stromem, při rozejití větve nebo když `NMAPSCANNER_NO_UPDATE=1`.
+  Ochrana proti restart-smyčce přes env proměnnou.
+- **SSLyze nalezen i jako modul** (`python -m sslyze`), když není `sslyze`
+  binárka na PATH (typické po `pip install` do venv). `sslyze` přidán do
+  `requirements.txt` (auto-instalace při updatu).
+- **Screenshoty — chytřejší hlášení a stav v záložce.** Hláška o selhání teď
+  rozliší příčinu (síť: cíl tam neslouží web; práva: Plocha/iCloud blokuje zápis;
+  Chrome/Selenium nedostupný) místo paušálního obviňování Plochy. Záložka
+  **Screenshots** při prázdném stavu vysvětlí proč (poslední příčina) a poradí,
+  jak screenshoty pořídit.
+
+### Změněno
+- **Vuln záložka už neukazuje benigní hlášky a chyby skriptů jako červené nálezy.**
+  Nová klasifikace (`core/vuln_classify.py`) rozliší **potvrzený nález** od
+  **chyby/timeoutu skriptu** a **čistého výsledku** („Couldn't find any…",
+  „No reply… TIMEOUT", „ERROR: Script execution failed"). Počítají se jen
+  potvrzené zranitelnosti; ostatní výstupy jsou ve sbaleném šedém uzlu „Výstupy
+  skriptů (N) — bez potvrzených nálezů". Bez nálezů = zelené „bez nálezů".
+  IP souhrn používá stejnou klasifikaci (pokryto `tests/test_vuln_classify.py`).
+
 ## [5.2.0] - 2026-06-10
 
 ### Přidáno

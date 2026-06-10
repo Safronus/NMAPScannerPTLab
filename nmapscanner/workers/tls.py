@@ -618,6 +618,26 @@ class SslyzeWorker(QRunnable):
     def _is_cancelled(self):
         return self.cancel_event is not None and self.cancel_event.is_set()
 
+    @staticmethod
+    def _sslyze_base_cmd():
+        """Příkaz pro spuštění sslyze. sslyze bývá jen modul ve venv (ne binárka na
+        systémové PATH), proto zkoušíme: ``sslyze`` v PATH → binárka vedle běžícího
+        pythonu (venv/bin) → ``python -m sslyze``. Vrátí list nebo None."""
+        import sys
+        binp = shutil.which("sslyze")
+        if binp:
+            return [binp]
+        cand = os.path.join(os.path.dirname(sys.executable), "sslyze")
+        if os.path.exists(cand):
+            return [cand]
+        try:
+            import importlib.util
+            if importlib.util.find_spec("sslyze") is not None:
+                return [sys.executable, "-m", "sslyze"]
+        except Exception:
+            pass
+        return None
+
     @Slot()
     def run(self):
         scan_data = {
@@ -628,8 +648,8 @@ class SslyzeWorker(QRunnable):
             'status': "Hotovo",
         }
 
-        binp = shutil.which("sslyze")
-        if not binp:
+        base_cmd = self._sslyze_base_cmd()
+        if base_cmd is None:
             scan_data['status'] = "Chyba"
             scan_data['error'] = "Nástroj 'sslyze' nenalezen. Instalace: pip install sslyze"
             self.signals.result.emit(self.ip, self.port, scan_data)
@@ -645,7 +665,7 @@ class SslyzeWorker(QRunnable):
             scan_data['status'] = "sslyze: Prověřuji…"
             self.signals.result.emit(self.ip, self.port, scan_data)
 
-            cmd = [binp, f"--json_out={json_path}", f"{self.ip}:{self.port}"]
+            cmd = base_cmd + [f"--json_out={json_path}", f"{self.ip}:{self.port}"]
             subprocess.run(cmd, capture_output=True, text=True, timeout=180)
 
             if self._is_cancelled():

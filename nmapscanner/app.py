@@ -28,6 +28,7 @@ from .core.project import ProjectPaths, default_projects_dir, safe_name
 from .core import run_history as rh
 from .core.run_history import RunHistory, ScanRun, run_id_from_timestamp
 from .core import project_store as pstore
+from .core.vuln_classify import classify_vuln_output
 from .workers.screenshot import ScreenshotManager
 from .dialogs.runs import DiffDialog, RunsManagerDialog
 from .widgets.log_console import LogConsole
@@ -943,7 +944,22 @@ class NmapScannerApp(QWidget):
             self.screenshot_info_label.setText("Žádné screenshoty k zobrazení")
             self.screenshot_counter_label.setText("0 / 0")
             self.screenshot_display.clear()
-            self.screenshot_display.setText("Žádné screenshoty k dispozici")
+            # Když poslední dávka skončila chybami, vysvětli proč (síť/práva/Chrome);
+            # jinak poraď, jak screenshoty pořídit.
+            if getattr(self, "_shot_fail", 0) and self._shot_done >= self._shot_total:
+                hint = self._screenshot_failure_hint(getattr(self, "_shot_last_err", ""))
+                self.screenshot_display.setText(
+                    f"📸 Žádné screenshoty se neuložily.\n\n"
+                    f"{self._shot_fail} z {self._shot_total} se nepodařilo.\n"
+                    f"Příčina: {hint}.\n\n"
+                    "Re-scan: pravý klik na cíl v matici Průběh fází → Re-scan screenshoty.")
+            else:
+                self.screenshot_display.setText(
+                    "Žádné screenshoty k dispozici.\n\n"
+                    "Pořídíš je při skenu (TCP nad webovým portem) nebo ručně:\n"
+                    "pravý klik na cíl v matici Průběh fází → 📸 Re-scan screenshoty.")
+            self.screenshot_display.setStyleSheet(
+                "border: 2px solid #95A5A6; background-color: #ECF0F1; color: #555; font-size: 14px;")
             self.prev_screenshot_btn.setEnabled(False)
             self.next_screenshot_btn.setEnabled(False)
             return
@@ -1288,6 +1304,21 @@ class NmapScannerApp(QWidget):
             self._shot_last_err = info or "neznámá chyba"
         self._update_shot_status()
 
+    def _screenshot_failure_hint(self, err):
+        """Z textu chyby odhadne příčinu selhání screenshotu (síť vs práva vs Chrome)."""
+        low = (err or "").lower()
+        if any(m in low for m in ("err_connection", "connection refused", "connection closed",
+                                  "connection reset", "err_timed_out", "timeout",
+                                  "err_address_unreachable", "err_name_not_resolved",
+                                  "err_ssl", "err_cert", "err_empty_response", "net::")):
+            return "cíl na daném portu nejspíš neslouží web (HTTP/HTTPS) nebo je nedostupný"
+        if any(m in low for m in ("operation not permitted", "permission denied",
+                                  "errno 1", "errno 13", "read-only")):
+            return "macOS blokuje zápis do složky projektu (Plocha/iCloud) — ulož projekt jinam"
+        if any(m in low for m in ("selenium", "chrome", "chromedriver", "nedostup", "webdriver")):
+            return "Chrome/Selenium není dostupný — zkontroluj instalaci Google Chrome"
+        return err or "neznámá chyba"
+
     def _update_shot_status(self):
         """Vykreslí průběh screenshotů do status baru; po dokončení dávky souhrn."""
         if self._shot_total <= 0:
@@ -1301,14 +1332,16 @@ class NmapScannerApp(QWidget):
         if self._shot_fail == 0:
             self.status_label.setText(f"📸 Screenshoty hotové: {self._shot_ok}/{self._shot_total} ✓")
         else:
-            tail = f" — poslední chyba: {self._shot_last_err}" if self._shot_last_err else ""
+            hint = self._screenshot_failure_hint(self._shot_last_err)
             self.status_label.setText(
-                f"📸 Screenshoty: {self._shot_ok} ✓ / {self._shot_fail} ✗ z {self._shot_total}{tail}")
+                f"📸 Screenshoty: {self._shot_ok} ✓ / {self._shot_fail} ✗ z {self._shot_total} — {hint}")
             self.worker_signals.log.emit(
                 "warning",
-                f"⚠️ Screenshoty: {self._shot_fail} z {self._shot_total} se nepodařilo "
-                f"(poslední: {self._shot_last_err}). Tip: projekt na Ploše/iCloudu macOS "
-                "blokuje pro zápis — ulož projekt jinam, nebo zkontroluj Chrome/Selenium.")
+                f"⚠️ Screenshoty: {self._shot_fail} z {self._shot_total} se nepodařilo. "
+                f"Příčina: {hint}. (Poslední chyba: {self._shot_last_err})")
+        # Aktualizovat i prázdný stav v záložce Screenshots (ať uživatel ví, co se stalo).
+        if hasattr(self, "screenshot_display"):
+            self.show_current_screenshot()
 
     @Slot(QTreeWidgetItem, int)
     def on_matrix_ip_clicked(self, item, column):
@@ -1483,43 +1516,17 @@ class NmapScannerApp(QWidget):
             services_item.setForeground(1, QColor("#999999"))
         
         # Zranitelnosti - shromáždit z fáze vuln - POUZE POTVRZENÉ
+        # (klasifikace sjednocena do core.vuln_classify, ať souhlasí s vuln záložkou).
         vulnerabilities = []
         vuln_data = self.scan_results.get('vuln', {}).get(ip_address, {})
-        
-        # Klíčová slova, která indikují potvrzenou zranitelnost
-        confirmed_keywords = [
-            'VULNERABLE',
-            'EXPLOITABLE',
-            'CONFIRMED',
-            'State: VULNERABLE',
-            'IDS: CVE',
-            'Risk factor:'
-        ]
-        
-        # Klíčová slova, která indikují nepotvrcenou/negativní výsledek
-        negative_keywords = [
-            'NOT vulnerable',
-            'Not vulnerable',
-            'No vulnerability',
-            'not affected',
-            'LIKELY NOT vulnerable',
-            'false positive',
-            'State: NOT VULNERABLE'
-        ]
-        
+
         for proto in ['tcp', 'udp']:
             if proto in vuln_data:
                 for port, info in vuln_data[proto].items():
                     if 'script' in info:
                         for script_name, script_output in info['script'].items():
-                            output_upper = script_output.upper()
-                            
-                            # Zkontrolovat, zda výstup obsahuje potvrzení zranitelnosti
-                            is_confirmed = any(keyword.upper() in output_upper for keyword in confirmed_keywords)
-                            is_negative = any(keyword.upper() in output_upper for keyword in negative_keywords)
-                            
-                            # Přidat pouze pokud je potvrzená a není negativní
-                            if is_confirmed and not is_negative:
+                            # Přidat pouze potvrzené zranitelnosti (ne chyby/čisté výstupy).
+                            if classify_vuln_output(script_output) == "finding":
                                 vuln_entry = {
                                     'port': port,
                                     'protocol': proto.upper(),
@@ -2679,32 +2686,51 @@ class NmapScannerApp(QWidget):
                 target_item.setForeground(1, QColor("#95A5A6"))
 
             elif base_phase == 'vuln':
-                # Vuln tab: žádný red ERROR — neúspěch/nic = "Žádné zranitelnosti nenalezeny".
+                # Vuln tab: za „nález" se bere jen POTVRZENÁ zranitelnost. Benigní
+                # hlášky („Couldn't find any…"), chyby skriptů a timeouty se NEukazují
+                # jako červené nálezy — schovají se do sbaleného šedého uzlu.
                 status = "hotovo"
-                findings = []
+                findings, others = [], []
                 for proto in ('tcp', 'udp'):
                     for port, info in (data.get(proto, {}) or {}).items():
                         scripts = info.get('script') if isinstance(info, dict) else None
                         if isinstance(scripts, dict):
                             for sname, sout in scripts.items():
-                                findings.append((f"{port}/{proto}", sname, str(sout)))
+                                rec = (f"{port}/{proto}", sname, str(sout))
+                                if classify_vuln_output(str(sout)) == "finding":
+                                    findings.append(rec)
+                                else:
+                                    others.append(rec)
                 if findings:
                     for portproto, sname, sout in findings:
                         it = QTreeWidgetItem(target_item,
                                              [f"{portproto} → {sname}", sout.strip().replace('\n', ' ')[:300]])
                         it.setForeground(0, QColor("#E74C3C"))
                         it.setForeground(1, QColor("#E74C3C"))
-                    target_item.setText(1, f"{len(findings)} nálezů")
+                    target_item.setText(1, f"{len(findings)} zranitelností")
+                    target_item.setForeground(1, QColor("#E74C3C"))
                 else:
                     msg = QTreeWidgetItem(target_item, ["✓ Žádné zranitelnosti nenalezeny", ""])
                     msg.setForeground(0, QColor("#2ECC71"))
                     target_item.setText(1, "bez nálezů")
                     target_item.setForeground(1, QColor("#2ECC71"))
-                    if 'error' in data:
-                        note = QTreeWidgetItem(target_item,
-                                               ["(vuln sken nedoběhl úplně)", str(data.get('error', ''))[:200]])
-                        note.setForeground(0, QColor("#95A5A6"))
-                        note.setForeground(1, QColor("#95A5A6"))
+                # Ostatní výstupy (čisté/chyby/timeouty) — sbaleno a šedě, ať to „neřve".
+                if others:
+                    grp = QTreeWidgetItem(
+                        target_item,
+                        [f"ℹ️ Výstupy skriptů ({len(others)}) — bez potvrzených nálezů", ""])
+                    grp.setForeground(0, QColor("#95A5A6"))
+                    grp.setExpanded(False)
+                    for portproto, sname, sout in others:
+                        child = QTreeWidgetItem(
+                            grp, [f"{portproto} → {sname}", sout.strip().replace('\n', ' ')[:200]])
+                        child.setForeground(0, QColor("#95A5A6"))
+                        child.setForeground(1, QColor("#95A5A6"))
+                if 'error' in data:
+                    note = QTreeWidgetItem(target_item,
+                                           ["(vuln sken nedoběhl úplně)", str(data.get('error', ''))[:200]])
+                    note.setForeground(0, QColor("#95A5A6"))
+                    note.setForeground(1, QColor("#95A5A6"))
 
             elif 'error' in data:
                 status = "chyba"

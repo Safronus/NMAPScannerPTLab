@@ -51,12 +51,17 @@ def main():
             fails.append(f"{cls.__name__} nepřijal cancel_event: {e}")
 
     # 1b) chybějící nástroj → 'Chyba' s návodem na instalaci + finished
-    #     (deterministické jen, když nástroj NENÍ nainstalován — jinak by se
-    #     spustil reálný subprocess, což v testu nechceme).
-    for cls, binname, hint in ((SslscanWorker, "sslscan", "brew install"),
-                               (SslyzeWorker, "sslyze", "pip install")):
-        if shutil.which(binname):
-            continue
+    #     (deterministické jen, když nástroj NENÍ dostupný — jinak by se spustil
+    #     reálný subprocess, což v testu nechceme). sslyze bývá jen modul, proto
+    #     u něj kontrolujeme dostupnost přes _sslyze_base_cmd, ne jen PATH.
+    sslscan_available = shutil.which("sslscan") is not None
+    sslyze_available = SslyzeWorker._sslyze_base_cmd() is not None
+    checks = []
+    if not sslscan_available:
+        checks.append((SslscanWorker, "brew install"))
+    if not sslyze_available:
+        checks.append((SslyzeWorker, "pip install"))
+    for cls, hint in checks:
         s = _FakeSignals()
         cls("1.2.3.4", "443", s).run()
         recs = [c[2] for c in s.result.calls if len(c) >= 3]
