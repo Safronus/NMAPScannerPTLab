@@ -4,6 +4,22 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.0.2] - 2026-06-10
+
+### Přidáno
+- **Cesta k projektu je vidět v aplikaci.** Pod názvem projektu je řádek
+  `📁 …/project.nmapproj` (plná cesta i v tooltipu, jde označit/zkopírovat myší).
+  Když projekt ještě není uložen, řádek to říká („založí se při spuštění skenu").
+  Aktualizuje se při přepnutí běhu, autosave, uložení i exportu.
+
+### Opraveno
+- **Nedokončená fáze (např. UDP) se po uložení/načtení tvářila jako „hotovo".**
+  Při přerušení běhu se uložila částečná data fáze a po načtení je matice podle
+  jejich pouhé přítomnosti označila za hotové. Nově `_display_run` data jen
+  naplní do stromů (`final=False`) a stav buněk matice nastaví **autoritativně**
+  podle skutečného stavu fází běhu (`phase_status`) — přerušená fáze zůstane
+  „čeká"/nedoběhlá, ne „hotovo".
+
 ## [5.0.1] - 2026-06-10
 
 ### Opraveno

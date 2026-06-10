@@ -271,7 +271,14 @@ class NmapScannerApp(QWidget):
         left_panel.addWidget(QLabel("Název projektu:"))
         self.project_name_edit = QLineEdit("Můj Nmap Projekt")
         left_panel.addWidget(self.project_name_edit)
-        
+
+        # Cesta k aktuálnímu projektu (vybíratelná myší, plná cesta v tooltipu).
+        self.project_path_label = QLabel("Projekt: (neuložený)")
+        self.project_path_label.setWordWrap(True)
+        self.project_path_label.setStyleSheet("color: #7f8c8d; font-size: 11px;")
+        self.project_path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        left_panel.addWidget(self.project_path_label)
+
         # Výběr profilu skenu (Master / Intensive / Medium / Light / Vlastní)
         profile_layout = QHBoxLayout()
         profile_layout.addWidget(QLabel("Profil skenu:"))
@@ -2050,6 +2057,17 @@ class NmapScannerApp(QWidget):
             self.run_combo.setCurrentIndex(idx)
         self.run_combo.blockSignals(False)
         self._update_run_controls()
+        self._update_project_path_label()
+
+    def _update_project_path_label(self):
+        if not hasattr(self, "project_path_label"):
+            return
+        if self.current_project_path:
+            self.project_path_label.setText(f"📁 {self.current_project_path}")
+            self.project_path_label.setToolTip(self.current_project_path)
+        else:
+            self.project_path_label.setText("📁 Projekt zatím neuložen (založí se při spuštění skenu)")
+            self.project_path_label.setToolTip("")
 
     def _update_run_controls(self):
         running = self.scan_manager.is_running
@@ -2112,9 +2130,13 @@ class NmapScannerApp(QWidget):
             tree.clear()
         targets = run.targets if run and run.targets else rh.targets_from_snapshot(self.scan_results)
         self.status_matrix.populate_targets(targets)
+        # final=False: jen naplnit stromy/porty z uložených dat, ale NEoznačovat
+        # buňky matice jako „hotovo" podle přítomnosti dat. Stav buněk pak nastaví
+        # autoritativně _apply_run_status_to_matrix podle skutečného stavu fází
+        # (přerušená fáze, např. zastavené UDP, tak nezůstane jako „hotovo").
         for phase in self.phases:
             for target, data in (self.scan_results.get(phase, {}) or {}).items():
-                self.handle_single_result(phase, target, data)
+                self.handle_single_result(phase, target, data, final=False)
         self._apply_run_status_to_matrix(run)
         self._apply_run_progress(run)
         self.loading_project = False
@@ -2289,6 +2311,7 @@ class NmapScannerApp(QWidget):
 
             self.add_to_recent_projects(self.current_project_path)
             self.settings.setValue("last_project_path", self.current_project_path)
+            self._update_project_path_label()
             self.status_label.setText(f"Projekt uložen do {paths.root}")
             self.worker_signals.log.emit("export", f"Projekt úspěšně uložen do složky {paths.root}.")
         except Exception as e:
@@ -4028,6 +4051,7 @@ class NmapScannerApp(QWidget):
             # Aby se projekt objevil ve startup dialogu i bez ručního „Uložit".
             self.add_to_recent_projects(self.current_project_path)
             self.settings.setValue("last_project_path", self.current_project_path)
+            self._update_project_path_label()
             self.worker_signals.log.emit("info", f"💾 Autosave: Projekt uložen do {self.current_project_path}")
         except Exception as e:
             self.worker_signals.log.emit("error", f"⚠️ Autosave: Chyba při automatickém ukládání: {e}")
