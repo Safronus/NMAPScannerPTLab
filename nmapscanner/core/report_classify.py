@@ -480,6 +480,129 @@ def build_ffuf(scan_results, start_idx=1):
     return out, idx
 
 
+# ZAP riziko -> naše závažnost (ZAP nemá CRITICAL)
+ZAP_RISK_SEVERITY = {
+    "high": "HIGH",
+    "medium": "MEDIUM",
+    "low": "LOW",
+    "informational": "INFO",
+    "info": "INFO",
+}
+
+# Fallback mapování názvu alertu -> OWASP, když chybí tag
+ZAP_KEYWORD_OWASP = [
+    ("sql injection", "A05"),
+    ("injection", "A05"),
+    ("cross site scripting", "A05"),
+    ("xss", "A05"),
+    ("path traversal", "A01"),
+    ("directory browsing", "A01"),
+    ("remote code", "A05"),
+    ("authentication", "A07"),
+    ("session", "A07"),
+    ("csrf", "A01"),
+    ("cross-domain", "A02"),
+    ("content security policy", "A02"),
+    ("hsts", "A04"),
+    ("strict-transport", "A04"),
+    ("cookie", "A02"),
+    ("x-frame", "A02"),
+    ("x-content-type", "A02"),
+    ("cors", "A02"),
+    ("ssl", "A04"),
+    ("tls", "A04"),
+    ("cipher", "A04"),
+    ("information disclosure", "A02"),
+    ("vulnerable", "A03"),
+    ("outdated", "A03"),
+    ("deserialization", "A08"),
+]
+
+
+def _zap_owasp(alert):
+    """Z OWASP tagu ZAP alertu odvodí kód A0X (2025), jinak fallback dle názvu."""
+    tags = alert.get("tags") or {}
+    if isinstance(tags, dict):
+        keys = list(tags.keys())
+    elif isinstance(tags, (list, tuple)):
+        keys = list(tags)
+    else:
+        keys = []
+    for k in keys:
+        ku = str(k).upper()
+        if "OWASP" in ku and "_A" in ku:
+            # např. OWASP_2021_A03 → A03
+            tail = ku.split("_A")[-1]
+            num = "".join(ch for ch in tail[:2] if ch.isdigit())
+            if num:
+                code = f"A{int(num):02d}"
+                if code in OWASP_2025:
+                    return code
+    name = (alert.get("alert") or alert.get("name") or "").lower()
+    for kw, code in ZAP_KEYWORD_OWASP:
+        if kw in name:
+            return code
+    return "A06"  # Insecure Design jako neutrální default
+
+
+def build_zap(scan_results, start_idx=1):
+    """Nálezy z OWASP ZAP alertů (uložené v ``scan_results['zap']``)."""
+    out = []
+    idx = start_idx
+    zap = scan_results.get("zap", {}) or {}
+    # Podporuj {target: [alerts]} i {'alerts': {target: [...]}}
+    if isinstance(zap, dict) and "alerts" in zap and isinstance(zap["alerts"], dict):
+        per_target = zap["alerts"]
+    elif isinstance(zap, dict):
+        per_target = zap
+    else:
+        per_target = {}
+
+    seen = set()  # deduplikace (název+url+param)
+    for target, alerts in per_target.items():
+        for a in (alerts or []):
+            if not isinstance(a, dict):
+                continue
+            name = a.get("alert") or a.get("name") or "ZAP alert"
+            url = a.get("url", target)
+            param = a.get("param", "")
+            key = (name, url, param)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            risk = (a.get("risk") or "").strip().lower()
+            sev = ZAP_RISK_SEVERITY.get(risk, "INFO")
+            owasp = _zap_owasp(a)
+
+            desc = (a.get("description") or "").strip()
+            if len(desc) > 500:
+                desc = desc[:500] + " …"
+            ev = a.get("evidence") or ""
+            cwe = a.get("cweid")
+            evidence = f"URL: {url}"
+            if param:
+                evidence += f"\nParametr: {param}"
+            if ev:
+                evidence += f"\nDůkaz: {ev}"
+            if cwe and str(cwe) not in ("-1", "0", ""):
+                evidence += f"\nCWE-{cwe}"
+            conf = a.get("confidence")
+            if conf:
+                evidence += f"\nDůvěra: {conf}"
+
+            out.append(_mk(
+                idx, f"ZAP: {name}",
+                sev, owasp, "OWASP ZAP", target,
+                desc or "Alert nahlášený nástrojem OWASP ZAP.",
+                evidence=evidence,
+                recommendation=(a.get("solution") or "").strip()
+                               or "Ověřit a opravit dle doporučení OWASP ZAP.",
+            ))
+            idx += 1
+    return out, idx
+
+
 def build_webserver(scan_results, start_idx=1):
     """Nálezy z detekce webserveru (zveřejnění technologie/verze)."""
     out = []
@@ -524,9 +647,10 @@ SECTION_BUILDERS = {
     "headers": build_headers,
     "ffuf": build_ffuf,
     "webserver": build_webserver,
+    "zap": build_zap,
 }
 
-ALL_SECTIONS = ["ports", "services", "vulns", "tls", "headers", "ffuf", "webserver"]
+ALL_SECTIONS = ["ports", "services", "vulns", "tls", "headers", "ffuf", "webserver", "zap"]
 
 SECTION_TITLES = {
     "ports": "Otevřené porty",
@@ -536,6 +660,7 @@ SECTION_TITLES = {
     "headers": "Bezpečnostní hlavičky",
     "ffuf": "Directory fuzzing (ffuf)",
     "webserver": "Webserver",
+    "zap": "OWASP ZAP",
 }
 
 

@@ -573,6 +573,17 @@ class NmapScannerApp(QWidget):
         self.report_btn.clicked.connect(self.open_report_dialog)
         actions_layout.addWidget(self.report_btn)
 
+        # Akce: OWASP ZAP aktivní sken
+        self.zap_btn = QPushButton("🕷️")
+        self.zap_btn.setToolTip("OWASP ZAP — aktivní web sken (spider + active scan)")
+        self.zap_btn.setFixedSize(35, 35)
+        self.zap_btn.setStyleSheet("""
+            QPushButton { font-size: 18px; border: 1px solid #CCCCCC; border-radius: 5px; background-color: #F9F9F9; color: #16233f; }
+            QPushButton:hover { background-color: #E8E8E8; }
+        """)
+        self.zap_btn.clicked.connect(self.open_zap_dialog)
+        actions_layout.addWidget(self.zap_btn)
+
         # Přidat stretch aby akce byly vlevo
         actions_layout.addStretch()
         
@@ -891,6 +902,18 @@ class NmapScannerApp(QWidget):
 
         dialog = ReportDialog(self.scan_results, meta_defaults, reports_dir, self)
         dialog.exec()
+
+    def open_zap_dialog(self):
+        """Otevře podokno OWASP ZAP (aktivní web sken). Výsledky jdou do reportu."""
+        from .dialogs.zap import ZapDialog
+        dialog = ZapDialog(self.scan_results, self)
+        dialog.exec()
+        # Persistovat alerty z 'zap' (dialog je zapsal do scan_results)
+        try:
+            self._autosave_after_audit()
+            self.auto_save_project()
+        except Exception:
+            pass
 
     def toggle_ip_summary(self, checked):
         """Přepíná viditelnost sekce Souhrn vybrané IP."""

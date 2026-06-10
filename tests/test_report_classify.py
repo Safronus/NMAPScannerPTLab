@@ -192,6 +192,49 @@ def test_owasp_catalogue_complete():
     assert OWASP_2025["A01"] == "Broken Access Control"
 
 
+def _zap_sample():
+    return {
+        "zap": {
+            "http://10.0.0.1:80": [
+                {"alert": "SQL Injection", "risk": "High", "confidence": "Medium",
+                 "url": "http://10.0.0.1:80/p?id=1", "param": "id",
+                 "evidence": "' OR '1'='1", "cweid": "89",
+                 "description": "SQLi found", "solution": "Param. dotazy",
+                 "tags": {"OWASP_2021_A03": "ref"}},
+                {"alert": "X-Frame-Options Header Not Set", "risk": "Medium",
+                 "url": "http://10.0.0.1:80/", "param": "",
+                 "description": "Clickjacking", "tags": {}},
+                {"alert": "Information Disclosure", "risk": "Informational",
+                 "url": "http://10.0.0.1:80/", "param": ""},
+                # duplikát prvního – musí se odfiltrovat
+                {"alert": "SQL Injection", "risk": "High",
+                 "url": "http://10.0.0.1:80/p?id=1", "param": "id"},
+            ]
+        }
+    }
+
+
+def test_zap_risk_mapping_and_owasp():
+    r = build_findings(_zap_sample(), sections=["zap"])
+    sqli = [f for f in r["findings"] if "SQL Injection" in f["title"]]
+    assert len(sqli) == 1  # deduplikováno
+    assert sqli[0]["severity"] == "HIGH"
+    assert sqli[0]["owasp"] == "A03"  # z tagu OWASP_2021_A03
+    assert "CWE-89" in sqli[0]["evidence"]
+
+
+def test_zap_keyword_fallback_owasp():
+    r = build_findings(_zap_sample(), sections=["zap"])
+    xfo = [f for f in r["findings"] if "X-Frame" in f["title"]]
+    assert xfo and xfo[0]["severity"] == "MEDIUM" and xfo[0]["owasp"] == "A02"
+
+
+def test_zap_info_severity():
+    r = build_findings(_zap_sample(), sections=["zap"])
+    info = [f for f in r["findings"] if "Information Disclosure" in f["title"]]
+    assert info and info[0]["severity"] == "INFO"
+
+
 def main():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

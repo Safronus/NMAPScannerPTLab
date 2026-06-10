@@ -4,6 +4,24 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.7.0] - 2026-06-10
+
+### Přidáno
+- **Integrace OWASP ZAP — aktivní web sken (tlačítko 🕷️).** Nové podokno spustí
+  lokální ZAP daemon (nebo využije běžící), pro vybrané webové cíle proběhne
+  **Spider + Active Scan** se sledováním postupu a alerty se zobrazí ve stromu
+  seskupené dle rizika (High/Medium/Low/Info). Výsledky se ukládají do
+  `scan_results['zap']`, persistují s projektem a **zapojí do PDF reportu**.
+  - `core/zap_runner.py` — detekce ZAP binárky (PATH, `/Applications/ZAP.app`,
+    snap, `ZAP_PATH`) + sestavení daemon příkazu; pokud ZAP chybí, podokno
+    poradí s instalací. `workers/zap.py` — řízení daemonu, spider/ascan polling,
+    sběr alertů, korektní zastavení.
+  - **Mapování alertů do klasifikace** (`build_zap`): ZAP riziko → INFO/LOW/
+    MEDIUM/HIGH, OWASP z tagu alertu (`OWASP_*_A0x`) s fallbackem dle názvu;
+    deduplikace dle (název+URL+parametr). Pokryto v `tests/test_report_classify.py`.
+  - Python klient `zaproxy` přidán do `requirements.txt` (auto-instalace při
+    aktualizaci). Samotný ZAP (Java) se instaluje zvlášť: `brew install --cask zap`.
+
 ## [5.6.0] - 2026-06-10
 
 ### Přidáno
