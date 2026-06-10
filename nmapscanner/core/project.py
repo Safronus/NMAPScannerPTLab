@@ -83,5 +83,15 @@ class ProjectPaths:
         d.mkdir(parents=True, exist_ok=True)
         return d
 
+    def run_dir(self, run_id):
+        """Podsložka konkrétního běhu/verze: results/<run_id> (run_id už obsahuje ``scan_``)."""
+        d = self.results_dir / run_id
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def run_snapshot(self, run_id):
+        """Cesta k snapshotu výsledků daného běhu: results/<run_id>/snapshot.json."""
+        return self.run_dir(run_id) / "snapshot.json"
+
     def __repr__(self):
         return f"ProjectPaths({self.root!r})"

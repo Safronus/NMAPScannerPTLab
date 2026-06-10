@@ -10,9 +10,19 @@ do přehledné matice a generuje reporty.
 
 ## Funkce
 
-- **Discovery & port scan** — fáze `online`, `tcp`, `udp`, `vuln`, `osscan`
-  přes `nmap` (python-nmap), paralelně přes `QThreadPool`.
-- **Stavová matice** — přehled stavu jednotlivých fází pro každou IP.
+- **Adaptivní vícestupňový sken** — fáze `online`, `tcp`, `udp`, `vuln`,
+  `osscan` přes `nmap`. Profil `Master` začne nejtvrdší variantou a při
+  selhání/timeoutu se automaticky **zmírňuje** (méně portů, `-Pn`, mírnější
+  timing), aby workflow nikdy nespadlo a zjistilo co nejvíc. K dispozici i
+  profily `Intensive/Medium/Light` a režim **Vlastní příkaz** (`{target}`).
+  Skeny běží **paralelně (pipeline)** — hloubkové fáze se pro cíl spustí hned
+  po jeho discovery, nečeká se na ostatní.
+- **Živá vizualizace průběhu** — progress bary po fázích, panel „Živé úlohy"
+  (co běží / co skončilo) a stavová matice pro každou IP.
+- **Verzování běhů** — každé spuštění je samostatná verze výsledků; lze mezi
+  nimi přepínat, **navázat** na zastavený běh (doskenuje jen chyby a nedoběhlé),
+  spustit **retest** bez ztráty předchozích dat a **porovnat dvě verze** (nové/
+  zmizelé porty, změny služeb/OS). Master seznam cílů + přepínání mezi projekty.
 - **TLS / SSL audit** — lokálně přes `testssl.sh` a `openssl`, volitelně přes
   veřejné SSL Labs API.
 - **Bezpečnostní hlavičky** — kontrola 6 klíčových HTTP hlaviček (HSTS, CSP,
@@ -105,15 +115,26 @@ nmapscanner/               hlavní balík aplikace
   __init__.py              VERSION (jediný zdroj verze)
   utils.py                 parsování IP, barvy
   signals.py               WorkerSignals (Qt signály)
-  core/scan_manager.py     orchestrace fází skenu
+  core/scan_profiles.py    profily a žebříky variant skenu (bez Qt, testovatelné)
+  core/scan_manager.py     adaptivní orchestrace fází (de-eskalace, pipeline, resume)
+  core/run_history.py      historie běhů, verzování výsledků a diff (bez Qt, testovatelné)
   workers/                 vlákna: scan, tls, certificate, security_headers, screenshot, ffuf
-  widgets/                 LogConsole, StatusMatrix, CheckableComboBox
-  dialogs/                 dialogy: startup, tls, headers, certificate, export, ffuf
+  widgets/                 LogConsole, StatusMatrix, LiveTaskPanel, PhaseProgressBars, …
+  dialogs/                 dialogy: startup, tls, headers, certificate, export, ffuf, runs
   app.py                   NmapScannerApp (hlavní okno)
+tests/                     headless testy (orchestrace skenu)
 wordlists/                 slovníky pro ffuf (SecLists apod.)
 requirements.txt           Python závislosti
 CHANGELOG.md               historie verzí
 .gitignore                 ochrana proti úniku dat
+```
+
+Headless testy (bez GUI a bez nmapu) se spouští jednotlivě, např.:
+```bash
+.venv/bin/python tests/test_scan_orchestration.py   # pipeline, de-eskalace, -Pn
+.venv/bin/python tests/test_scan_resume.py          # navázání (resume)
+.venv/bin/python tests/test_run_history.py          # verzování + diff
+.venv/bin/python tests/test_project_versioning.py   # on-disk snapshoty verzí
 ```
 
 Verzování (od 2.0.0): velké zásahy → MAJOR, drobné úpravy a fixy → PATCH.

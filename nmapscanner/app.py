@@ -16,15 +16,21 @@ from PySide6.QtWidgets import (
     QTabWidget, QHBoxLayout, QSplitter, QCheckBox, QDialog, QMessageBox, QDialogButtonBox, QComboBox, QProgressDialog,
     QRadioButton
 )
-from PySide6.QtCore import Slot, QMutex, QMutexLocker, QTimer, Qt, QThread, QSettings
+from PySide6.QtCore import Slot, Signal, QMutex, QMutexLocker, QTimer, Qt, QThread, QSettings
 from PySide6.QtGui import QColor, QPixmap
 from . import VERSION
 from .utils import clean_and_parse_ips, get_color_for_ip
 from .signals import WorkerSignals
 from .core.scan_manager import ScanManager
+from .core import scan_profiles as sp
 from .core.project import ProjectPaths, default_projects_dir, safe_name
+from .core import run_history as rh
+from .core.run_history import RunHistory, ScanRun, run_id_from_timestamp
+from .dialogs.runs import DiffDialog, RunsManagerDialog
 from .widgets.log_console import LogConsole
 from .widgets.status_matrix import StatusMatrix
+from .widgets.task_panel import LiveTaskPanel
+from .widgets.phase_progress import PhaseProgressBars
 from .dialogs.startup import StartupDialog
 from .dialogs.tls import TlsAuditDialog
 from .dialogs.headers import SecurityHeadersDialog
@@ -37,6 +43,11 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 output_mutex = QMutex()
 
 class NmapScannerApp(QWidget):
+    # Spuštění skenu se posílá do vlákna manažera přes queued signál (cíle, profil,
+    # povolené fáze, vlastní příkaz) — všechny mutace stavu manažeru tak běží
+    # v jednom vlákně (žádné race podmínky).
+    start_scan_requested = Signal(list, str, dict, str, bool, dict)
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"NMAP Scanner PT Lab - v{VERSION}")
@@ -45,9 +56,13 @@ class NmapScannerApp(QWidget):
         self.current_project_path = None
         self.screenshots = {}
         self.loading_project = False
-        self.total_tasks = 0
-        self.completed_tasks = 0
-        
+        # Verzování běhů: historie + aktuálně zobrazená verze + cache snapshotů,
+        # které ještě nejsou na disku (migrace / nový běh).
+        self.run_history = RunHistory()
+        self.viewing_run_id = None
+        self._pending_snapshots = {}   # run_id -> scan_results (dosud neuložené na disk)
+        self._stop_requested = False
+
         # PŘIDÁNO: Inicializace FIXNÍCH šířek pro pravé sekce (nemění se)
         self.ip_summary_width = 1200  # Fixní 1200px
         self.port_summary_width = 350  # Fixní 300px
@@ -66,12 +81,9 @@ class NmapScannerApp(QWidget):
         # 1. Nejdříve vytvoříme GUI
         self.init_ui()
         
-        # 2. Načteme uložená nastavení (zde se nastaví index ComboBoxu)
+        # 2. Načteme uložená nastavení (profil, vlastní příkaz, vstupy)
         self.load_settings()
-        
-        # 3. KLÍČOVÝ KROK: Vynutíme aktualizaci šablon podle aktuálního (načteného) stavu ComboBoxu
-        self.update_command_templates()
-        
+
         # NOVÉ: Zjistit IP hned po startu
         self.fetch_public_ip()
         
@@ -82,26 +94,24 @@ class NmapScannerApp(QWidget):
         
         self.raw_input_text.textChanged.connect(self.debounce_timer.start)
         
-        # Inicializace command templates podle vybrané intenzity
-        intensive = self.intensity_combo.currentIndex() == 0  # 0=Light, 1=Intensive
-        initial_templates = {p: self.command_edits[p].text() for p in self.phases}
-        
         self.manager_thread = QThread()
         self.worker_signals = WorkerSignals()
-        self.scan_manager = ScanManager(initial_templates, self.worker_signals)
+        self.scan_manager = ScanManager(self.worker_signals)
         self.scan_manager.moveToThread(self.manager_thread)
         self.manager_thread.start()
-        
+
         self.worker_signals.result.connect(self.handle_single_result)
         self.worker_signals.log.connect(self.log_console.log_message)
         self.worker_signals.task_started.connect(self.on_task_started)
-        self.worker_signals.finished.connect(self.task_finished)
+        self.worker_signals.phase_progress.connect(self.on_phase_progress)
         self.worker_signals.screenshot_request.connect(self.handle_screenshot_request)
         self.worker_signals.screenshot_taken.connect(self.on_screenshot_taken)
         self.scan_manager.workflow_finished.connect(self.on_workflow_finished)
         
-        self.scan_button.clicked.connect(self.start_workflow_ui)
-        self.stop_button.clicked.connect(self.scan_manager.stop_workflow)
+        self.scan_button.clicked.connect(self.start_new_run)
+        self.stop_button.clicked.connect(self.on_stop_clicked)
+        # Start skenu poběží ve vlákně manažeru (queued connection napříč vlákny)
+        self.start_scan_requested.connect(self.scan_manager.start_workflow)
         
         # Startup dialog - výběr projektu s historií
         recent_projects = self.settings.value("recent_projects", [])
@@ -118,6 +128,9 @@ class NmapScannerApp(QWidget):
             elif dlg.choice and os.path.exists(dlg.choice):
                 # Otevřít vybraný projekt z historie
                 self.import_project(dlg.choice)
+
+        # Inicializovat přepínač běhů/verzí (i pro prázdný projekt)
+        self.refresh_runs_combo()
 
 
     def calculate_adaptive_sizes(self):
@@ -289,51 +302,61 @@ class NmapScannerApp(QWidget):
         self.project_name_edit = QLineEdit("Můj Nmap Projekt")
         left_panel.addWidget(self.project_name_edit)
         
-        # Přidání přepínače intenzity skenování
-        intensity_layout = QHBoxLayout()
-        intensity_layout.addWidget(QLabel("Intenzita detekce služeb:"))
-        self.intensity_combo = QComboBox()
-        self.intensity_combo.addItems(["Light (rychlejší)", "Intensive (přesnější)"])
-        
-        # Připojíme signál pro budoucí změny uživatelem
-        self.intensity_combo.currentIndexChanged.connect(self.update_command_templates)
-        intensity_layout.addWidget(self.intensity_combo)
-        left_panel.addLayout(intensity_layout)
-        
-        # Přidání checkboxů a command editů
-        self.command_edits = {}
+        # Výběr profilu skenu (Master / Intensive / Medium / Light / Vlastní)
+        profile_layout = QHBoxLayout()
+        profile_layout.addWidget(QLabel("Profil skenu:"))
+        self.profile_combo = QComboBox()
+        for key in sp.PROFILE_ORDER:
+            self.profile_combo.addItem(sp.PROFILE_LABELS[key], key)
+        self.profile_combo.currentIndexChanged.connect(self.on_profile_changed)
+        profile_layout.addWidget(self.profile_combo)
+        left_panel.addLayout(profile_layout)
+
+        self.profile_hint_label = QLabel(sp.PROFILE_HINTS["master"])
+        self.profile_hint_label.setWordWrap(True)
+        self.profile_hint_label.setStyleSheet("color: #7f8c8d; font-size: 11px;")
+        left_panel.addWidget(self.profile_hint_label)
+
+        # Pole pro vlastní nmap příkaz (jen pro profil „Vlastní příkaz")
+        self.custom_command_label = QLabel("Vlastní nmap příkaz (placeholder {target}):")
+        left_panel.addWidget(self.custom_command_label)
+        self.custom_command_edit = QLineEdit()
+        self.custom_command_edit.setPlaceholderText("např. nmap -sV -p 80,443 {target}")
+        left_panel.addWidget(self.custom_command_edit)
+
+        # Povolené fáze (checkboxy)
+        left_panel.addWidget(QLabel("Povolené fáze:"))
         self.phase_checkboxes = {}
+        phases_row = QHBoxLayout()
         for phase in self.phases:
-            phase_layout = QHBoxLayout()
-            checkbox = QCheckBox(f"Povolit fázi '{phase.capitalize()}'")
+            checkbox = QCheckBox(phase.capitalize())
             checkbox.setChecked(True)
             self.phase_checkboxes[phase] = checkbox
-            phase_layout.addWidget(checkbox)
-            left_panel.addLayout(phase_layout)
-            
-            left_panel.addWidget(QLabel(f"Šablona příkazu pro fázi '{phase}':"))
-            # Inicializujeme prázdné nebo defaultní, update_command_templates to za chvíli v __init__ přepíše správně
-            edit = QLineEdit()
-            self.command_edits[phase] = edit
-            left_panel.addWidget(edit)
-        
+            phases_row.addWidget(checkbox)
+        phases_row.addStretch()
+        left_panel.addLayout(phases_row)
+
         btn_layout = QHBoxLayout()
-        self.scan_button = QPushButton("Spustit skenování")
-        self.stop_button = QPushButton("Zastavit skenování")
+        self.scan_button = QPushButton("▶ Spustit nový běh")
+        self.stop_button = QPushButton("⏹ Zastavit")
         self.stop_button.setEnabled(False)
         btn_layout.addWidget(self.scan_button)
         btn_layout.addWidget(self.stop_button)
         left_panel.addLayout(btn_layout)
-        
-        # Nový layout pro Export / Import tlačítka
+
+        # Nový layout pro Export / Import / Přepnutí projektu
         export_import_layout = QVBoxLayout()
-        self.export_btn = QPushButton("Exportovat projekt")
+        self.export_btn = QPushButton("Uložit / Exportovat projekt")
         self.export_btn.clicked.connect(self.export_project_dialog)
         export_import_layout.addWidget(self.export_btn)
-        
+
         self.import_btn = QPushButton("Importovat projekt")
         self.import_btn.clicked.connect(self.import_project_dialog)
         export_import_layout.addWidget(self.import_btn)
+
+        self.switch_project_btn = QPushButton("Přepnout projekt…")
+        self.switch_project_btn.clicked.connect(self.switch_project)
+        export_import_layout.addWidget(self.switch_project_btn)
         left_panel.addLayout(export_import_layout)
         
         self.status_label = QLabel("Připraven.")
@@ -586,17 +609,47 @@ class NmapScannerApp(QWidget):
         middle_widget = QWidget()
         middle_panel = QVBoxLayout(middle_widget)
         middle_panel.setContentsMargins(0, 0, 0, 0)
+        # Lišta běhů/verzí: přepínač + akce (navázat, porovnat, správa)
+        run_bar = QHBoxLayout()
+        run_bar.addWidget(QLabel("Běh/verze:"))
+        self.run_combo = QComboBox()
+        self.run_combo.setMinimumWidth(220)
+        self.run_combo.currentIndexChanged.connect(self._on_run_combo_changed)
+        run_bar.addWidget(self.run_combo)
+        self.run_status_label = QLabel("")
+        self.run_status_label.setStyleSheet("color: #7f8c8d;")
+        run_bar.addWidget(self.run_status_label)
+        run_bar.addStretch()
+        self.resume_button = QPushButton("▶ Navázat")
+        self.resume_button.setToolTip("Doskenovat nedoběhlé a chybové fáze v tomto běhu (úspěšné se přeskočí)")
+        self.resume_button.clicked.connect(self.resume_run)
+        self.resume_button.setEnabled(False)
+        self.diff_button = QPushButton("🔍 Porovnat verze…")
+        self.diff_button.clicked.connect(self.open_diff_dialog)
+        self.manage_runs_button = QPushButton("🗂 Správa běhů…")
+        self.manage_runs_button.clicked.connect(self.open_runs_manager)
+        for b in (self.resume_button, self.diff_button, self.manage_runs_button):
+            run_bar.addWidget(b)
+        middle_panel.addLayout(run_bar)
+
         middle_panel.addWidget(QLabel("Průběh fází (Matice):"))
-        
+
+        # Souhrnné progress bary pro jednotlivé fáze
+        self.phase_progress_bars = PhaseProgressBars(self.phases)
+        middle_panel.addWidget(self.phase_progress_bars)
+
         self.status_matrix = StatusMatrix(self.phases)
         self.status_matrix.itemClicked.connect(self.on_matrix_ip_clicked)
-        
+
         # PŘIDAT: Reagovat i na změnu výběru (šipky)
         self.status_matrix.currentItemChanged.connect(self.on_matrix_selection_changed)
-        
+
         middle_panel.addWidget(self.status_matrix)
-        
+
         self.tabs = QTabWidget()
+        # Živý panel paralelních úloh — první záložka, ať je vidět během skenu
+        self.live_task_panel = LiveTaskPanel()
+        self.tabs.addTab(self.live_task_panel, "Živé úlohy")
         self.tree_widgets = {}
         self.export_buttons = {}
         
@@ -1823,93 +1876,337 @@ class NmapScannerApp(QWidget):
         self.worker_signals.log.emit("info", f"🔄 Vytvořena projektová složka: {paths.root}")
         return paths
 
-    def start_workflow_ui(self):
-        # Zkontrolovat, zda již existují data z předchozího testu
-        has_existing_data = any(len(self.scan_results.get(phase, {})) > 0 for phase in self.phases)
-        
-        if has_existing_data:
-            # Zobrazit dialog pro vytvoření nového projektu
-            msg_box = QMessageBox(self)
-            msg_box.setIcon(QMessageBox.Warning)
-            msg_box.setWindowTitle("Upozornění - Existující data")
-            msg_box.setText("V aplikaci již existují data z předchozího testování.")
-            msg_box.setInformativeText(
-                "Chcete vytvořit nový projekt?\n\n"
-                "• ANO - Vytvoří nový projekt a smaže aktuální data\n"
-                "• NE - Zruší spuštění testu a zachová současný projekt\n"
-                "• ULOŽIT A POKRAČOVAT - Uloží aktuální projekt a vytvoří nový"
-            )
-            
-            new_btn = msg_box.addButton("Ano (Smazat a spustit)", QMessageBox.YesRole)
-            save_and_new_btn = msg_box.addButton("Uložit a pokračovat", QMessageBox.AcceptRole)
-            cancel_btn = msg_box.addButton("Ne (Zrušit)", QMessageBox.NoRole)
-            
-            msg_box.setDefaultButton(save_and_new_btn)
-            msg_box.exec()
-            
-            clicked_button = msg_box.clickedButton()
-            
-            if clicked_button == cancel_btn:
-                # Zrušit spuštění
-                self.worker_signals.log.emit("warning", "Spuštění nového testu zrušeno uživatelem.")
-                return
-            elif clicked_button == save_and_new_btn:
-                # Uložit aktuální projekt před pokračováním
-                self.export_project_dialog()
-                self.worker_signals.log.emit("info", "Aktuální projekt uložen. Spouštím nový projekt...")
-            elif clicked_button == new_btn:
-                # Pouze logovat
-                self.worker_signals.log.emit("info", "Zahajuji nový projekt, předchozí data budou smazána...")
-        
+    # ====================== BĚHY / VERZE ======================
+    def _parse_active_targets(self):
         cleaned_text = self.cleaned_output_text.toPlainText()
-        
-        # Filtrovat zakomentované řádky (začínající #) a prázdné řádky
-        targets = [
-            line.strip()
-            for line in cleaned_text.splitlines()
-            if line.strip() and not line.strip().startswith('#')
-        ]
-        
-        if not targets:
-            self.status_label.setText("Žádné cíle k testování (všechny jsou zakomentované nebo prázdné).")
+        return [line.strip() for line in cleaned_text.splitlines()
+                if line.strip() and not line.strip().startswith('#')]
+
+    def start_new_run(self):
+        """Spustí NOVÝ běh (verzi). Předchozí běhy/verze zůstávají zachované."""
+        if self.scan_manager.is_running:
+            self.status_label.setText("Sken už běží.")
             return
-        
-        # Zjistit které fáze jsou povoleny
-        enabled_phases = {phase: checkbox.isChecked() for phase, checkbox in self.phase_checkboxes.items()}
-        self.scan_manager.set_enabled_phases(enabled_phases)
-        
-        # Aktualizovat command templates
-        self.scan_manager.command_templates = {p: self.command_edits[p].text() for p in self.phases}
-        
-        self.scan_button.setEnabled(False)
-        self.stop_button.setEnabled(True)
+        targets = self._parse_active_targets()
+        if not targets:
+            self.status_label.setText("Žádné cíle k testování (zakomentované nebo prázdné).")
+            return
+        profile = self.profile_combo.currentData() or "master"
+        custom_command = self.custom_command_edit.text().strip()
+        if profile == "custom" and not custom_command:
+            self.status_label.setText("Zadej vlastní nmap příkaz (s {target}).")
+            return
+        enabled_phases = {phase: cb.isChecked() for phase, cb in self.phase_checkboxes.items()}
+        if profile != "custom" and not any(enabled_phases.values()):
+            self.status_label.setText("Není povolena žádná fáze.")
+            return
+
+        # Uložit dosavadní aktivní verzi (ať o ni nepřijdeme) a doplnit master cíle.
+        self._persist_active_snapshot()
+        self.run_history.merge_master_targets(targets)
+
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        run_id = run_id_from_timestamp(timestamp)
+        run = ScanRun(run_id, label=self.run_history.next_label(),
+                      created_at=datetime.now().isoformat(timespec="seconds"),
+                      profile=profile, custom_command=custom_command,
+                      targets=targets, enabled_phases=enabled_phases)
+        self.run_history.add_run(run)
+        self.viewing_run_id = run_id
+
+        # Čistá data pro nový běh (verzi)
+        self.scan_results = {p: {} for p in self.phases}
+        self.scan_results['certificates'] = {}
+        self._begin_run_ui(targets, profile, enabled_phases)
+
+        paths = self._ensure_project_folder()
+        self.base_export_path = paths.run_dir(run_id)
+        self.worker_signals.log.emit("info", f"🆕 Nový běh '{run.label}' → {self.base_export_path}")
+
+        self._stop_requested = False
+        self._lock_run_ui()
+        self.refresh_runs_combo()
+        self.start_scan_requested.emit(targets, profile, enabled_phases, custom_command, False, {})
+
+    def resume_run(self):
+        """Naváže na aktivní (nedokončený) běh — doskenuje chyby a nedoběhlé fáze."""
+        if self.scan_manager.is_running:
+            return
+        run = self.run_history.active()
+        if run is None:
+            self.status_label.setText("Není žádný běh k navázání.")
+            return
+        if self.viewing_run_id != run.id:
+            self._switch_view(run.id)
+        if run.profile == "custom":
+            self.status_label.setText("Vlastní příkaz nelze navazovat — spusť nový běh.")
+            return
+        if not run.is_incomplete():
+            self.status_label.setText("Tento běh je kompletní — není co navazovat.")
+            return
+
+        ctx = self._build_resume_ctx(run)
+        run.status = "running"
+
         self.log_console.clear()
-        
+        self.live_task_panel.reset()
+        self.phase_progress_bars.reset(self.phases, run.enabled_phases)
+        if hasattr(self, 'tabs'):
+            self.tabs.setCurrentWidget(self.live_task_panel)
+
+        paths = self._ensure_project_folder()
+        self.base_export_path = paths.run_dir(run.id)
+        self.worker_signals.log.emit("info", f"▶️ Navazuji na běh '{run.label}'…")
+
+        self._stop_requested = False
+        self._lock_run_ui()
+        self.refresh_runs_combo()
+        self.start_scan_requested.emit(run.targets, run.profile, run.enabled_phases,
+                                       run.custom_command, True, ctx)
+
+    def _begin_run_ui(self, targets, profile, enabled_phases):
+        """Společný UI reset pro start NOVÉHO běhu (matice, progress, panel)."""
+        self.log_console.clear()
         for tree in self.tree_widgets.values():
             tree.clear()
-        
-        self.scan_results = {p: {} for p in self.phases}
         self.status_matrix.populate_targets(targets)
-        
-        # Označit zakázané fáze v matici
+        self.live_task_panel.reset()
+        if profile == "custom":
+            self.phase_progress_bars.reset(self.phases, {"tcp": True})
+        else:
+            self.phase_progress_bars.reset(self.phases, enabled_phases)
         for target in targets:
             for phase in self.phases:
-                if not enabled_phases[phase]:
+                if profile == "custom":
+                    self.status_matrix.update_status(target, phase, 'čeká' if phase == 'tcp' else 'přeskočeno')
+                elif not enabled_phases[phase]:
                     self.status_matrix.update_status(target, phase, 'skipped_by_user')
-        
-        self.total_tasks = len(targets)
-        self.completed_tasks = 0
-        
-        timestamp = time.strftime("%Y%m%d-%H%M%S")
-        # Výsledky skenu jdou do projektové složky (results/scan_<timestamp>),
-        # ne do pracovního adresáře. Screenshoty odvozené z base_export_path
-        # se tím automaticky ukládají také dovnitř projektu.
-        paths = self._ensure_project_folder()
-        self.base_export_path = paths.results_run_dir(timestamp)
+        if hasattr(self, 'tabs') and hasattr(self, 'live_task_panel'):
+            self.tabs.setCurrentWidget(self.live_task_panel)
 
-        self.worker_signals.log.emit("info", f"Výsledky se budou ukládat do: {self.base_export_path}")
+    def _build_resume_ctx(self, run):
+        """Sestaví kontext pro navázání: stavy fází + porty/needs_pn z dat běhu."""
+        status = {t: dict(ph) for t, ph in run.phase_status.items()}
+        open_ports, needs_pn = {}, {}
+        for t, d in (self.scan_results.get("tcp", {}) or {}).items():
+            ports = [int(p) for p, info in (d.get("tcp", {}) or {}).items()
+                     if isinstance(info, dict) and info.get("state") == "open"]
+            if ports:
+                open_ports[t] = sorted(ports)
+        for t, d in (self.scan_results.get("online", {}) or {}).items():
+            st = d.get("status")
+            if isinstance(st, dict) and st.get("state") == "down":
+                needs_pn[t] = True
+        return {"status": status, "open_ports": open_ports, "needs_pn": needs_pn}
 
-        self.scan_manager.start_workflow(targets)
+    def on_stop_clicked(self):
+        self._stop_requested = True
+        self.scan_manager.stop_workflow()
+
+    # ---- přepínač / ovládání běhů ------------------------------------
+    def refresh_runs_combo(self):
+        cz = {"running": "běží", "completed": "dokončeno", "aborted": "zastaveno"}
+        self.run_combo.blockSignals(True)
+        self.run_combo.clear()
+        for r in self.run_history.runs:
+            mark = "● " if r.id == self.run_history.active_run_id else "○ "
+            self.run_combo.addItem(f"{mark}{r.label} [{cz.get(r.status, r.status)}]", r.id)
+        idx = self.run_combo.findData(self.viewing_run_id)
+        if idx >= 0:
+            self.run_combo.setCurrentIndex(idx)
+        self.run_combo.blockSignals(False)
+        self._update_run_controls()
+
+    def _update_run_controls(self):
+        running = self.scan_manager.is_running
+        active = self.run_history.active()
+        viewing_active = active is not None and self.viewing_run_id == active.id
+        can_resume = (viewing_active and not running and active.profile != "custom"
+                      and active.is_incomplete())
+        self.resume_button.setEnabled(can_resume)
+        self.run_combo.setEnabled(not running and len(self.run_history.runs) > 0)
+        self.diff_button.setEnabled(not running and len(self.run_history.runs) >= 2)
+        self.manage_runs_button.setEnabled(not running and len(self.run_history.runs) > 0)
+        if hasattr(self, 'switch_project_btn'):
+            self.switch_project_btn.setEnabled(not running)
+        viewed = self.run_history.get(self.viewing_run_id)
+        if viewed is None:
+            self.run_status_label.setText("")
+        elif self.viewing_run_id == self.run_history.active_run_id:
+            self.run_status_label.setText("(aktivní)")
+        else:
+            self.run_status_label.setText("(verze – jen čtení)")
+
+    def _lock_run_ui(self):
+        self.scan_button.setEnabled(False)
+        self.stop_button.setEnabled(True)
+        self.run_combo.setEnabled(False)
+        self.resume_button.setEnabled(False)
+        self.diff_button.setEnabled(False)
+        self.manage_runs_button.setEnabled(False)
+        if hasattr(self, 'switch_project_btn'):
+            self.switch_project_btn.setEnabled(False)
+
+    def _on_run_combo_changed(self):
+        if self.scan_manager.is_running:
+            return
+        run_id = self.run_combo.currentData()
+        if run_id and run_id != self.viewing_run_id:
+            self._switch_view(run_id)
+
+    def _switch_view(self, run_id):
+        """Přepne zobrazenou verzi (uloží dosavadní aktivní, načte vybranou)."""
+        if self.scan_manager.is_running:
+            return
+        if self.viewing_run_id == self.run_history.active_run_id:
+            self._persist_active_snapshot()
+        run = self.run_history.get(run_id)
+        if run is None:
+            return
+        self.scan_results = self._load_snapshot(run)
+        if 'certificates' not in self.scan_results:
+            self.scan_results['certificates'] = {}
+        self.viewing_run_id = run_id
+        self._display_run(run)
+        self.refresh_runs_combo()
+        self.status_label.setText(f"Zobrazena verze: {run.label}")
+
+    def _display_run(self, run):
+        """Vykreslí data daného běhu do matice, stromů a souhrnů."""
+        self.loading_project = True
+        for tree in self.tree_widgets.values():
+            tree.clear()
+        targets = run.targets if run and run.targets else rh.targets_from_snapshot(self.scan_results)
+        self.status_matrix.populate_targets(targets)
+        for phase in self.phases:
+            for target, data in (self.scan_results.get(phase, {}) or {}).items():
+                self.handle_single_result(phase, target, data)
+        self._apply_run_status_to_matrix(run)
+        self.loading_project = False
+        if hasattr(self, "port_summary_tree"):
+            self.update_port_summary()
+            self.update_service_summary()
+            self.update_online_display_with_ports()
+
+    def _apply_run_status_to_matrix(self, run):
+        if run is None:
+            return
+        for target in run.targets:
+            for phase in self.phases:
+                st = run.get_status(target, phase)
+                if st:
+                    self.status_matrix.update_status(target, phase, st)
+                elif not run.enabled_phases.get(phase, True):
+                    self.status_matrix.update_status(target, phase, 'skipped_by_user')
+
+    # ---- snapshoty verzí na disku ------------------------------------
+    def _snapshot_rel_path(self, run_id):
+        return f"results/{run_id}/snapshot.json"
+
+    def _persist_active_snapshot(self):
+        """Uloží aktuálně zobrazená data jako snapshot AKTIVNÍ verze (je-li zobrazena)."""
+        active = self.run_history.active()
+        if active is None or self.viewing_run_id != active.id:
+            return
+        if not self.current_project_path:
+            import copy
+            self._pending_snapshots[active.id] = copy.deepcopy(self.scan_results)
+            return
+        try:
+            paths = ProjectPaths.from_project_file(self.current_project_path)
+            snap_file = paths.run_snapshot(active.id)
+            with open(snap_file, 'w', encoding='utf-8') as f:
+                json.dump(self.scan_results, f, indent=2, ensure_ascii=False)
+            active.snapshot_path = self._snapshot_rel_path(active.id)
+            self._pending_snapshots.pop(active.id, None)
+        except Exception as e:
+            self.worker_signals.log.emit("error", f"⚠️ Uložení snapshotu verze selhalo: {e}")
+
+    def _load_snapshot(self, run):
+        if run is None:
+            return {p: {} for p in self.phases}
+        if run.id in self._pending_snapshots:
+            import copy
+            return copy.deepcopy(self._pending_snapshots[run.id])
+        if run.snapshot_path and self.current_project_path:
+            try:
+                root = ProjectPaths.from_project_file(self.current_project_path).root
+                snap_file = root / run.snapshot_path
+                if snap_file.exists():
+                    with open(snap_file, 'r', encoding='utf-8') as f:
+                        return json.load(f)
+            except Exception as e:
+                self.worker_signals.log.emit("error", f"⚠️ Načtení snapshotu verze selhalo: {e}")
+        return {p: {} for p in self.phases}
+
+    def _delete_run_files(self, run):
+        if not self.current_project_path:
+            self._pending_snapshots.pop(run.id, None)
+            return
+        try:
+            import shutil
+            root = ProjectPaths.from_project_file(self.current_project_path).root
+            rundir = root / "results" / run.id
+            if rundir.exists():
+                shutil.rmtree(rundir, ignore_errors=True)
+        except Exception as e:
+            self.worker_signals.log.emit("error", f"⚠️ Smazání souborů verze selhalo: {e}")
+        self._pending_snapshots.pop(run.id, None)
+
+    # ---- dialogy běhů / verzí ----------------------------------------
+    def open_diff_dialog(self):
+        if len(self.run_history.runs) < 2:
+            QMessageBox.information(self, "Porovnání verzí",
+                                    "K porovnání jsou potřeba alespoň dvě verze (běhy).")
+            return
+        self._persist_active_snapshot()
+        DiffDialog(self.run_history.runs, self._load_snapshot, parent=self).exec()
+
+    def open_runs_manager(self):
+        if not self.run_history.runs:
+            QMessageBox.information(self, "Správa běhů", "Projekt zatím nemá žádný běh.")
+            return
+        self._persist_active_snapshot()
+        dlg = RunsManagerDialog(self.run_history, self._load_snapshot,
+                                delete_files=self._delete_run_files, parent=self)
+        dlg.exec()
+        if dlg.selected_view_run_id:
+            self._switch_view(dlg.selected_view_run_id)
+        else:
+            self.refresh_runs_combo()
+        if self.current_project_path:
+            self.auto_save_project()
+
+    def switch_project(self):
+        if self.scan_manager.is_running:
+            QMessageBox.warning(self, "Nelze přepnout", "Nejdřív zastav skenování.")
+            return
+        if self.current_project_path:
+            self.auto_save_project()
+        recent = self.settings.value("recent_projects", [])
+        if not isinstance(recent, list):
+            recent = []
+        dlg = StartupDialog(recent_projects=recent, parent=self)
+        if dlg.exec() == QDialog.Accepted:
+            if dlg.choice == "import":
+                self.import_project_dialog()
+            elif dlg.choice == "new":
+                self._reset_to_empty_project()
+            elif dlg.choice and os.path.exists(dlg.choice):
+                self.import_project(dlg.choice)
+
+    def _reset_to_empty_project(self):
+        self.current_project_path = None
+        self.run_history = RunHistory()
+        self.viewing_run_id = None
+        self._pending_snapshots = {}
+        self.scan_results = {p: {} for p in self.phases}
+        self.scan_results['certificates'] = {}
+        for tree in self.tree_widgets.values():
+            tree.clear()
+        self.status_matrix.populate_targets([])
+        self.refresh_runs_combo()
+        self.status_label.setText("Nový prázdný projekt.")
 
     def show_startup_dialog(self):
         """Zobrazí startup dialog pro výběr projektu."""
@@ -1939,18 +2236,30 @@ class NmapScannerApp(QWidget):
         if not parent:
             return
 
+        # Uložit aktivní snapshot do STÁVAJÍCÍ složky, ať je co kopírovat.
+        self._persist_active_snapshot()
+
         paths = ProjectPaths.create(parent, self.project_name_edit.text())
         # Zapamatovat zvolenou základní složku pro příště (konfigurovatelný default).
         self.settings.setValue("default_projects_dir", parent)
 
-        project_data = self.gather_project_data()
         try:
+            # Zkopírovat snapshoty všech verzí (běhů) do nové složky.
+            for run in self.run_history.runs:
+                snap = self._load_snapshot(run)
+                if any(snap.get(ph) for ph in rh.NMAP_PHASES) or snap.get("certificates"):
+                    with open(paths.run_snapshot(run.id), 'w', encoding='utf-8') as f:
+                        json.dump(snap, f, indent=2, ensure_ascii=False)
+                    run.snapshot_path = self._snapshot_rel_path(run.id)
+
+            # Přepnout na novou složku a uložit metadata.
+            self.current_project_path = str(paths.project_file)
+            self._pending_snapshots = {}
+            project_data = self.gather_project_data()
             with open(paths.project_file, 'w', encoding='utf-8') as f:
                 json.dump(project_data, f, indent=2, ensure_ascii=False)
 
-            self.current_project_path = str(paths.project_file)
             self.add_to_recent_projects(self.current_project_path)
-
             self.settings.setValue("last_project_path", self.current_project_path)
             self.status_label.setText(f"Projekt uložen do {paths.root}")
             self.worker_signals.log.emit("export", f"Projekt úspěšně uložen do složky {paths.root}.")
@@ -2067,59 +2376,88 @@ class NmapScannerApp(QWidget):
         self.settings.setValue("recent_projects", recent_projects)
 
     def gather_project_data(self):
-        """Sestaví dict se stavem projektu pro export. Včetně certifikátů v scan_results."""
+        """Sestaví dict se stavem projektu pro uložení (schema v3 = historie běhů).
+
+        Snapshoty výsledků jednotlivých běhů se ukládají zvlášť do
+        ``results/<run_id>/snapshot.json`` (viz ``_persist_active_snapshot``);
+        projektový soubor drží jen metadata, ať zůstane malý.
+        """
         return {
+            "schema": 3,
             "project_name": self.project_name_edit.text(),
-            "intensity_mode": self.intensity_combo.currentIndex(),
+            "scan_profile": self.profile_combo.currentData(),
+            "custom_command": self.custom_command_edit.text(),
             "raw_input_text": self.raw_input_text.toPlainText(),
             "cleaned_output_text": self.cleaned_output_text.toPlainText(),
-            "phase_settings": {
-                phase: {
-                    "enabled": self.phase_checkboxes[phase].isChecked(),
-                    "command": self.command_edits[phase].text()
-                }
-                for phase in self.phases
-            },
-            "scan_results": self.scan_results, # Zde jsou již certifikáty uloženy
-            "screenshots": self.screenshots
+            "screenshots": self.screenshots,
+            "run_history": self.run_history.to_dict(),
         }
 
     def apply_project_data(self, data):
-        """Načte data z .nmapproj a zajistí persistenci certifikátů."""
+        """Načte stav projektu. Podporuje schema v3 (historie běhů) i migraci starých."""
         self.loading_project = True
-        
+
         p_name = data.get("project_name") or data.get("name") or "Můj Nmap Projekt"
         self.project_name_edit.setText(p_name)
-        
-        self.intensity_combo.blockSignals(True)
-        idx = int(data.get("intensity_mode", 1))
-        self.intensity_combo.setCurrentIndex(idx)
-        self.intensity_combo.blockSignals(False)
 
-        phase_settings = data.get("phase_settings", {})
-        for phase in self.phases:
-            settings = phase_settings.get(phase, {})
-            if phase in self.phase_checkboxes:
-                self.phase_checkboxes[phase].setChecked(settings.get("enabled", True))
-            if phase in self.command_edits:
-                cmd_text = settings.get("command", self.get_command_template(phase, intensive=(idx==1)))
-                self.command_edits[phase].setText(cmd_text)
-    
-        # Načtení výsledků skenů
-        self.scan_results = data.get("scan_results", {})
-        # Inicializace klíče pro certifikáty, pokud v projektu chybí
-        if 'certificates' not in self.scan_results:
-            self.scan_results['certificates'] = {}
-            
+        self._set_profile(data.get("scan_profile", "master"))
+        self.custom_command_edit.setText(data.get("custom_command", ""))
+        self.screenshots = data.get("screenshots", {}) or {}
         self.raw_input_text.setPlainText(data.get("raw_input_text", ""))
         self.cleaned_output_text.setPlainText(data.get("cleaned_output_text", ""))
-        
-        if hasattr(self, 'scan_manager'):
-            self.scan_manager.command_templates = {p: self.command_edits[p].text() for p in self.phases}
+
+        self._pending_snapshots = {}
+        rh_data = data.get("run_history")
+        if rh_data:
+            self.run_history = RunHistory.from_dict(rh_data)
+        else:
+            self.run_history = self._migrate_legacy(data)
+
+        active = self.run_history.active()
+        self.viewing_run_id = active.id if active else None
+        if active:
+            for ph, cb in self.phase_checkboxes.items():
+                cb.setChecked(active.enabled_phases.get(ph, True))
+
+        self.scan_results = self._load_snapshot(active) if active else {p: {} for p in self.phases}
+        if 'certificates' not in self.scan_results:
+            self.scan_results['certificates'] = {}
 
         self.loading_project = False
-        self.repopulate_ui_from_results()
-        self.status_label.setText(f"Projekt '{p_name}' načten včetně SSL auditů.")
+        if active:
+            self._display_run(active)
+        else:
+            self.repopulate_ui_from_results()
+        self.refresh_runs_combo()
+        n = len(self.run_history.runs)
+        self.status_label.setText(f"Projekt '{p_name}' načten ({n} běhů/verzí).")
+
+    def _migrate_legacy(self, data):
+        """Převede starý projekt (scan_results inline, bez historie) na jeden běh."""
+        history = RunHistory()
+        scan_results = data.get("scan_results", {}) or {}
+        targets = rh.targets_from_snapshot(scan_results)
+        if not targets:
+            targets = [l.strip() for l in data.get("cleaned_output_text", "").splitlines()
+                       if l.strip() and not l.strip().startswith('#')]
+        history.merge_master_targets(targets)
+
+        has_results = any(scan_results.get(ph) for ph in rh.NMAP_PHASES)
+        if has_results or targets:
+            run_id = run_id_from_timestamp(time.strftime("%Y%m%d-%H%M%S") + "_import")
+            ps = data.get("phase_settings", {}) or {}
+            enabled = {p: bool(ps.get(p, {}).get("enabled", True)) for p in self.phases}
+            run = ScanRun(run_id, label="Běh 1 (import)",
+                          created_at=datetime.now().isoformat(timespec="seconds"),
+                          profile=data.get("scan_profile", "master"),
+                          custom_command=data.get("custom_command", ""),
+                          targets=targets, enabled_phases=enabled)
+            run.status = "completed"
+            run.phase_status = rh.phase_status_from_snapshot(scan_results)
+            history.add_run(run)
+            # Snapshot zatím jen v paměti; uloží se na disk při příštím autosave.
+            self._pending_snapshots[run_id] = scan_results
+        return history
 
     def repopulate_ui_from_results(self):
         """OPRAVA PÁDU: Vynechání persistence klíčů z matice IP adres."""
@@ -2162,13 +2500,19 @@ class NmapScannerApp(QWidget):
             self.update_service_summary()
             self.update_online_display_with_ports()
 
-    @Slot(str, str)
-    def on_task_started(self, phase, target):
-        # Pokud fáze obsahuje -Pn, pošli status "probíhá -Pn", jinak jen "probíhá"
-        if '-Pn' in phase:
-            self.status_matrix.update_status(target, phase, 'probíhá -Pn')
-        else:
-            self.status_matrix.update_status(target, phase, 'probíhá')
+    @Slot(str, str, str)
+    def on_task_started(self, phase, target, label):
+        self.status_matrix.update_status(target, phase, 'probíhá')
+        if not getattr(self, 'loading_project', False):
+            self.live_task_panel.task_started(phase, target, label)
+
+    @Slot(str, int, int)
+    def on_phase_progress(self, phase, completed, total):
+        self.phase_progress_bars.update(phase, completed, total)
+        # Autosave po dokončení celé fáze
+        if total > 0 and completed >= total and not getattr(self, 'loading_project', False):
+            self.worker_signals.log.emit("info", f"✅ Fáze {phase.upper()} dokončena – autosave…")
+            self.auto_save_project()
 
 
     @Slot(str, str, dict)
@@ -2286,11 +2630,19 @@ class NmapScannerApp(QWidget):
                             self.status_matrix.update_status(target, 'screenshot', 'hotovo')
     
             
-            # DŮLEŽITÉ: Aktualizovat status v matici s původním názvem fáze (včetně -Pn)
-            self.status_matrix.update_status(target, phase, status)  # Poslat 'phase' místo 'base_phase'
-            
+            # Aktualizovat status fáze v matici
+            self.status_matrix.update_status(target, phase, status)
+
+            # Dokončit úlohu v živém panelu + zaznamenat stav do aktivního běhu
+            # (jen při reálném běhu, ne při načítání projektu / prohlížení verze)
+            if not getattr(self, 'loading_project', False):
+                self.live_task_panel.task_finished(base_phase, target, status)
+                active = self.run_history.active()
+                if active is not None and self.viewing_run_id == active.id:
+                    active.set_status(target, base_phase, status)
+
             self.sort_tree_by_ip(tree)
-            
+
             # Aktualizace přehledu portů
             if hasattr(self, 'port_summary_tree'):
                 self.update_port_summary()
@@ -2299,56 +2651,32 @@ class NmapScannerApp(QWidget):
 
 
     @Slot()
-    def task_finished(self):
-        with QMutexLocker(output_mutex):
-            self.completed_tasks += 1
-            
-            # Aktualizovat progress pro aktuální fázi
-            # (detekce fáze z posledního výsledku)
-            phase_completed = None
-            for phase in self.phases:
-                if phase in self.scan_results and self.scan_results[phase]:
-                    if self.scan_manager.phase_progress[phase]['completed'] < self.scan_manager.phase_progress[phase]['total']:
-                        self.scan_manager.phase_progress[phase]['completed'] += 1
-                        progress = self.scan_manager.phase_progress[phase]
-                        percent = (progress['completed'] / progress['total'] * 100) if progress['total'] > 0 else 0
-                        self.worker_signals.log.emit("info", f"📈 [{phase.upper()}] Průběh: {progress['completed']}/{progress['total']} ({percent:.1f}%)")
-                        
-                        # Zjistit, zda byla fáze právě dokončena
-                        if progress['completed'] == progress['total']:
-                            phase_completed = phase
-                        
-                        break
-            
-            # NOVÉ: Automatické uložení projektu po dokončení fáze
-            if phase_completed:
-                self.worker_signals.log.emit("info", f"✅ Fáze {phase_completed.upper()} dokončena - spouštím autosave...")
-                self.auto_save_project()
-            
-            # Původní logika
-            if self.completed_tasks >= self.total_tasks:
-                if len(self.scan_results.get('tcp', {})) == 0 and len(self.scan_results.get('udp', {})) == 0:
-                    all_targets = list(self.status_matrix.ip_items.keys())
-                    self.total_tasks = len(all_targets) * (len(self.phases) - 1)
-                    self.completed_tasks = 0
-                    
-                    if self.scan_manager.is_running:
-                        self.scan_manager.handle_online_phase_done(self.scan_results['online'])
-                else:
-                    if self.scan_manager.is_running:
-                        self.on_workflow_finished()
-
-    @Slot()
     def on_workflow_finished(self):
-        """Voláno při dokončení celého workflow všech fází."""
+        """Voláno při dokončení (nebo zastavení) celého workflow všech fází."""
         self.scan_button.setEnabled(True)
         self.stop_button.setEnabled(False)
-        self.status_label.setText("Skenování dokončeno! Připraveno k exportu.")
-        self.worker_signals.log.emit("export", "Všechny fáze dokončeny. Výsledky jsou k dispozici pro export.")
-        
-        # NOVÉ: Finální autosave po dokončení všech fází
-        self.worker_signals.log.emit("info", "✅ Všechny fáze dokončeny - spouštím finální autosave...")
+
+        # Uzavřít aktivní běh: dokončeno vs zastaveno (uživatel dal Stop).
+        active = self.run_history.active()
+        if active is not None and active.status == "running":
+            active.finished_at = datetime.now().isoformat(timespec="seconds")
+            active.status = "aborted" if self._stop_requested else "completed"
+        aborted = bool(active and active.status == "aborted")
+        self._stop_requested = False
+
+        if aborted:
+            self.status_label.setText("Skenování zastaveno. Můžeš ho později navázat.")
+        else:
+            self.status_label.setText("Skenování dokončeno! Připraveno k exportu.")
+        self.worker_signals.log.emit("export", "Výsledky jsou k dispozici pro export.")
+
+        # Zastavit živé tikání času v panelu úloh
+        if hasattr(self, 'live_task_panel'):
+            self.live_task_panel.stop()
+
+        # Finální autosave (uloží snapshot verze + metadata běhů) a refresh přepínače.
         self.auto_save_project()
+        self.refresh_runs_combo()
 
     def update_online_display_with_ports(self):
         """Aktualizuje záložku Online s aktuálními stavy (včetně 'online bez pingu')."""
@@ -2404,51 +2732,35 @@ class NmapScannerApp(QWidget):
         self.count_label.setText(f"Počet cílů: {ip_count}")
         self.status_matrix.populate_targets([line for line in formatted_ips if line])
 
-    def get_command_template(self, phase, intensive=True):
-        """Vrací šablonu příkazu podle fáze a intenzity."""
-        if intensive:
-            # Intensive mode - maximální přesnost
-            return {
-                'online': "nmap -sn -T4 -oX - {target}",
-                'tcp': "nmap -T4 -sS -sV --version-intensity 9 -p- -oX - {target}",
-                'udp': "nmap -T4 -sU -sV --version-intensity 7 -p- -oX - {target}",
-                'vuln': "nmap -T4 -sV --version-intensity 9 --script vuln -oX - {target}",
-                'osscan': "nmap -O -T4 -oX - {target}"
-            }.get(phase, "")
-        else:
-            # Light mode - rychlejší
-            return {
-                'online': "nmap -sn -T4 -oX - {target}",
-                'tcp': "nmap -T4 -sS -sV --version-light -p- -oX - {target}",
-                'udp': "nmap -T4 -sU -sV --version-light --top-ports 1000 -oX - {target}",
-                'vuln': "nmap -T4 -sV --version-light --script vuln -oX - {target}",
-                'osscan': "nmap -O -T4 -oX - {target}"
-            }.get(phase, "")
-        
     @Slot()
-    def update_command_templates(self):
-        """Aktualizuje šablony příkazů v UI podle vybrané intenzity v ComboBoxu."""
-        # Zjištění stavu přímo z ComboBoxu
-        is_intensive = self.intensity_combo.currentIndex() == 1
-        
-        for phase in self.phases:
-            new_template = self.get_command_template(phase, intensive=is_intensive)
-            if phase in self.command_edits:
-                self.command_edits[phase].setText(new_template)
-        
-        # Synchronizace šablon do manažera skenování, pokud již existuje
-        if hasattr(self, 'scan_manager'):
-            self.scan_manager.command_templates = {p: self.command_edits[p].text() for p in self.phases}
+    def on_profile_changed(self):
+        """Aktualizuje nápovědu profilu a viditelnost pole pro vlastní příkaz."""
+        profile = self.profile_combo.currentData() or "master"
+        self.profile_hint_label.setText(sp.PROFILE_HINTS.get(profile, ""))
+        is_custom = profile == "custom"
+        self.custom_command_label.setVisible(is_custom)
+        self.custom_command_edit.setVisible(is_custom)
+        # Při vlastním příkazu nemá smysl vybírat fáze (běží jeden příkaz na cíl)
+        for cb in self.phase_checkboxes.values():
+            cb.setEnabled(not is_custom)
 
-        # Logování
-        if hasattr(self, 'worker_signals') and self.worker_signals:
-            mode = "Intensive" if is_intensive else "Light"
-            self.worker_signals.log.emit("info", f"🔄 Příkazy synchronizovány s režimem: {mode}")
+    def _set_profile(self, profile_key):
+        """Nastaví profil v comboboxu podle klíče (master/intensive/…/custom)."""
+        idx = self.profile_combo.findData(profile_key)
+        if idx < 0:
+            idx = self.profile_combo.findData("master")
+        self.profile_combo.blockSignals(True)
+        self.profile_combo.setCurrentIndex(max(0, idx))
+        self.profile_combo.blockSignals(False)
+        self.on_profile_changed()
 
     def update_cumulative_reports(self, target_ip):
         if not hasattr(self, 'base_export_path'):
             return
-        
+        # Při načítání projektu / prohlížení starší verze nepřepisovat výstupy na disku.
+        if getattr(self, 'loading_project', False):
+            return
+
         ip_full_data = {p: self.scan_results[p].get(target_ip, {}) for p in self.phases}
         safe_name = target_ip.replace('/', '_')
         ip_dir = self.base_export_path / safe_name
@@ -3672,16 +3984,18 @@ class NmapScannerApp(QWidget):
 
 
     def auto_save_project(self):
-        """Automaticky uloží projekt na pozadí během testování."""
+        """Automaticky uloží projekt (snapshot aktivní verze + metadata běhů)."""
         # Zajistí projektovou složku (případně ji založí pod výchozí základnou).
         self._ensure_project_folder()
 
         try:
+            # Nejdřív odložit snapshot aktivní verze na disk, pak metadata projektu.
+            self._persist_active_snapshot()
             project_data = self.gather_project_data()
             with open(self.current_project_path, 'w', encoding='utf-8') as f:
                 json.dump(project_data, f, indent=2, ensure_ascii=False)
-            
-            self.worker_signals.log.emit("info", f"💾 Autosave: Projekt automaticky uložen do {self.current_project_path}")
+
+            self.worker_signals.log.emit("info", f"💾 Autosave: Projekt uložen do {self.current_project_path}")
         except Exception as e:
             self.worker_signals.log.emit("error", f"⚠️ Autosave: Chyba při automatickém ukládání: {e}")
 
@@ -3690,7 +4004,8 @@ class NmapScannerApp(QWidget):
         settings = QSettings("UTB", "NmapScannerApp")
         settings.setValue("last_input", self.raw_input_text.toPlainText())
         settings.setValue("cleaned_output", self.cleaned_output_text.toPlainText())
-        settings.setValue("intensity_mode", self.intensity_combo.currentIndex())
+        settings.setValue("scan_profile", self.profile_combo.currentData())
+        settings.setValue("custom_command", self.custom_command_edit.text())
     
     def load_settings(self):
         self.settings = QSettings("UTB", "NmapScannerApp")
@@ -3706,13 +4021,10 @@ class NmapScannerApp(QWidget):
         else:
             self.update_cleaned_output()
         
-        # Načtení intenzity (výchozí: 1 = Intensive)
-        intensity_index = self.settings.value("intensity_mode", 1, type=int)
-        
-        # Blokovat signály během načítání nastavení
-        self.intensity_combo.blockSignals(True)
-        self.intensity_combo.setCurrentIndex(intensity_index)
-        self.intensity_combo.blockSignals(False)
+        # Načtení profilu skenu (výchozí: master) a vlastního příkazu
+        profile = self.settings.value("scan_profile", "master")
+        self.custom_command_edit.setText(self.settings.value("custom_command", ""))
+        self._set_profile(profile)
 
     def closeEvent(self, event):
         """Při zavření aplikace nabídnout uložení projektu."""
