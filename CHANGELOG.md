@@ -4,6 +4,27 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.6.0] - 2026-06-10
+
+### Přidáno
+- **Souhrnný PDF report (tlačítko 📊).** Nové tlačítko v liště akcí vytvoří
+  souhrnný report z celého běhu. Dialog umožní vybrat, co zahrnout (defaultně
+  vše, co má data): otevřené porty, identifikace služeb, zranitelnosti (nmap),
+  TLS audit, bezpečnostní hlavičky, ffuf, webserver. Volby: min. závažnost,
+  seskupení (dle závažnosti / oblasti), důkazy, doporučení, metodika, grafy.
+  Report se renderuje do PDF přes QtWebEngine ve stylu **PT Lab** (tmavě modré
+  záhlaví + červený akcent).
+  - **Klasifikace závažnosti INFO/LOW/MEDIUM/HIGH/CRITICAL** zarovnaná na pásma
+    **CVSS v4.0** a mapovaná na **OWASP Top 10:2025** (A01–A10). Logika v
+    `core/report_classify.py` (bez Qt, pokryto `tests/test_report_classify.py`):
+    rizikové porty (Telnet/SMB/DB/RDP/VNC…), zveřejnění verzí, potvrzené nmap
+    zranitelnosti (CVE→A03), TLS známka A/B/C/F→A04, chybějící hlavičky→A02,
+    citlivé cesty z ffuf (.git/.env/zálohy→A02/A01), detekce webserveru.
+  - HTML generátor v `core/report_html.py`; náhled v prohlížeči i přímý export PDF.
+- **Kontextová akce „Otevřít v prohlížeči" nad cíli.** Pravý klik na cíl v matici
+  „Průběh fází" → výběr webového portu (HTTP/HTTPS) → otevře se v systémovém
+  prohlížeči (cross-platform přes `QDesktopServices`).
+
 ## [5.5.0] - 2026-06-10
 
 ### Přidáno

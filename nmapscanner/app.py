@@ -561,7 +561,18 @@ class NmapScannerApp(QWidget):
         """)
         self.tls_btn.clicked.connect(self.open_tls_audit_dialog)
         actions_layout.addWidget(self.tls_btn)
-        
+
+        # Akce: Souhrnný PDF report (klasifikace OWASP/CVSS)
+        self.report_btn = QPushButton("📊")
+        self.report_btn.setToolTip("Souhrnný PDF report (OWASP Top 10:2025 / CVSS v4.0)")
+        self.report_btn.setFixedSize(35, 35)
+        self.report_btn.setStyleSheet("""
+            QPushButton { font-size: 18px; border: 1px solid #CCCCCC; border-radius: 5px; background-color: #F9F9F9; color: #d92e27; }
+            QPushButton:hover { background-color: #E8E8E8; }
+        """)
+        self.report_btn.clicked.connect(self.open_report_dialog)
+        actions_layout.addWidget(self.report_btn)
+
         # Přidat stretch aby akce byly vlevo
         actions_layout.addStretch()
         
@@ -845,6 +856,41 @@ class NmapScannerApp(QWidget):
         # Po zavření dialogu pro jistotu znovu synchronizujeme
         self.scan_results["ffuf"] = dialog.json_results
         self.auto_save_project()
+
+    def open_report_dialog(self):
+        """Otevře dialog souhrnného PDF reportu (klasifikace OWASP/CVSS)."""
+        from .dialogs.report import ReportDialog
+
+        # Cesta pro report: do projektové složky (reports/), jinak cwd
+        try:
+            paths = self._ensure_project_folder()
+            reports_dir = str(paths.reports_dir)
+        except Exception:
+            reports_dir = os.getcwd()
+
+        # Metadata z projektu / aktivního běhu
+        run = self.run_history.active() if hasattr(self, "run_history") else None
+        run_info = "—"
+        if run is not None:
+            run_info = f"{getattr(run, 'name', '') or run.id} ({getattr(run, 'profile', '')})"
+        project_name = ""
+        if getattr(self, "current_project_path", None):
+            project_name = os.path.splitext(os.path.basename(self.current_project_path))[0]
+
+        # Klient/rozsah = seznam naskenovaných cílů (zkráceně)
+        targets = sorted((self.scan_results.get("tcp", {}) or {}).keys())
+        client = ", ".join(targets[:6]) + (f" … (+{len(targets) - 6})" if len(targets) > 6 else "")
+
+        meta_defaults = {
+            "project_name": project_name or "—",
+            "client": client or "—",
+            "author": "",
+            "run_info": run_info,
+            "tool": f"NMAP Scanner — PT Lab v{VERSION}",
+        }
+
+        dialog = ReportDialog(self.scan_results, meta_defaults, reports_dir, self)
+        dialog.exec()
 
     def toggle_ip_summary(self, checked):
         """Přepíná viditelnost sekce Souhrn vybrané IP."""
@@ -2069,6 +2115,22 @@ class NmapScannerApp(QWidget):
         menu.addAction(f"🔁 Re-scan Vuln — {sfx}", lambda: self.rescan_target(targets, ["vuln"]))
         menu.addAction(f"🔁 Re-scan OS — {sfx}", lambda: self.rescan_target(targets, ["osscan"]))
         menu.addSeparator()
+        # Otevřít web cíle v prohlížeči — jen pro jeden cíl (s výběrem portu/schématu)
+        if len(targets) == 1:
+            web_ports = self._web_ports_for(targets[0])
+            if web_ports:
+                open_menu = menu.addMenu(f"🌐 Otevřít v prohlížeči — {targets[0]}")
+                for pnum, scheme, product in sorted(web_ports):
+                    label = f"{scheme}://{targets[0]}:{pnum}"
+                    if product:
+                        label += f"   ({product})"
+                    open_menu.addAction(
+                        label,
+                        lambda s=scheme, t=targets[0], p=pnum: self._open_in_browser(s, t, p))
+            else:
+                act = menu.addAction(f"🌐 Otevřít v prohlížeči — {targets[0]} (žádný web port)")
+                act.setEnabled(False)
+        menu.addSeparator()
         menu.addAction(f"🌐 Detekovat web server (IIS/Apache/nginx) — {sfx}",
                        lambda: self.detect_webserver(targets))
         menu.addAction(f"📸 Re-scan screenshoty (HTTP/HTTPS) — {sfx}",
@@ -2214,6 +2276,17 @@ class NmapScannerApp(QWidget):
                 product = " ".join(x for x in [info.get("product", ""), info.get("version", "")] if x).strip()
                 out.append((pnum, scheme, product))
         return out
+
+    def _open_in_browser(self, scheme, target, port):
+        """Otevře cíl v systémovém prohlížeči (cross-platform přes QDesktopServices)."""
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl
+        url = f"{scheme}://{target}:{port}"
+        ok = QDesktopServices.openUrl(QUrl(url))
+        if ok:
+            self.status_label.setText(f"🌐 Otevřeno v prohlížeči: {url}")
+        else:
+            self.status_label.setText(f"⚠️ Nepodařilo se otevřít prohlížeč pro {url}")
 
     def detect_webserver(self, targets):
         """Kontextová akce: zjistí typ web serveru (IIS/Apache/nginx/…) z HTTP
