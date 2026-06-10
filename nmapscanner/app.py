@@ -154,11 +154,15 @@ class NmapScannerApp(QWidget):
         def clamp(value, lo, hi):
             return max(lo, min(int(value), hi))
 
-        self.left_panel_width = clamp(w * 0.18, 300, 460)
-        self.middle_panel_width = clamp(w * 0.42, 600, 2200)
-        self.ip_summary_width = clamp(w * 0.26, 360, 1000)
-        self.port_summary_width = clamp(w * 0.11, 160, 320)
-        self.service_summary_width = clamp(w * 0.13, 190, 360)
+        # Užší levý + pravé souhrnné panely, ať matice (střed) dostane víc místa
+        # i na FullHD. Pravé panely jdou roztáhnout splitterem podle potřeby.
+        self.left_panel_width = clamp(w * 0.16, 280, 420)
+        self.ip_summary_width = clamp(w * 0.18, 300, 720)
+        self.port_summary_width = clamp(w * 0.09, 150, 280)
+        self.service_summary_width = clamp(w * 0.10, 170, 300)
+        right_total = self.ip_summary_width + self.port_summary_width + self.service_summary_width
+        # Střední panel = zbytek šířky (matice je hlavní pohled → dostane nejvíc).
+        self.middle_panel_width = max(560, w - self.left_panel_width - right_total - 40)
 
         # Orientační šířky sloupců (stromy stejně používají ResizeToContents).
         self.ip_summary_col0 = int(self.ip_summary_width * 0.42)
@@ -759,9 +763,9 @@ class NmapScannerApp(QWidget):
 
         content_splitter.addWidget(right_side_widget)
 
-        # Stretch: levý panel fixní, střední i pravý se pružně dělí o zbytek šířky.
+        # Stretch: levý fixní; matice (střed) má přednost, pravý souhrn jen doplňkově.
         content_splitter.setStretchFactor(0, 0)
-        content_splitter.setStretchFactor(1, 3)
+        content_splitter.setStretchFactor(1, 5)
         content_splitter.setStretchFactor(2, 2)
 
         # Výchozí velikosti proporčně k oknu (uživatel může přetáhnout).
@@ -2112,11 +2116,25 @@ class NmapScannerApp(QWidget):
             for target, data in (self.scan_results.get(phase, {}) or {}).items():
                 self.handle_single_result(phase, target, data)
         self._apply_run_status_to_matrix(run)
+        self._apply_run_progress(run)
         self.loading_project = False
         if hasattr(self, "port_summary_tree"):
             self.update_port_summary()
             self.update_service_summary()
             self.update_online_display_with_ports()
+
+    def _apply_run_progress(self, run):
+        """Obnoví progress bary fází z uloženého stavu běhu (i u načteného projektu)."""
+        if run is None:
+            return
+        self.phase_progress_bars.reset(self.phases, run.enabled_phases)
+        for phase in self.phases:
+            if not run.enabled_phases.get(phase, True):
+                continue
+            total = len(run.targets)
+            done = sum(1 for t in run.targets
+                       if run.get_status(t, phase) in rh.SUCCESS_STATUSES)
+            self.phase_progress_bars.update(phase, done, total)
 
     def _apply_run_status_to_matrix(self, run):
         if run is None:

@@ -4,6 +4,17 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.0.1] - 2026-06-10
+
+### Opraveno
+- **Progress bary fází se neobnovily při načtení projektu** (ukazovaly 0/0 i u
+  doběhlého/rozpracovaného běhu). Nově se dopočítají z uloženého stavu běhu
+  (kolik cílů má danou fázi hotovou).
+- **FullHD layout:** pravé souhrnné panely byly moc široké a matice stísněná
+  (pravý blok byl širší než matice). Zúženy levý i pravé panely, **střední
+  panel (matice) = zbytek šířky** a má přednost i při roztahování okna. Panely
+  jdou i dál ručně roztáhnout splitterem nebo skrýt tlačítky Souhrn IP/Porty/Služby.
+
 ## [5.0.0] - 2026-06-10
 
 Nový projektový formát (schema v4) — robustní, atomický, self-describing,
