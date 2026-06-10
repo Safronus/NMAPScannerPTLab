@@ -14,6 +14,7 @@ from PySide6.QtCore import Slot, QTimer, Qt, QSettings, Signal
 from PySide6.QtGui import QColor, QFont
 from ..workers.ffuf import FfufWorker, BatchDownloadWorker
 from ..widgets.checkable_combo import CheckableComboBox
+from ..utils import register_project_report
 
 
 # ==========================================
@@ -1683,6 +1684,7 @@ class FfufDialog(QDialog):
             try:
                 with open(filename, 'w', encoding='utf-8') as f:
                     json.dump(self.json_results, f, indent=4, ensure_ascii=False)
+                register_project_report(self, filename, "ffuf", "json")
                 QMessageBox.information(self, "Export", f"JSON data uložena do:\n{filename}")
             except Exception as e:
                 QMessageBox.critical(self, "Chyba", f"Nepodařilo se uložit soubor: {e}")
@@ -2030,6 +2032,7 @@ class FfufDialog(QDialog):
                         f.write("\n")
                     f.write("\n")
 
+            register_project_report(self, filename, "ffuf", "txt")
             QMessageBox.information(self, "Export", f"Report byl úspěšně uložen.")
         except Exception as e:
             QMessageBox.critical(self, "Chyba", f"Chyba při zápisu reportu: {e}")

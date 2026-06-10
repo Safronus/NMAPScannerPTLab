@@ -13,11 +13,14 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QTreeWidget, QTreeWidgetItem, QHeaderView,
     QCheckBox, QSpinBox, QPushButton, QProgressBar, QSplitter, QWidget,
-    QMessageBox, QApplication,
+    QMessageBox, QApplication, QFileDialog,
 )
+import json
+import time
 
 from ..core.zap_runner import find_zap, install_hint, client_missing_hint
 from ..workers.zap import ZapScanWorker
+from ..utils import register_project_report
 
 RISK_COLOR = {
     "High": "#c0392b",
@@ -128,6 +131,10 @@ class ZapDialog(QDialog):
         self.status_label = QLabel("")
         bottom.addWidget(self.status_label)
         bottom.addStretch()
+        self.export_btn = QPushButton("Uložit alerty (JSON)")
+        self.export_btn.setToolTip("Exportovat ZAP alerty do JSON a přidat do manažeru reportů")
+        self.export_btn.clicked.connect(self._export_json)
+        bottom.addWidget(self.export_btn)
         self.start_btn = QPushButton("Spustit ZAP sken")
         self.start_btn.clicked.connect(self._start)
         bottom.addWidget(self.start_btn)
@@ -297,6 +304,25 @@ class ZapDialog(QDialog):
         total_alerts = sum(len(v) for v in self.results.values())
         self.phase_label.setText(f"Hotovo. Cílů: {len(self.results)}, alertů: {total_alerts}.")
         self.worker = None
+
+    def _export_json(self):
+        data = self.results or (self.scan_results.get("zap", {}) or {})
+        if not data:
+            QMessageBox.information(self, "OWASP ZAP", "Žádné alerty k exportu (nejdřív spusť sken).")
+            return
+        default = f"PTLab_zap_{time.strftime('%Y%m%d-%H%M%S')}.json"
+        path, _ = QFileDialog.getSaveFileName(self, "Uložit ZAP alerty", default,
+                                              "JSON soubory (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            QMessageBox.critical(self, "OWASP ZAP", f"Uložení selhalo: {e}")
+            return
+        register_project_report(self, path, "zap", "json")
+        QMessageBox.information(self, "OWASP ZAP", f"Alerty uloženy a přidány do projektu:\n{path}")
 
     def closeEvent(self, event):
         if self.worker is not None:

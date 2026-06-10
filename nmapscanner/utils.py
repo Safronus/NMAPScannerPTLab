@@ -42,3 +42,23 @@ def get_color_for_ip(ip_str):
         return QColor(color_palette[third_octet % len(color_palette)])
     except:
         return QColor("black")
+
+
+def register_project_report(widget, path, source, type_, language=""):
+    """Z libovolného dialogu zaregistruje vytvořený soubor reportu do projektu.
+
+    Vyjde po stromu rodičů až k hlavnímu oknu (které má ``register_export``).
+    Tiše ignoruje, pokud okno helper nemá (např. samostatně spuštěný dialog).
+    """
+    w = widget
+    seen = 0
+    while w is not None and seen < 12:
+        if hasattr(w, "register_export"):
+            try:
+                w.register_export(path, source, type_, language)
+            except Exception:
+                pass
+            return True
+        w = w.parent() if hasattr(w, "parent") else None
+        seen += 1
+    return False

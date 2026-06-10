@@ -100,7 +100,7 @@ class ReportManagerDialog(QDialog):
         return items[0].data(0, Qt.UserRole)
 
     def _path_of(self, entry):
-        return os.path.join(self.reports_dir, entry.get("filename", ""))
+        return report_store.entry_path(entry, self.reports_dir)
 
     def open_selected(self):
         e = self._selected_entry()

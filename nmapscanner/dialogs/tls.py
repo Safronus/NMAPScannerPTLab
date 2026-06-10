@@ -14,6 +14,7 @@ from ..workers.tls import (
 )
 from ..core.tls_grading import calculate_grade as tls_calculate_grade
 from ..signals import WorkerSignals
+from ..utils import register_project_report
 from PySide6.QtWebEngineCore import QWebEnginePage
 
 
@@ -884,4 +885,6 @@ class TlsAuditDialog(QDialog):
         self.pdf_page = QWebEnginePage()
         self.pdf_page.setHtml(full_html)
         self.pdf_page.loadFinished.connect(lambda ok: self.pdf_page.printToPdf(path) if ok else None)
+        self.pdf_page.pdfPrintingFinished.connect(
+            lambda out_path, ok: register_project_report(self, out_path, "tls", "pdf") if ok else None)
             

@@ -4,6 +4,17 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.9.2] - 2026-06-11
+
+### Přidáno
+- **Všechny exporty se evidují v manažeru reportů.** Dílčí exporty se nově po
+  uložení zapisují do projektového registru a objeví se v manažeru 🗂 seskupené
+  dle zdroje: **ffuf** (TXT/JSON), **certifikáty** (CSV/TXT), **TLS** (PDF),
+  **bezpečnostní hlavičky** (PDF), **zranitelnosti** (Word), **porty/služby/
+  hostnames** (TXT) a **OWASP ZAP** (nové tlačítko „Uložit alerty (JSON)").
+  Registr drží absolutní cestu, takže funguje i pro soubory uložené mimo
+  složku `reports/`.
+
 ## [5.9.1] - 2026-06-11
 
 ### Přidáno

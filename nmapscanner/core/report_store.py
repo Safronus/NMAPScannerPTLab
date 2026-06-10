@@ -89,6 +89,7 @@ def register_report(reports_dir, path, source, type_, language="", title=""):
         size = os.path.getsize(path)
     except OSError:
         size = 0
+    abspath = os.path.abspath(path)
     entry = {
         "id": _gen_id(source),
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -97,13 +98,22 @@ def register_report(reports_dir, path, source, type_, language="", title=""):
         "language": language or "",
         "title": title or os.path.basename(path),
         "filename": os.path.basename(path),
+        "path": abspath,            # absolutní cesta (soubor může být i mimo reports/)
         "size": size,
     }
-    # nahradit případný duplicitní záznam se stejným filename
-    entries = [e for e in entries if e.get("filename") != entry["filename"]]
+    # nahradit případný duplicitní záznam se stejnou cestou
+    entries = [e for e in entries if entry_path(e, reports_dir) != abspath]
     entries.append(entry)
     _save_manifest(reports_dir, entries)
     return entry
+
+
+def entry_path(entry, reports_dir):
+    """Absolutní cesta k souboru reportu (zpětně kompatibilní se starým formátem)."""
+    p = entry.get("path")
+    if p:
+        return os.path.abspath(p)
+    return os.path.abspath(os.path.join(reports_dir, entry.get("filename", "")))
 
 
 def remove_report(reports_dir, report_id, delete_file=True):
@@ -119,7 +129,7 @@ def remove_report(reports_dir, report_id, delete_file=True):
         return False
     if delete_file:
         try:
-            os.remove(os.path.join(reports_dir, removed.get("filename", "")))
+            os.remove(entry_path(removed, reports_dir))
         except OSError:
             pass
     _save_manifest(reports_dir, kept)
@@ -139,8 +149,7 @@ def reports_grouped(reports_dir):
 def prune_missing(reports_dir):
     """Odstraní z manifestu položky, jejichž soubor už neexistuje."""
     entries = load_manifest(reports_dir)
-    kept = [e for e in entries
-            if os.path.exists(os.path.join(reports_dir, e.get("filename", "")))]
+    kept = [e for e in entries if os.path.exists(entry_path(e, reports_dir))]
     if len(kept) != len(entries):
         _save_manifest(reports_dir, kept)
     return kept

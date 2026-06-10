@@ -11,6 +11,7 @@ from PySide6.QtCore import Slot, Qt, QThreadPool
 from PySide6.QtGui import QColor, QFont
 from ..workers.security_headers import SecurityHeadersWorker
 from ..signals import WorkerSignals
+from ..utils import register_project_report
 from .. import VERSION
 from PySide6.QtWebEngineCore import QWebEnginePage
 
@@ -601,11 +602,16 @@ class SecurityHeadersDialog(QDialog):
         self.pdf_page = QWebEnginePage()
         self.pdf_page.setHtml(full_html)
         
+        def on_pdf_done(out_path, ok):
+            if ok:
+                register_project_report(self, out_path, "headers", "pdf")
+                self.status_label.setText("PDF report uložen.")
+                QMessageBox.information(self, "Export", f"Vícestránkový report byl úspěšně vygenerován:\n{out_path}")
+
         def handle_print_finished(ok):
             if ok:
                 self.pdf_page.printToPdf(path)
-                self.status_label.setText("PDF report uložen.")
-                QMessageBox.information(self, "Export", f"Vícestránkový report byl úspěšně vygenerován:\n{path}")
-        
+
+        self.pdf_page.pdfPrintingFinished.connect(on_pdf_done)
         self.pdf_page.loadFinished.connect(handle_print_finished)
 

@@ -951,6 +951,14 @@ class NmapScannerApp(QWidget):
         except Exception:
             return os.getcwd()
 
+    def register_export(self, path, source, type_, language=""):
+        """Zaregistruje vytvořený soubor (report/export) do manažeru reportů."""
+        from .core import report_store
+        try:
+            report_store.register_report(self._reports_dir(), path, source, type_, language)
+        except Exception as e:
+            print(f"DEBUG: register_export selhalo: {e}")
+
     def open_report_manager(self):
         """Otevře manažer reportů (přehled všech reportů v projektu)."""
         from .dialogs.report_manager import ReportManagerDialog
@@ -3448,6 +3456,7 @@ class NmapScannerApp(QWidget):
                             
                             f.write("\n" + "-"*40 + "\n\n")
                 
+                self.register_export(filename, "other", "txt")
                 self.worker_signals.log.emit("export", f"Výsledky fáze '{phase}' úspěšně exportovány do {filename}.")
             
             except Exception as e:
@@ -3637,6 +3646,7 @@ class NmapScannerApp(QWidget):
                 f.write("KONEC EXPORTU\n")
                 f.write("=" * 80 + "\n")
             
+            self.register_export(path, "other", "txt")
             QMessageBox.information(self, "Export", f"Výsledky úspěšně exportovány do:\n{path}")
             self.worker_signals.log.emit("info", f"Export výsledků dokončen: {path}")
             
@@ -3772,6 +3782,7 @@ class NmapScannerApp(QWidget):
                 f.write("KONEC EXPORTU\n")
                 f.write("=" * 80 + "\n")
             
+            self.register_export(path, "ports", "txt")
             QMessageBox.information(self, "Export", f"Přehled portů úspěšně exportován do:\n{path}")
             self.worker_signals.log.emit("info", f"Export přehledu portů dokončen: {path}")
             
@@ -3934,6 +3945,7 @@ class NmapScannerApp(QWidget):
             
             level_names_cz = {"summary": "souhrnný", "ports": "střední", "full": "detailní"}
             export_type = level_names_cz.get(detail_level, "export")
+            self.register_export(path, "services", "txt")
             QMessageBox.information(self, "Export", f"Přehled služeb ({export_type}) úspěšně exportován do:\n{path}")
             self.worker_signals.log.emit("info", f"Export přehledu služeb ({export_type}) dokončen: {path}")
             
@@ -4257,6 +4269,7 @@ class NmapScannerApp(QWidget):
             
             doc.save(path)
             
+            self.register_export(path, "vuln_docx", "docx")
             QMessageBox.information(self, "Export", f"Analýza zranitelností úspěšně exportována do:\n{path}")
             self.worker_signals.log.emit("info", f"Export analýzy zranitelností dokončen: {path}")
             
@@ -4390,6 +4403,7 @@ class NmapScannerApp(QWidget):
                     f.write(f"Cílů bez hostname: {hosts_without_hostname}\n")
                 f.write("=" * 80 + "\n")
             
+            self.register_export(path, "hostnames", "txt")
             QMessageBox.information(self, "Export", f"Seznam hostnames úspěšně exportován do:\n{path}\n\nExportováno cílů: {total_hosts}")
             self.worker_signals.log.emit("info", f"Export hostnames dokončen: {path}")
             

@@ -11,6 +11,7 @@ from PySide6.QtCore import Slot, Qt, QThreadPool
 from PySide6.QtGui import QColor, QFont, QIcon
 from ..workers.certificate import CertificateWorker
 from ..signals import WorkerSignals
+from ..utils import register_project_report
 
 
 class CertificateDetailDialog(QDialog):
@@ -491,6 +492,7 @@ class CertificateDialog(QDialog):
                             safe_row = [str(x).replace(';', ',').replace('\n', ' ') for x in row]
                             f.write(";".join(safe_row) + "\n")
                             
+                register_project_report(self, fname, "cert", "csv")
                 QMessageBox.information(self, "Export", "Data uložena.")
             except Exception as e:
                 QMessageBox.critical(self, "Chyba", str(e))
@@ -604,6 +606,7 @@ class CertificateDialog(QDialog):
 
                 f.write(f"\n*** Konec reportu ***\n")
 
+            register_project_report(self, fname, "cert", "txt")
             QMessageBox.information(self, "Export", f"Report byl úspěšně vygenerován do souboru:\n{fname}")
             
         except Exception as e:
