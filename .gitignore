@@ -31,8 +31,10 @@ nmap_scan_results_*/
 
 # --- Screenshoty webovych sluzeb ---
 *.png
-# vyjimka: ikona aplikace (staticky asset, zadna data z testovani)
+# vyjimka: staticke assety (ikona, logo PT Lab) — zadna data z testovani
 !assets/icon.png
+!assets/ptlab_logo.png
+!assets/ptlab_mark.png
 *.jpg
 *.jpeg
 *.gif

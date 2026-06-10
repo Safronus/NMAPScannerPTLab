@@ -235,6 +235,34 @@ def test_zap_info_severity():
     assert info and info[0]["severity"] == "INFO"
 
 
+def test_english_titles_and_descriptions():
+    r = build_findings(_sample(), sections=["ports"], lang="en")
+    telnet = [f for f in r["findings"] if "23/tcp" in f["title"]]
+    assert telnet
+    assert "Open port" in telnet[0]["title"]
+    assert "without encryption" in telnet[0]["description"]
+    assert telnet[0]["severity"] == "HIGH"  # severita jazykově nezávislá
+
+
+def test_english_ffuf_and_headers():
+    r = build_findings(_sample(), sections=["ffuf", "headers"], lang="en")
+    git = [f for f in r["findings"] if ".git" in f["title"]]
+    assert git and "Sensitive path" in git[0]["title"]
+    hdr = [f for f in r["findings"] if "Missing security headers" in f["title"]]
+    assert hdr and "Missing:" in hdr[0]["evidence"]
+
+
+def test_lang_in_result():
+    assert build_findings(_sample(), lang="en")["lang"] == "en"
+    assert build_findings(_sample())["lang"] == "cs"
+
+
+def test_cs_remains_default():
+    r = build_findings(_sample(), sections=["ports"])
+    telnet = [f for f in r["findings"] if "23/tcp" in f["title"]]
+    assert telnet and "Otevřený port" in telnet[0]["title"]
+
+
 def main():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

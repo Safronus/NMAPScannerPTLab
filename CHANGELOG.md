@@ -4,6 +4,21 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.7.2] - 2026-06-10
+
+### Přidáno (základy pro nové reporty)
+- **Dvojjazyčný klasifikátor nálezů (CZ/EN).** `core/report_classify.py` nově
+  generuje tituly, popisy i doporučení nálezů v češtině i angličtině
+  (`build_findings(..., lang="cs"|"en")`). Rizikové tabulky jsou bilingvní.
+  Pokryto v `tests/test_report_classify.py` (24 testů).
+- **Oficiální logo PT Lab** (`assets/ptlab_logo.png`) staženo z webu laboratoře
+  + `core/report_assets.py` pro embed jako data URI (self-contained PDF).
+- Barvy stupnice závažnosti sjednoceny do palety PT Lab reportů (INFO/LOW/MEDIUM/
+  HIGH/CRITICAL).
+
+> Pozn.: jde o interní základy; nové technické a manažerské PDF reporty ve stylu
+> PT Lab přijdou v navazujících verzích.
+
 ## [5.7.1] - 2026-06-10
 
 ### Opraveno
