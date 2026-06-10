@@ -101,6 +101,23 @@ def main():
     if woke or dt < 0.9:
         fails.append(f"_wait_or_cancel se ukončil předčasně (woke={woke}, dt={dt:.2f}s)")
 
+    # 5) _run_killable vrátí výstup; TLS_PROCS.terminate_all() umí zabít proces
+    #    (kvůli rychlému zavírání appky — global pool pak nečeká na timeout).
+    import subprocess
+    from nmapscanner.workers.tls import _run_killable, TLS_PROCS
+    out, rc = _run_killable(["echo", "halo"], timeout=5)
+    if "halo" not in out or rc != 0:
+        fails.append(f"_run_killable echo selhal: out={out!r} rc={rc}")
+    p = subprocess.Popen(["sleep", "30"])
+    TLS_PROCS.add(p)
+    TLS_PROCS.terminate_all()
+    try:
+        p.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        fails.append("TLS_PROCS.terminate_all nezabil proces (sleep běží dál)")
+    if p.returncode is None:
+        fails.append("proces po terminate_all stále běží")
+
     if fails:
         print("❌ SELHALO:")
         for f in fails:

@@ -4,6 +4,21 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.3.1] - 2026-06-10
+
+### Opraveno
+- **Pád při zavírání `RuntimeError: Signal source has been deleted`.** TLS workery
+  (sslscan/sslyze/…) běžící na globálním poolu emitovaly signál do `WorkerSignals`,
+  který se při zavírání aplikace už zničil. Všechny emity v `workers/tls.py` jsou
+  teď přes `_safe_emit` (jako u scan workerů) → pád zmizí.
+- **Zavírání aplikace „trvalo" bez zpětné vazby.** Přidán **progress dialog** při
+  zavírání (Ukládám projekt → Ukončuji procesy → Zavírám vlákna), takže je vidět,
+  že appka pracuje a nezamrzla.
+- **Global pool čekal při zavírání na timeout TLS subprocess.** TLS enginy běží
+  přes nový **killable Popen** (sdílený `TLS_PROCS` registr); `closeEvent` je při
+  zavírání tvrdě ukončí, takže se nečeká na jejich timeout (až 180 s). Pokryto
+  v `tests/test_tls_cancel.py`.
+
 ## [5.3.0] - 2026-06-10
 
 ### Přidáno

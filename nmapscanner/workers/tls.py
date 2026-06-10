@@ -10,6 +10,41 @@ from xml.etree import ElementTree as ET
 from PySide6.QtCore import Slot, QRunnable
 
 from ..core.tls_grading import classify_cipher
+from .scan import ProcessRegistry
+
+
+def _safe_emit(signal, *args):
+    """Emituje signál, ale přežije, když už byl C++ objekt signálů zničen (zavírá
+    se aplikace / dialog) — jinak worker spadne na 'Signal source has been deleted'."""
+    try:
+        signal.emit(*args)
+    except RuntimeError:
+        pass
+
+
+# Sdílený registr běžících TLS subprocess (nmap/testssl/sslscan/sslyze), aby šly
+# při zavírání aplikace tvrdě ukončit — jinak global thread pool čeká na jejich
+# timeout (až 180 s) a zavírání appky „trvá".
+TLS_PROCS = ProcessRegistry()
+
+
+def _run_killable(cmd, timeout):
+    """Spustí příkaz přes Popen, zaregistruje ho (kill při zavření) a vrátí
+    ``(stdout, returncode)``. Při timeoutu proces zabije. stderr zahazuje."""
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    TLS_PROCS.add(proc)
+    try:
+        out, _ = proc.communicate(timeout=timeout)
+        return out or "", proc.returncode
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            out, _ = proc.communicate(timeout=5)
+        except Exception:
+            out = ""
+        return out or "", -1
+    finally:
+        TLS_PROCS.remove(proc)
 
 
 class TlsAuditWorker(QRunnable):
@@ -57,17 +92,17 @@ class TlsAuditWorker(QRunnable):
         }
 
         try:
-            process = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+            stdout, returncode = _run_killable(cmd, timeout=90)
 
             if self._is_cancelled():
                 scan_data['status'] = "Zrušeno"
                 scan_data['error'] = "Prověření zrušeno uživatelem."
-                self.signals.result.emit(self.ip, self.port, scan_data)
-                self.signals.finished.emit()
+                _safe_emit(self.signals.result, self.ip, self.port, scan_data)
+                _safe_emit(self.signals.finished)
                 return
 
-            if process.returncode == 0 and process.stdout:
-                root = ET.fromstring(process.stdout)
+            if returncode == 0 and stdout:
+                root = ET.fromstring(stdout)
                 
                 # Najít script element pro daný port
                 script_elem = None
@@ -145,8 +180,8 @@ class TlsAuditWorker(QRunnable):
             scan_data['status'] = "Chyba spojení"
             scan_data['error'] = str(e)
 
-        self.signals.result.emit(self.ip, self.port, scan_data)
-        self.signals.finished.emit()
+        _safe_emit(self.signals.result, self.ip, self.port, scan_data)
+        _safe_emit(self.signals.finished)
 
 class SslLabsWorker(QRunnable):
     """
@@ -211,16 +246,16 @@ class SslLabsWorker(QRunnable):
         if self.port != "443":
             scan_data['status'] = "Chyba"
             scan_data['error'] = "Qualys SSL Labs podporuje pouze port 443."
-            self.signals.result.emit(self.ip, self.port, scan_data)
-            self.signals.finished.emit()
+            _safe_emit(self.signals.result, self.ip, self.port, scan_data)
+            _safe_emit(self.signals.finished)
             return
 
         host, host_err = self._resolve_host()
         if host_err:
             scan_data['status'] = "Chyba"
             scan_data['error'] = host_err
-            self.signals.result.emit(self.ip, self.port, scan_data)
-            self.signals.finished.emit()
+            _safe_emit(self.signals.result, self.ip, self.port, scan_data)
+            _safe_emit(self.signals.finished)
             return
         scan_data['domain'] = host
 
@@ -238,14 +273,14 @@ class SslLabsWorker(QRunnable):
                 if self._is_cancelled():
                     scan_data['status'] = "Zrušeno"
                     scan_data['error'] = "Prověření zrušeno uživatelem."
-                    self.signals.result.emit(self.ip, self.port, scan_data)
-                    self.signals.finished.emit()
+                    _safe_emit(self.signals.result, self.ip, self.port, scan_data)
+                    _safe_emit(self.signals.finished)
                     return
                 response = requests.get(self.api_url, params=params, timeout=15)
                 params = base  # po prvním požadavku už bez startNew
                 if response.status_code in (429, 503, 529):
                     scan_data['status'] = "Qualys: API přetížené, čekám…"
-                    self.signals.result.emit(self.ip, self.port, scan_data)
+                    _safe_emit(self.signals.result, self.ip, self.port, scan_data)
                     if time.monotonic() > deadline:
                         raise Exception("Qualys API je přetížené (rate limit). Zkus to později.")
                     self._wait_or_cancel(15)  # zrušení vyřeší kontrola na začátku smyčky
@@ -269,10 +304,10 @@ class SslLabsWorker(QRunnable):
                     raise Exception(data.get('statusMessage', 'Qualys: cíl není veřejně dostupný.'))
                 elif status == 'DNS':
                     scan_data['status'] = "Qualys: překládám DNS…"
-                    self.signals.result.emit(self.ip, self.port, scan_data)
+                    _safe_emit(self.signals.result, self.ip, self.port, scan_data)
                 else:  # IN_PROGRESS
                     scan_data['status'] = "Qualys: probíhá hloubkový audit (1–3 min)…"
-                    self.signals.result.emit(self.ip, self.port, scan_data)
+                    _safe_emit(self.signals.result, self.ip, self.port, scan_data)
 
                 if time.monotonic() > deadline:
                     raise Exception("Qualys audit překročil časový limit (5 min).")
@@ -342,8 +377,8 @@ class SslLabsWorker(QRunnable):
             scan_data['status'] = "Chyba"
             scan_data['error'] = str(e)
 
-        self.signals.result.emit(self.ip, self.port, scan_data)
-        self.signals.finished.emit()
+        _safe_emit(self.signals.result, self.ip, self.port, scan_data)
+        _safe_emit(self.signals.finished)
 
 
 class TestSslWorker(QRunnable):
@@ -376,8 +411,8 @@ class TestSslWorker(QRunnable):
         if not testssl_bin:
             scan_data['status'] = "Chyba"
             scan_data['error'] = "Nástroj 'testssl' nebyl nalezen. Nainstaluj ho pomocí: brew install testssl"
-            self.signals.result.emit(self.ip, self.port, scan_data)
-            self.signals.finished.emit()
+            _safe_emit(self.signals.result, self.ip, self.port, scan_data)
+            _safe_emit(self.signals.finished)
             return
 
         try:
@@ -392,9 +427,9 @@ class TestSslWorker(QRunnable):
             cmd = [testssl_bin, "--quiet", "-p", "-E", "--warnings", "off", "--jsonfile", json_path, f"{self.ip}:{self.port}"]
             
             scan_data['status'] = "TestSSL: Prověřuji..."
-            self.signals.result.emit(self.ip, self.port, scan_data)
-            
-            subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            _safe_emit(self.signals.result, self.ip, self.port, scan_data)
+
+            _run_killable(cmd, timeout=120)   # výstup jde do JSON souboru
 
             if self._is_cancelled():
                 try:
@@ -403,8 +438,8 @@ class TestSslWorker(QRunnable):
                     pass
                 scan_data['status'] = "Zrušeno"
                 scan_data['error'] = "Prověření zrušeno uživatelem."
-                self.signals.result.emit(self.ip, self.port, scan_data)
-                self.signals.finished.emit()
+                _safe_emit(self.signals.result, self.ip, self.port, scan_data)
+                _safe_emit(self.signals.finished)
                 return
 
             # Čtení JSON výsledků
@@ -479,8 +514,8 @@ class TestSslWorker(QRunnable):
             scan_data['status'] = "Chyba"
             scan_data['error'] = str(e)[:100]
 
-        self.signals.result.emit(self.ip, self.port, scan_data)
-        self.signals.finished.emit()
+        _safe_emit(self.signals.result, self.ip, self.port, scan_data)
+        _safe_emit(self.signals.finished)
 
 
 def _proto_display(raw):
@@ -533,25 +568,25 @@ class SslscanWorker(QRunnable):
         if not binp:
             scan_data['status'] = "Chyba"
             scan_data['error'] = "Nástroj 'sslscan' nenalezen. Instalace: brew install sslscan"
-            self.signals.result.emit(self.ip, self.port, scan_data)
-            self.signals.finished.emit()
+            _safe_emit(self.signals.result, self.ip, self.port, scan_data)
+            _safe_emit(self.signals.finished)
             return
 
         try:
             scan_data['status'] = "sslscan: Prověřuji…"
-            self.signals.result.emit(self.ip, self.port, scan_data)
+            _safe_emit(self.signals.result, self.ip, self.port, scan_data)
 
             cmd = [binp, "--no-colour", "--xml=-", f"{self.ip}:{self.port}"]
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            xml, _rc = _run_killable(cmd, timeout=120)
 
             if self._is_cancelled():
                 scan_data['status'] = "Zrušeno"
                 scan_data['error'] = "Prověření zrušeno uživatelem."
-                self.signals.result.emit(self.ip, self.port, scan_data)
-                self.signals.finished.emit()
+                _safe_emit(self.signals.result, self.ip, self.port, scan_data)
+                _safe_emit(self.signals.finished)
                 return
 
-            xml = proc.stdout or ""
+            xml = xml or ""
             start = xml.find("<?xml")
             if start == -1:
                 start = xml.find("<document")
@@ -598,8 +633,8 @@ class SslscanWorker(QRunnable):
             scan_data['status'] = "Chyba"
             scan_data['error'] = str(e)[:140]
 
-        self.signals.result.emit(self.ip, self.port, scan_data)
-        self.signals.finished.emit()
+        _safe_emit(self.signals.result, self.ip, self.port, scan_data)
+        _safe_emit(self.signals.finished)
 
 
 class SslyzeWorker(QRunnable):
@@ -652,8 +687,8 @@ class SslyzeWorker(QRunnable):
         if base_cmd is None:
             scan_data['status'] = "Chyba"
             scan_data['error'] = "Nástroj 'sslyze' nenalezen. Instalace: pip install sslyze"
-            self.signals.result.emit(self.ip, self.port, scan_data)
-            self.signals.finished.emit()
+            _safe_emit(self.signals.result, self.ip, self.port, scan_data)
+            _safe_emit(self.signals.finished)
             return
 
         import json
@@ -663,10 +698,10 @@ class SslyzeWorker(QRunnable):
 
         try:
             scan_data['status'] = "sslyze: Prověřuji…"
-            self.signals.result.emit(self.ip, self.port, scan_data)
+            _safe_emit(self.signals.result, self.ip, self.port, scan_data)
 
             cmd = base_cmd + [f"--json_out={json_path}", f"{self.ip}:{self.port}"]
-            subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+            _run_killable(cmd, timeout=180)   # výstup jde do JSON souboru
 
             if self._is_cancelled():
                 try:
@@ -675,8 +710,8 @@ class SslyzeWorker(QRunnable):
                     pass
                 scan_data['status'] = "Zrušeno"
                 scan_data['error'] = "Prověření zrušeno uživatelem."
-                self.signals.result.emit(self.ip, self.port, scan_data)
-                self.signals.finished.emit()
+                _safe_emit(self.signals.result, self.ip, self.port, scan_data)
+                _safe_emit(self.signals.finished)
                 return
 
             if not os.path.exists(json_path):
@@ -736,6 +771,6 @@ class SslyzeWorker(QRunnable):
             scan_data['status'] = "Chyba"
             scan_data['error'] = str(e)[:140]
 
-        self.signals.result.emit(self.ip, self.port, scan_data)
-        self.signals.finished.emit()
+        _safe_emit(self.signals.result, self.ip, self.port, scan_data)
+        _safe_emit(self.signals.finished)
 

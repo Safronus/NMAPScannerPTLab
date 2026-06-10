@@ -4355,52 +4355,68 @@ class NmapScannerApp(QWidget):
             event.ignore()
             return
         
-        elif clicked == save_current_btn and self.current_project_path:
-            # Uložit do současného projektu (atomicky, v4)
-            try:
-                self.auto_save_project()
-                self.worker_signals.log.emit("export", f"Projekt uložen do {self.current_project_path}")
-            except Exception as e:
-                QMessageBox.critical(self, "Chyba uložení", f"Nelze uložit projekt: {e}")
-                event.ignore()
-                return
-
+        # Zjistit, CO uložit (samotné uložení proběhne níže s progress dialogem,
+        # protože může chvíli trvat — velká data verze + fsync).
+        save_label, save_fn = None, None
+        if clicked == save_current_btn and self.current_project_path:
+            save_label = "Ukládám projekt…"
+            save_fn = self.auto_save_project
         elif clicked == save_new_btn:
-            # Uložit jako nový projekt
             path, _ = QFileDialog.getSaveFileName(
-                self,
-                "Uložit projekt jako",
-                "",
-                "Nmap Project (*.nmapproj)"
-            )
+                self, "Uložit projekt jako", "", "Nmap Project (*.nmapproj)")
             if path:
-                try:
+                def _save_new(p=path):
                     self._persist_active_snapshot()
-                    pstore.save_project_file(path, self._project_meta(), self.run_history,
+                    pstore.save_project_file(p, self._project_meta(), self.run_history,
                                              datetime.now().isoformat(timespec="seconds"))
-                    self.worker_signals.log.emit("export", f"Projekt uložen do {path}")
-                except Exception as e:
-                    QMessageBox.critical(self, "Chyba uložení", f"Nelze uložit projekt: {e}")
-                    event.ignore()
-                    return
+                    self.worker_signals.log.emit("export", f"Projekt uložen do {p}")
+                save_label, save_fn = "Ukládám projekt…", _save_new
             else:
                 # Uživatel zrušil dialog - zeptat se, zda chce pokračovat bez uložení
                 reply = QMessageBox.question(
-                    self,
-                    "Neuloženo",
+                    self, "Neuloženo",
                     "Projekt nebyl uložen. Opravdu chcete ukončit bez uložení?",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.No
-                )
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
                 if reply == QMessageBox.No:
                     event.ignore()
                     return
-        
-        # elif clicked == dont_save_btn - nic nedělat, jen zavřít
-        
-        # Korektní ukončení vláken. KLÍČOVÉ: nejdřív zabít běžící nmap procesy,
-        # jinak se ScanWorker zasekne na subprocess (až 20 min) a appka při zavírání
-        # zamrzne / spadne na 'Signal source has been deleted'.
+        # (dont_save_btn → save_fn zůstává None, jen se zavře)
+
+        # --- Zavírací sekvence s progress dialogem ---
+        prog = QProgressDialog("Zavírám aplikaci…", None, 0, 3, self)
+        prog.setWindowTitle("Zavírání")
+        prog.setWindowModality(Qt.WindowModal)
+        prog.setCancelButton(None)
+        prog.setMinimumDuration(0)
+        prog.setAutoClose(False)
+        prog.setAutoReset(False)
+        prog.setValue(0)
+        QApplication.processEvents()
+
+        if save_fn is not None:
+            prog.setLabelText(save_label)
+            QApplication.processEvents()
+            try:
+                save_fn()
+                if clicked == save_current_btn:
+                    self.worker_signals.log.emit("export", f"Projekt uložen do {self.current_project_path}")
+            except Exception as e:
+                prog.close()
+                QMessageBox.critical(self, "Chyba uložení", f"Nelze uložit projekt: {e}")
+                event.ignore()
+                return
+        prog.setValue(1)
+
+        # Korektní ukončení vláken. KLÍČOVÉ: nejdřív zabít běžící procesy (nmap i TLS
+        # enginy sslscan/sslyze/testssl), jinak by se workery zasekly na subprocess
+        # a global thread pool by při ukončení appky čekal na jejich timeout.
+        prog.setLabelText("Ukončuji běžící procesy…")
+        QApplication.processEvents()
+        try:
+            from .workers.tls import TLS_PROCS
+            TLS_PROCS.terminate_all()
+        except Exception:
+            pass
         try:
             self.scan_manager.shutdown()
         except Exception:
@@ -4409,9 +4425,15 @@ class NmapScannerApp(QWidget):
             self.screenshot_manager.shutdown()
         except Exception:
             pass
+        prog.setValue(2)
+
+        prog.setLabelText("Zavírám vlákna…")
+        QApplication.processEvents()
         self.screenshot_thread.quit()
         self.screenshot_thread.wait(3000)
         self.manager_thread.quit()
         self.manager_thread.wait(3000)
+        prog.setValue(3)
+        prog.close()
         event.accept()
 
