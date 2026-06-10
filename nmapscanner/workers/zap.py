@@ -10,7 +10,7 @@ import subprocess
 
 from PySide6.QtCore import QThread, Signal
 
-from ..core.zap_runner import find_zap, daemon_command
+from ..core.zap_runner import find_zap, daemon_command, default_home_dir
 
 
 class ZapScanWorker(QThread):
@@ -62,7 +62,8 @@ class ZapScanWorker(QThread):
         if not zap_path:
             raise RuntimeError("ZAP launcher nenalezen. Nainstaluj ZAP (viz nápověda).")
 
-        cmd = daemon_command(zap_path, host=host, port=port, api_key=api_key)
+        home = self.options.get("home_dir") or default_home_dir()
+        cmd = daemon_command(zap_path, host=host, port=port, api_key=api_key, home_dir=home)
         self.log.emit(f"🚀 Spouštím ZAP daemon: {zap_path} (port {port})…")
         self.proc = subprocess.Popen(
             cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL

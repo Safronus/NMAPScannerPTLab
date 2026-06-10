@@ -28,7 +28,15 @@ def test_daemon_command_no_key_disables():
 def test_daemon_command_local_only():
     cmd = daemon_command("/x/zap.sh", port=9000)
     assert "start.checkForUpdates=false" in cmd
-    assert "api.addrs.addr.name=127.0.0.1" in cmd
+    # zapv2 chodí přes proxy s hostem „zap" → addr regex musí povolit i ten
+    assert "api.addrs.addr.name=.*" in cmd
+    assert "api.addrs.addr.regex=true" in cmd
+
+
+def test_daemon_command_home_dir():
+    cmd = daemon_command("/x/zap.sh", home_dir="/tmp/zh")
+    assert "-dir" in cmd
+    assert "/tmp/zh" in cmd
 
 
 def test_find_zap_env_override(tmp_path_factory=None):

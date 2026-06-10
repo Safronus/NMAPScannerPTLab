@@ -60,28 +60,40 @@ def install_hint():
             "a nastav cestu přes proměnnou prostředí ZAP_PATH.")
 
 
-def daemon_command(zap_path, host="127.0.0.1", port=8090, api_key="", extra=None):
+def daemon_command(zap_path, host="127.0.0.1", port=8090, api_key="",
+                   home_dir=None, extra=None):
     """Sestaví příkaz pro spuštění ZAP v daemon (headless) režimu.
 
-    ``-dir`` se nepřidává (necháme default profil). ``-config`` vypne add-on
-    aktualizace při startu, ať daemon naběhne rychle a offline.
+    ``home_dir`` (``-dir``) dává daemonu vlastní profil, aby nekolidoval s GUI
+    instancí ZAP („home directory already in use"). ``-config`` vypne kontrolu
+    aktualizací add-onů při startu, ať daemon naběhne rychle a offline.
     """
     cmd = [
         zap_path, "-daemon",
         "-host", host, "-port", str(port),
         "-config", "api.disablekey=" + ("true" if not api_key else "false"),
     ]
+    if home_dir:
+        cmd += ["-dir", home_dir]
     if api_key:
         cmd += ["-config", f"api.key={api_key}"]
-    # Povolit volání jen z lokálního hosta + nečekat na aktualizace add-onů
+    # Klient zapv2 chodí přes proxy s magickým hostem http://zap/, proto musí být
+    # povolen i host header „zap". Listener je vázán na 127.0.0.1 (-host), takže
+    # povolení všech adres přes regex je bezpečné (zvenčí nedostupné).
     cmd += [
-        "-config", "api.addrs.addr.name=127.0.0.1",
-        "-config", "api.addrs.addr.regex=false",
+        "-config", "api.addrs.addr.name=.*",
+        "-config", "api.addrs.addr.regex=true",
         "-config", "start.checkForUpdates=false",
     ]
     if extra:
         cmd += list(extra)
     return cmd
+
+
+def default_home_dir():
+    """Vlastní (dočasný) home adresář pro daemon — vyhne se kolizi s GUI ZAP."""
+    import tempfile
+    return os.path.join(tempfile.gettempdir(), "nmapscanner_zap_home")
 
 
 def zap_available():

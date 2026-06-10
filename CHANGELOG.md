@@ -4,6 +4,18 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.7.1] - 2026-06-10
+
+### Opraveno
+- **ZAP daemon: API odmítalo požadavky klienta (`host header zap not permitted`).**
+  Klient `zapv2` chodí přes proxy s magickým hostem `http://zap/`; původní
+  konfigurace `api.addrs.addr.name=127.0.0.1` ho zakázala. Nově povoleno regexem
+  (listener je vázán jen na 127.0.0.1, takže zvenčí nedostupné). Ověřeno živě —
+  daemon naběhne a API odpoví (verze 2.17.0).
+- **ZAP daemon: kolize „home directory already in use" s GUI instancí ZAP.**
+  Daemon nově běží ve vlastním `-dir` (dočasný home), takže nekoliduje s otevřeným
+  ZAP. Pokryto v `tests/test_zap_runner.py`.
+
 ## [5.7.0] - 2026-06-10
 
 ### Přidáno
