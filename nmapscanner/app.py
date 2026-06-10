@@ -1944,28 +1944,49 @@ class NmapScannerApp(QWidget):
         self.scan_manager.stop_workflow()
 
     # ---- kontextový re-scan cíle (merge do aktuální verze + timeline) ----
+    def _matrix_selected_targets(self, clicked_item):
+        """Cíle, na které má kontextová akce platit. Pravý klik DOVNITŘ výběru →
+        celý výběr; klik MIMO výběr → jen ten jeden řádek (standardní chování)."""
+        items = list(self.status_matrix.selectedItems())
+        if clicked_item is not None and clicked_item not in items:
+            items = [clicked_item]
+        targets = []
+        for it in items:
+            t = it.text(0).split(' ')[0].strip()
+            if t and t not in targets:
+                targets.append(t)
+        return targets
+
     def on_matrix_context_menu(self, pos):
         item = self.status_matrix.itemAt(pos)
         if item is None:
             return
-        target = item.text(0).split(' ')[0].strip()
-        if not target:
+        targets = self._matrix_selected_targets(item)
+        if not targets:
             return
+        # Popisek: jeden cíl → jeho jméno; více → počet.
+        sfx = targets[0] if len(targets) == 1 else f"{len(targets)} cílů"
         menu = QMenu(self)
-        menu.addAction(f"🔁 Re-scan TCP — {target}", lambda: self.rescan_target(target, ["tcp"]))
-        menu.addAction(f"🔁 Re-scan UDP — {target}", lambda: self.rescan_target(target, ["udp"]))
-        menu.addAction(f"🔁 Re-scan Vuln — {target}", lambda: self.rescan_target(target, ["vuln"]))
-        menu.addAction(f"🔁 Re-scan OS — {target}", lambda: self.rescan_target(target, ["osscan"]))
+        menu.addAction(f"🔁 Re-scan TCP — {sfx}", lambda: self.rescan_target(targets, ["tcp"]))
+        menu.addAction(f"🔁 Re-scan UDP — {sfx}", lambda: self.rescan_target(targets, ["udp"]))
+        menu.addAction(f"🔁 Re-scan Vuln — {sfx}", lambda: self.rescan_target(targets, ["vuln"]))
+        menu.addAction(f"🔁 Re-scan OS — {sfx}", lambda: self.rescan_target(targets, ["osscan"]))
         menu.addSeparator()
-        menu.addAction(f"📸 Re-scan screenshoty (HTTP/HTTPS) — {target}",
-                       lambda: self.rescan_screenshots(target))
-        menu.addAction(f"🔁 Re-scan vše (TCP+UDP+vuln+OS) — {target}",
-                       lambda: self.rescan_target(target, ["tcp", "udp", "osscan", "vuln"]))
+        menu.addAction(f"📸 Re-scan screenshoty (HTTP/HTTPS) — {sfx}",
+                       lambda: self.rescan_screenshots(targets))
+        menu.addAction(f"🔁 Re-scan vše (TCP+UDP+vuln+OS) — {sfx}",
+                       lambda: self.rescan_target(targets, ["tcp", "udp", "osscan", "vuln"]))
         menu.exec(self.status_matrix.viewport().mapToGlobal(pos))
 
-    def rescan_target(self, target, phases):
-        """Znovu proskenuje vybrané fáze daného cíle a výsledky vmerguje do AKTUÁLNÍ
-        verze (běhu). Událost se zapíše do timeline."""
+    def rescan_target(self, targets, phases):
+        """Znovu proskenuje vybrané fáze daných cílů a výsledky vmerguje do AKTUÁLNÍ
+        verze (běhu). Funguje pro jeden cíl i pro výběr více cílů (multiselect) —
+        spustí se jako JEDEN běh nad všemi cíli. Událost se zapíše do timeline."""
+        if isinstance(targets, str):
+            targets = [targets]
+        targets = [t for t in dict.fromkeys(targets) if t]  # unikátní, zachovat pořadí
+        if not targets:
+            return
         if self.scan_manager.is_running:
             self.status_label.setText("Sken už běží — počkej na dokončení.")
             return
@@ -1983,12 +2004,14 @@ class NmapScannerApp(QWidget):
             self.status_label.setText("Re-scan zrušen — bez root oprávnění (sudo).")
             return
 
-        if target not in run.targets:
-            run.targets.append(target)
-        self.run_history.merge_master_targets([target])
+        for target in targets:
+            if target not in run.targets:
+                run.targets.append(target)
+        self.run_history.merge_master_targets(targets)
 
+        label = targets[0] if len(targets) == 1 else f"{len(targets)} cílů"
         when = datetime.now().isoformat(timespec="seconds")
-        run.add_event(when, "re-scan", f"{target}: {', '.join(phases)} (merge)")
+        run.add_event(when, "re-scan", f"{label}: {', '.join(phases)} (merge)")
         run.status = "running"
 
         enabled_phases = {p: (p in phases) for p in self.phases}
@@ -1997,54 +2020,71 @@ class NmapScannerApp(QWidget):
         # UI: nečistit data, jen reset progressu pro re-scanované fáze + označit buňky.
         self.live_task_panel.reset()
         self.phase_progress_bars.reset(self.phases, enabled_phases)
-        for phase in phases:
-            self.status_matrix.update_status(target, phase, 'čeká')
+        for target in targets:
+            for phase in phases:
+                self.status_matrix.update_status(target, phase, 'čeká')
         if hasattr(self, 'tabs'):
             self.tabs.setCurrentWidget(self.live_task_panel)
 
         paths = self._ensure_project_folder()
         self.base_export_path = paths.run_dir(run.id)
-        self.worker_signals.log.emit("info", f"🔁 Re-scan {target}: {', '.join(phases)} → merge do '{run.label}'")
-        self.status_label.setText(f"Re-scan {target} ({', '.join(phases)})…")
+        self.worker_signals.log.emit("info", f"🔁 Re-scan {label}: {', '.join(phases)} → merge do '{run.label}'")
+        self.status_label.setText(f"Re-scan {label} ({', '.join(phases)})…")
 
         self._stop_requested = False
         self._lock_run_ui()
         self.refresh_runs_combo()
         self.scan_manager.sudo_password = self._sudo_pw
         self.scan_manager.use_sudo = self._use_sudo
-        self.start_scan_requested.emit([target], run.profile, enabled_phases, run.custom_command, False, ctx)
+        self.start_scan_requested.emit(targets, run.profile, enabled_phases, run.custom_command, False, ctx)
 
-    def rescan_screenshots(self, target):
-        """Znovu pořídí screenshoty HTTP/HTTPS portů daného cíle (z aktuálních dat)."""
-        run = self.run_history.active()
-        tcp_data = (self.scan_results.get("tcp", {}) or {}).get(target, {}) or {}
-        web_ports = []
-        common_web_ports = [80, 443, 8080, 8000, 8008, 8443]
-        for port, info in (tcp_data.get("tcp", {}) or {}).items():
-            if not isinstance(info, dict) or info.get("state") != "open":
-                continue
-            name = (info.get("name") or "").lower()
-            try:
-                pnum = int(port)
-            except (TypeError, ValueError):
-                continue
-            if pnum in common_web_ports or "http" in name:
-                scheme = "https" if ("https" in name or pnum in (443, 8443)) else "http"
-                web_ports.append((pnum, scheme))
-        if not web_ports:
-            self.status_label.setText(f"{target}: žádné webové (HTTP/HTTPS) porty pro screenshot.")
+    def rescan_screenshots(self, targets):
+        """Znovu pořídí screenshoty HTTP/HTTPS portů daných cílů (z aktuálních dat).
+        Funguje pro jeden cíl i pro výběr více cílů (multiselect)."""
+        if isinstance(targets, str):
+            targets = [targets]
+        targets = [t for t in dict.fromkeys(targets) if t]
+        if not targets:
             return
+        run = self.run_history.active()
+        common_web_ports = [80, 443, 8080, 8000, 8008, 8443]
         paths = self._ensure_project_folder()
         self.base_export_path = paths.run_dir(run.id) if run else paths.run_dir("rescan")
-        for pnum, scheme in web_ports:
-            url = f"{scheme}://{target}:{pnum}"
-            ip_dir = self.base_export_path / target.replace('.', '_')
-            ip_dir.mkdir(exist_ok=True, parents=True)
-            self.worker_signals.screenshot_request.emit(url, target, pnum, str(ip_dir))
-        if run is not None:
-            run.add_event(datetime.now().isoformat(timespec="seconds"),
-                          "re-scan screenshoty", f"{target}: {len(web_ports)} portů")
-        self.status_label.setText(f"📸 Re-scan screenshotů {target}: {len(web_ports)} portů…")
+
+        total_ports = 0
+        without_web = []
+        for target in targets:
+            tcp_data = (self.scan_results.get("tcp", {}) or {}).get(target, {}) or {}
+            web_ports = []
+            for port, info in (tcp_data.get("tcp", {}) or {}).items():
+                if not isinstance(info, dict) or info.get("state") != "open":
+                    continue
+                name = (info.get("name") or "").lower()
+                try:
+                    pnum = int(port)
+                except (TypeError, ValueError):
+                    continue
+                if pnum in common_web_ports or "http" in name:
+                    scheme = "https" if ("https" in name or pnum in (443, 8443)) else "http"
+                    web_ports.append((pnum, scheme))
+            if not web_ports:
+                without_web.append(target)
+                continue
+            for pnum, scheme in web_ports:
+                url = f"{scheme}://{target}:{pnum}"
+                ip_dir = self.base_export_path / target.replace('.', '_')
+                ip_dir.mkdir(exist_ok=True, parents=True)
+                self.worker_signals.screenshot_request.emit(url, target, pnum, str(ip_dir))
+            total_ports += len(web_ports)
+            if run is not None:
+                run.add_event(datetime.now().isoformat(timespec="seconds"),
+                              "re-scan screenshoty", f"{target}: {len(web_ports)} portů")
+
+        if total_ports == 0:
+            self.status_label.setText("Žádné webové (HTTP/HTTPS) porty pro screenshot u vybraných cílů.")
+            return
+        scope = targets[0] if len(targets) == 1 else f"{len(targets) - len(without_web)} cílů"
+        self.status_label.setText(f"📸 Re-scan screenshotů {scope}: {total_ports} portů…")
 
     # ---- přepínač / ovládání běhů ------------------------------------
     def refresh_runs_combo(self):

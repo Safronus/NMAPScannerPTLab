@@ -2,7 +2,7 @@
 
 
 from PySide6.QtWidgets import (
-    QTreeWidget, QTreeWidgetItem
+    QTreeWidget, QTreeWidgetItem, QAbstractItemView
 )
 from PySide6.QtGui import QColor
 from ..utils import get_color_for_ip
@@ -11,6 +11,9 @@ from ..utils import get_color_for_ip
 class StatusMatrix(QTreeWidget):
     def __init__(self, phases, parent=None):
         super().__init__(parent)
+        # Rozšířený výběr → kontextové re-scany lze spustit nad více cíli najednou
+        # (Ctrl/Cmd-klik = přidat jeden, Shift-klik = rozsah).
+        self.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.real_phases = phases
         self.ip_items = {}
         self.status_colors = {

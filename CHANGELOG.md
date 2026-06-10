@@ -4,6 +4,16 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.1.0] - 2026-06-10
+
+### Přidáno
+- **Multiselect kontextových re-scanů v matici „Průběh fází".** Matice nově
+  podporuje rozšířený výběr (Ctrl/Cmd-klik = přidat cíl, Shift-klik = rozsah).
+  Pravý klik nad výběrem nabídne re-scan (TCP/UDP/Vuln/OS/vše/screenshoty) pro
+  **všechny vybrané cíle najednou** — spustí se jako jeden běh, který merguje do
+  aktuální verze a zapíše se do timeline. Pravý klik mimo výběr funguje jako dřív
+  (jen ten jeden řádek). Popisky menu ukazují buď jméno cíle, nebo „N cílů".
+
 ## [5.0.5] - 2026-06-10
 
 ### Změněno
