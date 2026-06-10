@@ -584,6 +584,17 @@ class NmapScannerApp(QWidget):
         self.zap_btn.clicked.connect(self.open_zap_dialog)
         actions_layout.addWidget(self.zap_btn)
 
+        # Akce: Manažer reportů
+        self.report_mgr_btn = QPushButton("🗂")
+        self.report_mgr_btn.setToolTip("Manažer reportů — přehled všech vytvořených reportů v projektu")
+        self.report_mgr_btn.setFixedSize(35, 35)
+        self.report_mgr_btn.setStyleSheet("""
+            QPushButton { font-size: 18px; border: 1px solid #CCCCCC; border-radius: 5px; background-color: #F9F9F9; color: #2C3E50; }
+            QPushButton:hover { background-color: #E8E8E8; }
+        """)
+        self.report_mgr_btn.clicked.connect(self.open_report_manager)
+        actions_layout.addWidget(self.report_mgr_btn)
+
         # Přidat stretch aby akce byly vlevo
         actions_layout.addStretch()
         
@@ -932,6 +943,18 @@ class NmapScannerApp(QWidget):
             self.auto_save_project()
         except Exception:
             pass
+
+    def _reports_dir(self):
+        """Cesta k projektové složce reports/ (fallback cwd)."""
+        try:
+            return str(self._ensure_project_folder().reports_dir)
+        except Exception:
+            return os.getcwd()
+
+    def open_report_manager(self):
+        """Otevře manažer reportů (přehled všech reportů v projektu)."""
+        from .dialogs.report_manager import ReportManagerDialog
+        ReportManagerDialog(self._reports_dir(), self).exec()
 
     def open_zap_dialog(self):
         """Otevře podokno OWASP ZAP (aktivní web sken). Výsledky jdou do reportu."""

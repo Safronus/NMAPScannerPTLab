@@ -4,6 +4,14 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.9.1] - 2026-06-11
+
+### Přidáno
+- **Manažer reportů (tlačítko 🗂).** Nové okno s přehledem všech reportů
+  vytvořených v projektu, **seskupené podle zdroje** (Souhrnné PDF, ffuf, TLS,
+  certifikáty, hlavičky, Word, OWASP ZAP …). Umožní report otevřít, ukázat ve
+  složce nebo smazat; chybějící soubory se z evidence automaticky proberou.
+
 ## [5.9.0] - 2026-06-11
 
 ### Přidáno
