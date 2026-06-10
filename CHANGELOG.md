@@ -4,6 +4,18 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.0.4] - 2026-06-10
+
+### Opraveno
+- **Inspektor TLS: po doběhnutí testu zase nešlo zvolit jiný — odstraněno
+  zamykání UI úplně.** Zámek byl „všechno nebo nic" přes celou dávku: dokud
+  nedoběhl *poslední* worker (a TestSSL/Qualys na pomalém cíli běží i 1–2 min,
+  nebo doběhne až na timeout), zůstala spouštěcí tlačítka zamčená — jeden pomalý
+  cíl tak držel celé UI. Protože každý engine píše do **vlastního pod-řádku per
+  cíl**, není co zamykat: tlačítka i engine combo jsou nově **vždy ovladatelné**,
+  další test (i jiný engine) lze spustit kdykoli a souběžně. Jediný indikátor
+  aktivity je tlačítko **Zastavit**, které ruší **všechny** rozběhnuté dávky.
+
 ## [5.0.3] - 2026-06-10
 
 ### Opraveno

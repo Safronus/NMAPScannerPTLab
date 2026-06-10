@@ -25,8 +25,8 @@ class TlsAuditDialog(QDialog):
         self.thread_pool = QThreadPool()
         self.item_map = {}            # (ip, port) -> port řádek
         self.engine_items = {}        # (ip, port, engine) -> řádek enginu pod portem
-        self._active = 0              # počet běžících workerů aktuální dávky
-        self._cancel_event = None     # threading.Event pro zrušení dávky (Qualys/TestSSL)
+        self._active = 0              # počet všech právě běžících workerů (napříč dávkami)
+        self._cancel_events = []      # threading.Event tokeny běžících dávek (pro Zastavit)
         self.init_ui()
         self.load_targets()
 
@@ -147,11 +147,14 @@ class TlsAuditDialog(QDialog):
             self.status_label.setText(f"Nic k prověření enginem {engine}.")
             return
 
-        # Nová dávka = nový rušicí token. Engine combo NEzamykáme (přepnutí se
-        # projeví až u dalšího prověření) — uživatel tak není během běhu uvězněn.
-        self._cancel_event = threading.Event()
-        self._active = len(tasks)
-        self._set_running(True, engine)
+        # Nic NEzamykáme — každý engine píše do vlastního pod-řádku per cíl, takže
+        # běhy se navzájem nepřepisují a uživatel může spustit další test kdykoli
+        # (i jiný engine souběžně). Jediný indikátor aktivity je tlačítko Zastavit.
+        cancel_event = threading.Event()
+        self._cancel_events.append(cancel_event)
+        self._active += len(tasks)
+        self.stop_btn.setEnabled(True)
+        self.status_label.setText(f"Prověřuji enginem {engine}… (lze Zastavit)")
         icon = {"Nmap": "🛰", "Qualys": "🌐", "TestSSL": "🔬"}.get(engine, "•")
 
         for (ip, port) in tasks:
@@ -167,42 +170,31 @@ class TlsAuditDialog(QDialog):
             signals = WorkerSignals()
             signals.result.connect(self.update_result)
             signals.finished.connect(self.on_worker_finished)
-            self.thread_pool.start(WorkerClass(ip, port, signals, self._cancel_event))
+            self.thread_pool.start(WorkerClass(ip, port, signals, cancel_event))
 
     def on_worker_finished(self):
-        """Uvolní zámky UI po dokončení všech vláken dávky."""
+        """Spočítá doběhlé workery. Když doběhnou všechny, zhasne Zastavit."""
         self._active -= 1
         if self._active <= 0:
             self._active = 0
-            self._set_running(False)
-            # Pokud bylo zrušeno, neprepisuj „Zastaveno…" na „Hotovo".
-            if not (self._cancel_event is not None and self._cancel_event.is_set()):
-                self.status_label.setText("Hotovo.")
-            else:
-                self.status_label.setText("Zastaveno.")
-
-    def _set_running(self, running, engine=""):
-        """Přepne UI mezi 'běží dávka' a 'klid'. Engine combo zůstává vždy
-        ovladatelné; zamykají se jen spouštěcí tlačítka a aktivuje se Zastavit."""
-        self.check_all_btn.setEnabled(not running)
-        self.check_new_btn.setEnabled(not running)
-        self.stop_btn.setEnabled(running)
-        if running:
-            self.status_label.setText(f"Prověřuji enginem {engine}… (lze Zastavit)")
+            stopped = any(ev.is_set() for ev in self._cancel_events)
+            self._cancel_events.clear()
+            self.stop_btn.setEnabled(False)
+            self.status_label.setText("Zastaveno." if stopped else "Hotovo.")
 
     def stop_checks(self):
-        """Zruší probíhající dávku. Workery se ukončí při nejbližší kontrole
-        (Qualys čeká mezi dotazy a kontroluje zrušení po 1 s), pak se UI odemkne."""
-        if self._cancel_event is not None:
-            self._cancel_event.set()
+        """Zruší všechny rozběhnuté dávky. Workery se ukončí při nejbližší
+        kontrole (Qualys čeká mezi dotazy a kontroluje zrušení po 1 s)."""
+        for ev in self._cancel_events:
+            ev.set()
         self.stop_btn.setEnabled(False)
         self.status_label.setText("Zastavuji… (dokončuji probíhající dotaz)")
 
     def done(self, result):
-        """Zavření dialogu (OK/Zavřít/křížek) zruší případnou běžící dávku,
-        aby Qualys/TestSSL zbytečně nepokračovaly na pozadí."""
-        if self._cancel_event is not None:
-            self._cancel_event.set()
+        """Zavření dialogu (OK/Zavřít/křížek) zruší vše rozběhnuté, aby
+        Qualys/TestSSL zbytečně nepokračovaly na pozadí."""
+        for ev in self._cancel_events:
+            ev.set()
         super().done(result)
 
     def load_targets(self):
