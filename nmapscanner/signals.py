@@ -8,7 +8,10 @@ class WorkerSignals(QObject):
     finished = Signal()
     log = Signal(str, str)                  # (level, message)
     screenshot_request = Signal(str, str, int, str)  # url, ip, port, path
-    screenshot_taken = Signal(str, str)              # ip, filepath
+    screenshot_taken = Signal(str, str)              # ip, filepath (jen úspěch → galerie)
+    # (ip, url, ok, info) — konec POKUSU o screenshot (úspěch i chyba) → průběh/souhrn.
+    # info = cesta k souboru (ok) nebo text chyby (ne-ok).
+    screenshot_done = Signal(str, str, bool, str)
 
     # --- Nmap workflow (progresivní vícestupňová detekce) ---
     task_started = Signal(str, str, str)    # (phase, target, label) — stupeň odstartoval

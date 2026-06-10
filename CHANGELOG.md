@@ -4,6 +4,22 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.1.3] - 2026-06-10
+
+### Přidáno
+- **Průběh a souhrn pořizování screenshotů.** Re-scan screenshotů (i screenshoty
+  během skenu) teď hlásí živý průběh ve stavovém řádku
+  (`📸 Screenshoty: 3/8 (✓ 2 · ✗ 1)…`) a po dokončení souhrn. Nový signál
+  `screenshot_done` se emituje na **každé** cestě (úspěch, chyba i přeskočení),
+  takže se čítač vždy dopočítá. Při chybách se v logu objeví počet a poslední
+  chyba + tip (na Ploše/iCloudu macOS blokuje zápis). Dřív nešlo poznat, jestli
+  pořizování proběhlo.
+
+### Opraveno
+- Re-scan screenshotů **nespadne**, když nejde vytvořit cílovou složku (macOS
+  TCC na Ploše/iCloudu) — chyba se zaloguje a pokus pokračuje (reálný stav pak
+  nahlásí ScreenshotManager). 
+
 ## [5.1.2] - 2026-06-10
 
 ### Opraveno

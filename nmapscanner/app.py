@@ -62,6 +62,9 @@ class NmapScannerApp(QWidget):
         # Cesta, pro kterou je autosave zablokovaný (macOS práva / read-only FS) —
         # ať se neopakuje selhání a nezahltí log při každém triggeru.
         self._autosave_blocked = None
+        # Průběh pořizování screenshotů (živý čítač pro status bar).
+        self._shot_total = self._shot_done = self._shot_ok = self._shot_fail = 0
+        self._shot_last_err = ""
         # Verzování běhů: historie + aktuálně zobrazená verze + cache snapshotů,
         # které ještě nejsou na disku (migrace / nový běh).
         self.run_history = RunHistory()
@@ -121,6 +124,7 @@ class NmapScannerApp(QWidget):
         self.screenshot_thread.start()
         self.worker_signals.screenshot_request.connect(self.screenshot_manager.take_screenshot)
         self.worker_signals.screenshot_taken.connect(self.on_screenshot_taken)
+        self.worker_signals.screenshot_done.connect(self.on_screenshot_done)
         self.scan_manager.workflow_finished.connect(self.on_workflow_finished)
         
         self.scan_button.clicked.connect(self.start_new_run)
@@ -1260,9 +1264,51 @@ class NmapScannerApp(QWidget):
         if ip not in self.screenshots:
             self.screenshots[ip] = []
         self.screenshots[ip].append(filepath)
-        
+
         # Aktualizovat screenshot viewer
         self.update_screenshot_viewer()
+
+    def _register_screenshots(self, n):
+        """Ohlásí ``n`` chystaných screenshotů do průběhu (volat před emitem requestů)."""
+        if n <= 0:
+            return
+        if self._shot_done >= self._shot_total:   # předchozí dávka doběhla → start odznova
+            self._shot_total = self._shot_done = self._shot_ok = self._shot_fail = 0
+            self._shot_last_err = ""
+        self._shot_total += n
+        self._update_shot_status()
+
+    def on_screenshot_done(self, ip, url, ok, info):
+        """Konec pokusu o screenshot (úspěch i chyba) → posune průběh."""
+        self._shot_done += 1
+        if ok:
+            self._shot_ok += 1
+        else:
+            self._shot_fail += 1
+            self._shot_last_err = info or "neznámá chyba"
+        self._update_shot_status()
+
+    def _update_shot_status(self):
+        """Vykreslí průběh screenshotů do status baru; po dokončení dávky souhrn."""
+        if self._shot_total <= 0:
+            return
+        if self._shot_done < self._shot_total:
+            self.status_label.setText(
+                f"📸 Screenshoty: {self._shot_done}/{self._shot_total} "
+                f"(✓ {self._shot_ok} · ✗ {self._shot_fail})…")
+            return
+        # hotovo
+        if self._shot_fail == 0:
+            self.status_label.setText(f"📸 Screenshoty hotové: {self._shot_ok}/{self._shot_total} ✓")
+        else:
+            tail = f" — poslední chyba: {self._shot_last_err}" if self._shot_last_err else ""
+            self.status_label.setText(
+                f"📸 Screenshoty: {self._shot_ok} ✓ / {self._shot_fail} ✗ z {self._shot_total}{tail}")
+            self.worker_signals.log.emit(
+                "warning",
+                f"⚠️ Screenshoty: {self._shot_fail} z {self._shot_total} se nepodařilo "
+                f"(poslední: {self._shot_last_err}). Tip: projekt na Ploše/iCloudu macOS "
+                "blokuje pro zápis — ulož projekt jinam, nebo zkontroluj Chrome/Selenium.")
 
     @Slot(QTreeWidgetItem, int)
     def on_matrix_ip_clicked(self, item, column):
@@ -2074,10 +2120,17 @@ class NmapScannerApp(QWidget):
             if not web_ports:
                 without_web.append(target)
                 continue
+            # Zaregistrovat do průběhu (rozsvítí živý čítač) PŘED emitem requestů.
+            self._register_screenshots(len(web_ports))
             for pnum, scheme in web_ports:
                 url = f"{scheme}://{target}:{pnum}"
                 ip_dir = self.base_export_path / target.replace('.', '_')
-                ip_dir.mkdir(exist_ok=True, parents=True)
+                # mkdir může na Ploše/iCloudu (macOS TCC) spadnout na EPERM — nepadat,
+                # request stejně pošli; ScreenshotManager pak nahlásí reálnou chybu.
+                try:
+                    ip_dir.mkdir(exist_ok=True, parents=True)
+                except OSError as e:
+                    self.worker_signals.log.emit("error", f"⚠️ Nelze vytvořit složku {ip_dir}: {e}")
                 self.worker_signals.screenshot_request.emit(url, target, pnum, str(ip_dir))
             total_ports += len(web_ports)
             if run is not None:
@@ -2088,7 +2141,9 @@ class NmapScannerApp(QWidget):
             self.status_label.setText("Žádné webové (HTTP/HTTPS) porty pro screenshot u vybraných cílů.")
             return
         scope = targets[0] if len(targets) == 1 else f"{len(targets) - len(without_web)} cílů"
-        self.status_label.setText(f"📸 Re-scan screenshotů {scope}: {total_ports} portů…")
+        self.worker_signals.log.emit(
+            "info", f"📸 Re-scan screenshotů {scope}: {total_ports} portů ve frontě "
+            "(probíhá sériově, sleduj průběh dole ve stavovém řádku).")
 
     # ---- přepínač / ovládání běhů ------------------------------------
     def refresh_runs_combo(self):

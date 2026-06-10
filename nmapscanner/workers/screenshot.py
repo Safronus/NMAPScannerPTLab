@@ -41,10 +41,14 @@ class ScreenshotManager(QObject):
 
     @Slot(str, str, int, str)
     def take_screenshot(self, url, ip, port, path):
+        # screenshot_done emitujeme na KAŽDÉ cestě (i při přeskočení), jinak by se
+        # počítadlo průběhu v GUI nikdy nedopočítalo do konce.
         if self._unavailable:
+            self.signals.screenshot_done.emit(ip, url, False, "Selenium/Chrome nedostupné")
             return
         driver = self._ensure_driver()
         if driver is None:
+            self.signals.screenshot_done.emit(ip, url, False, "Chrome/Selenium se nepodařilo spustit")
             return
 
         from selenium.common.exceptions import TimeoutException, WebDriverException
@@ -65,13 +69,17 @@ class ScreenshotManager(QObject):
             if driver.save_screenshot(filepath) and os.path.exists(filepath):
                 self.signals.log.emit("info", f"📸 Screenshot {url} → {filepath}")
                 self.signals.screenshot_taken.emit(ip, filepath)
+                self.signals.screenshot_done.emit(ip, url, True, filepath)
             else:
                 self.signals.log.emit("error", f"❌ Screenshot {url} se nepodařilo uložit.")
+                self.signals.screenshot_done.emit(ip, url, False, "soubor se nepodařilo uložit")
         except WebDriverException as e:
             self.signals.log.emit("error", f"❌ Screenshot {url} selhal: {str(e)[:140]}")
             self._reset_driver()  # driver mohl umřít → příště se vytvoří znovu
+            self.signals.screenshot_done.emit(ip, url, False, str(e)[:140])
         except Exception as e:
             self.signals.log.emit("error", f"❌ Screenshot {url}: {str(e)[:140]}")
+            self.signals.screenshot_done.emit(ip, url, False, str(e)[:140])
 
     def _ensure_driver(self):
         if self._driver is not None:
