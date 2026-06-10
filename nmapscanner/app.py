@@ -100,7 +100,7 @@ class NmapScannerApp(QWidget):
         self.scan_manager.moveToThread(self.manager_thread)
         self.manager_thread.start()
 
-        self.worker_signals.result.connect(self.handle_single_result)
+        self.worker_signals.scan_result.connect(self.on_scan_result)
         self.worker_signals.log.connect(self.log_console.log_message)
         self.worker_signals.task_started.connect(self.on_task_started)
         self.worker_signals.phase_progress.connect(self.on_phase_progress)
@@ -2515,23 +2515,33 @@ class NmapScannerApp(QWidget):
             self.auto_save_project()
 
 
+    @Slot(str, str, dict, bool)
+    def on_scan_result(self, phase, target, data, final):
+        """Výsledek stupně nmap fáze. final=False = průběžný (rychlý stupeň),
+        final=True = poslední stupeň (fáze pro cíl hotová)."""
+        self.handle_single_result(phase, target, data, final=final)
+
     @Slot(str, str, dict)
-    def handle_single_result(self, phase, target, data):
+    def handle_single_result(self, phase, target, data, final=True):
         with QMutexLocker(output_mutex):
             base_phase = phase.replace("-Pn", "")  # OPRAVA: Odstranit -Pn (bez mezer a závorek)
             self.scan_results[base_phase][target] = data
-            
+
             self.update_cumulative_reports(target)
-            
+
             tree = self.tree_widgets[base_phase]
             items = tree.findItems(target, Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive, 0)
-            
+
             if not items:
                 target_item = QTreeWidgetItem(tree, [target])
                 target_item.setForeground(0, get_color_for_ip(target))
             else:
                 target_item = items[0]
-            
+
+            # Data jsou kumulativní (slučují se přes stupně) → překresli děti od nuly,
+            # ať se nehromadí duplicitní porty mezi rychlým a plným skenem.
+            target_item.takeChildren()
+
             status = "hotovo"
             
             if data.get('status') == 'skipped_by_user':
@@ -2602,9 +2612,10 @@ class NmapScannerApp(QWidget):
                                 
                                 if should_screenshot:
                                     has_http = True
-                                    
-                                    # Kontrola, zda neprobíhá načítání projektu
-                                    if not hasattr(self, 'loading_project') or not self.loading_project:
+
+                                    # Screenshot jen z finálního výsledku fáze (ne z průběžného
+                                    # stupně) a ne při načítání projektu — ať se neopakuje.
+                                    if final and not getattr(self, 'loading_project', False):
                                         # Určit správné schéma
                                         if 'https' in service_name or port_num == 443:
                                             scheme = 'https'
@@ -2625,21 +2636,22 @@ class NmapScannerApp(QWidget):
                                         self.worker_signals.screenshot_request.emit(url, target, port_num, str(ip_dir))
                     
                     # Pokud TCP fáze nemá žádné HTTP služby, označit screenshot jako hotovo
-                    if base_phase == 'tcp' and not has_http:
-                        if not hasattr(self, 'loading_project') or not self.loading_project:
+                    if final and base_phase == 'tcp' and not has_http:
+                        if not getattr(self, 'loading_project', False):
                             self.status_matrix.update_status(target, 'screenshot', 'hotovo')
-    
-            
-            # Aktualizovat status fáze v matici
-            self.status_matrix.update_status(target, phase, status)
 
-            # Dokončit úlohu v živém panelu + zaznamenat stav do aktivního běhu
-            # (jen při reálném běhu, ne při načítání projektu / prohlížení verze)
-            if not getattr(self, 'loading_project', False):
-                self.live_task_panel.task_finished(base_phase, target, status)
-                active = self.run_history.active()
-                if active is not None and self.viewing_run_id == active.id:
-                    active.set_status(target, base_phase, status)
+            # Finalizace fáze pro cíl — jen z FINÁLNÍHO výsledku (poslední stupeň).
+            # Průběžné stupně jen doplní data; matice zůstává „probíhá".
+            if final:
+                self.status_matrix.update_status(target, phase, status)
+
+                # Dokončit úlohu v živém panelu + zaznamenat stav do aktivního běhu
+                # (jen při reálném běhu, ne při načítání projektu / prohlížení verze)
+                if not getattr(self, 'loading_project', False):
+                    self.live_task_panel.task_finished(base_phase, target, status)
+                    active = self.run_history.active()
+                    if active is not None and self.viewing_run_id == active.id:
+                        active.set_status(target, base_phase, status)
 
             self.sort_tree_by_ip(tree)
 

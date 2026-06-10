@@ -10,13 +10,15 @@ do přehledné matice a generuje reporty.
 
 ## Funkce
 
-- **Adaptivní vícestupňový sken** — fáze `online`, `tcp`, `udp`, `vuln`,
-  `osscan` přes `nmap`. Profil `Master` začne nejtvrdší variantou a při
-  selhání/timeoutu se automaticky **zmírňuje** (méně portů, `-Pn`, mírnější
-  timing), aby workflow nikdy nespadlo a zjistilo co nejvíc. K dispozici i
-  profily `Intensive/Medium/Light` a režim **Vlastní příkaz** (`{target}`).
-  Skeny běží **paralelně (pipeline)** — hloubkové fáze se pro cíl spustí hned
-  po jeho discovery, nečeká se na ostatní.
+- **Progresivní prioritní sken** — fáze `online`, `tcp`, `udp`, `vuln`,
+  `osscan` přes `nmap`. Profil `Master` plánuje fáze podle **priority**
+  (online → TCP → UDP → vuln → OS poslední) a porty pokrývá **progresivně**
+  (nejdřív rychlé top porty, pak plný `-p-`, výsledky se slučují) — máš něco
+  hned a vše po delším čase. Když selže ping, jede se s `-Pn`; timeout je jen
+  pojistka (jeden klidnější pokus `-T3`), takže to nikdy nespadne. K dispozici
+  i profily `Intensive/Medium/Light` a režim **Vlastní příkaz** (`{target}`).
+  Skeny běží **paralelně** s prioritní frontou (hloubkové fáze startují hned po
+  discovery cíle).
 - **Živá vizualizace průběhu** — progress bary po fázích, panel „Živé úlohy"
   (co běží / co skončilo) a stavová matice pro každou IP.
 - **Verzování běhů** — každé spuštění je samostatná verze výsledků; lze mezi

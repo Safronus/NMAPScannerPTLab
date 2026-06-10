@@ -4,6 +4,32 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [4.3.0] - 2026-06-10
+
+Přepracovaná strategie Master běhu — progresivní pokrytí + priorita místo
+de-eskalace řízené timeoutem.
+
+### Změněno
+- **Priorita fází přes prioritní frontu vláken:** online → TCP → UDP → vuln → OS.
+  Fáze se stále překrývají (paralelně), ale důležitější se plánují dřív a
+  **OS scan běží reálně až nakonec** (nejnižší priorita).
+- **Progresivní pokrytí portů** místo „full → ubírat při chybě": TCP nejdřív
+  `top 1000` (výsledky hned), pak `-p-` (vše); UDP `top 100` → `top 1000`.
+  Výsledky stupňů se **slučují** (sjednocení portů) — uživatel má něco hned a
+  vše po delším čase. Průběžné výsledky chodí do UI s příznakem `final=False`,
+  matice/panel se finalizují až posledním stupněm.
+- **`-Pn` je jednoznačně první zmírnění:** když ping nedetekuje online stav,
+  jedou všechny hloubkové skeny s `-Pn`.
+- **Timeout/chyba = jen pojistka:** při zaseknutí/chybě se zkusí jednou
+  klidnější varianta (`-T3`) a pokračuje se dalším stupněm — nikdy se to
+  nezablokuje. (Dřív byl timeout hlavním řídicím mechanismem, což nesedělo —
+  nmap skoro vždy doběhne s návratovým kódem 0 i bez výsledků.)
+- Profily nově volí hloubku progrese: Master/Intensive = plné (top→`-p-`),
+  Medium = TCP plně + UDP jen rychlé, Light = jen rychlé top porty.
+- Nový signál `WorkerSignals.scan_result` (s `final`) pro průběžné vs finální
+  výsledky; `core/scan_profiles.py` a `core/scan_manager.py` přepsány na model
+  stupňů + priorit. Headless testy aktualizovány.
+
 ## [4.1.0] - 2026-06-10
 
 Audit TLS — vyladěné hodnocení šifer dle Qualys SSL Labs a oprava zbývajících

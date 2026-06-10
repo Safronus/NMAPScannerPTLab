@@ -10,9 +10,12 @@ class WorkerSignals(QObject):
     screenshot_request = Signal(str, str, int, str)  # url, ip, port, path
     screenshot_taken = Signal(str, str)              # ip, filepath
 
-    # --- Nmap workflow (vícestupňová adaptivní detekce) ---
-    task_started = Signal(str, str, str)    # (phase, target, label) — příčka odstartovala
-    # (phase, target, rung, outcome, data, used_pn) — worker -> ScanManager.
+    # --- Nmap workflow (progresivní vícestupňová detekce) ---
+    task_started = Signal(str, str, str)    # (phase, target, label) — stupeň odstartoval
+    # (phase, target, stage, outcome, data, used_pn) — worker -> ScanManager.
     # outcome ∈ {"ok", "fail", "host_down"}.
     task_outcome = Signal(str, str, int, str, dict, bool)
+    # (phase, target, data, final) — manager -> UI. final=True = fáze pro cíl je hotová
+    # (poslední stupeň); final=False = průběžný výsledek (rychlý stupeň), jen doplnit data.
+    scan_result = Signal(str, str, dict, bool)
     phase_progress = Signal(str, int, int)  # (phase, completed, total) — manager -> UI

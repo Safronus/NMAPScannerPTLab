@@ -1,86 +1,70 @@
-"""Profily a vícestupňové žebříky skenů (čistá logika, bez závislosti na Qt).
+"""Profily a **progresivní** stupně skenů (čistá logika, bez závislosti na Qt).
 
-Model: každá fáze má **žebřík variant** seřazený od nejintenzivnější (rung 0)
-po nejmírnější. Adaptivní orchestrátor (`ScanManager`) začne na startovní příčce
-podle profilu a při selhání/timeoutu **zmírňuje** (posune se na další příčku),
-dokud něco neprojde — cíl je „zjistit co nejvíc, ale nespadnout".
+Model (od 4.3.0): místo „de-eskalace při chybě" se používá **progresivní
+pokrytí + priorita**:
 
-Profily určují jen **startovní příčku** v žebříku; de-eskalace pokračuje směrem
-dolů ze zvolené příčky:
+* **Priorita fází** (přes prioritní frontu vláken): online → TCP → UDP → vuln →
+  OS (poslední). Fáze se mohou překrývat, ale důležitější se plánují dřív a OS
+  scan běží reálně až nakonec.
+* **Progresivní stupně pokrytí** — každá fáze má jeden či více stupňů, které
+  běží v pořadí *rychlé → úplné* a jejichž výsledky se **slučují**. Uživatel má
+  něco hned (rychlý top-sken) a vše po delším čase (plný sken). Příklad TCP:
+  ``top 1000`` → ``-p-``; UDP: ``top 100`` → ``top 1000``.
+* **První zmírnění je ``-Pn``** — když ping nedetekuje online stav, jedou všechny
+  hloubkové skeny s ``-Pn`` (řeší orchestrátor podle výsledku fáze online).
+* **Timeout jen jako pojistka** — při zaseknutí/chybě se zkusí jednou klidnější
+  varianta (``-T3``) a pokračuje se dál; workflow se nikdy nezablokuje.
 
-- ``master``    – adaptivní, start na nejtvrdší variantě (doporučený default)
-- ``intensive`` – start na nejtvrdší variantě
-- ``medium``    – start uprostřed žebříku
-- ``light``     – start na rychlých variantách
-- ``custom``    – uživatel zadá vlastní příkaz (žebřík se nepoužije)
-
-Tento modul je záměrně bez Qt, aby byl samostatně testovatelný.
+Profily volí, jak hluboko se v progresi jde (kolik stupňů).
 """
 
-# Pořadí fází tak, jak je orchestrátor a UI používají.
 PHASES = ["online", "tcp", "udp", "vuln", "osscan"]
 
-# Hloubkové fáze (vše kromě discovery). 'vuln' se plánuje až po 'tcp', aby šel
-# scope na nalezené otevřené porty.
+# Pořadí, ve kterém orchestrátor plánuje hloubkové fáze (vuln se plánuje po TCP).
 DEEP_PHASES = ["tcp", "udp", "osscan", "vuln"]
 
-# Výchozí strop souběžných nmap procesů (vyvážený režim).
 DEFAULT_MAX_CONCURRENT = 6
 
-# ---------------------------------------------------------------------------
-# Žebříky variant: každá příčka = dict {label, timeout (s), cmd}.
-# Šablona cmd MUSÍ obsahovat {target}; {ports} je volitelné (vuln) a orchestrátor
-# ho nahradí buď „-p <porty>" (nalezené otevřené TCP porty), nebo prázdnem.
-# Pořadí: nejintenzivnější -> nejmírnější.
-# ---------------------------------------------------------------------------
-LADDERS = {
+# Priorita pro prioritní frontu vláken (vyšší = dřív). OS je nejnižší → poslední.
+PHASE_PRIORITY = {"online": 100, "tcp": 90, "udp": 70, "vuln": 40, "osscan": 10}
+
+# Progresivní stupně pokrytí: běží VŠECHNY zvolené stupně v pořadí rychlé→úplné,
+# výsledky se slučují. {target} povinné; {ports} (vuln) doplní orchestrátor.
+STAGES = {
     "online": [
         {"label": "ping/ARP discovery", "timeout": 120,
          "cmd": "nmap -sn -T4 -oX - {target}"},
     ],
     "tcp": [
-        {"label": "vše -p- + version 9", "timeout": 1800,
-         "cmd": "nmap -sS -sV --version-intensity 9 -p- -T4 -oX - {target}"},
-        {"label": "vše -p-", "timeout": 1200,
-         "cmd": "nmap -sS -sV -p- -T4 -oX - {target}"},
-        {"label": "top 1000", "timeout": 600,
+        {"label": "top 1000 (rychlé)", "timeout": 300,
          "cmd": "nmap -sS -sV --top-ports 1000 -T4 -oX - {target}"},
-        {"label": "top 1000 klidně (-T3)", "timeout": 900,
-         "cmd": "nmap -sS --top-ports 1000 -T3 -oX - {target}"},
+        {"label": "všechny porty -p-", "timeout": 1800,
+         "cmd": "nmap -sS -sV -p- -T4 -oX - {target}"},
     ],
     "udp": [
-        {"label": "top 1000 + version", "timeout": 1500,
+        {"label": "top 100 (rychlé)", "timeout": 300,
+         "cmd": "nmap -sU --top-ports 100 -T4 -oX - {target}"},
+        {"label": "top 1000", "timeout": 1200,
          "cmd": "nmap -sU -sV --top-ports 1000 -T4 -oX - {target}"},
-        {"label": "top 200", "timeout": 600,
-         "cmd": "nmap -sU --top-ports 200 -T4 -oX - {target}"},
-        {"label": "top 50 klidně (-T3)", "timeout": 600,
-         "cmd": "nmap -sU --top-ports 50 -T3 -oX - {target}"},
     ],
     "vuln": [
-        {"label": "vuln + version 9", "timeout": 1800,
-         "cmd": "nmap -sV --version-intensity 9 --script vuln {ports} -T4 -oX - {target}"},
-        {"label": "vuln", "timeout": 1200,
+        {"label": "vuln skripty", "timeout": 1800,
          "cmd": "nmap -sV --script vuln {ports} -T4 -oX - {target}"},
-        {"label": "vuln klidně (-T3)", "timeout": 1200,
-         "cmd": "nmap --script vuln {ports} -T3 -oX - {target}"},
     ],
     "osscan": [
         {"label": "OS detekce", "timeout": 300,
          "cmd": "nmap -O -T4 -oX - {target}"},
-        {"label": "OS odhad (guess+fuzzy)", "timeout": 300,
-         "cmd": "nmap -O --osscan-guess --fuzzy -T4 -oX - {target}"},
     ],
 }
 
-# Profil = startovní příčka v žebříku pro každou hloubkovou fázi.
-PROFILES = {
-    "master":    {"tcp": 0, "udp": 0, "vuln": 0, "osscan": 0},
-    "intensive": {"tcp": 0, "udp": 0, "vuln": 0, "osscan": 0},
-    "medium":    {"tcp": 2, "udp": 1, "vuln": 1, "osscan": 0},
-    "light":     {"tcp": 2, "udp": 2, "vuln": 2, "osscan": 1},
+# Profil → které stupně (indexy) se pro danou fázi spustí.
+PROFILE_STAGES = {
+    "master":    {"tcp": [0, 1], "udp": [0, 1], "vuln": [0], "osscan": [0]},
+    "intensive": {"tcp": [0, 1], "udp": [0, 1], "vuln": [0], "osscan": [0]},
+    "medium":    {"tcp": [0, 1], "udp": [0],    "vuln": [0], "osscan": [0]},
+    "light":     {"tcp": [0],    "udp": [0],    "vuln": [0], "osscan": [0]},
 }
 
-# Pořadí a popisky pro UI (custom je zvláštní režim mimo žebřík).
 PROFILE_ORDER = ["master", "intensive", "medium", "light", "custom"]
 PROFILE_LABELS = {
     "master":    "Master (adaptivní)",
@@ -90,64 +74,65 @@ PROFILE_LABELS = {
     "custom":    "Vlastní příkaz",
 }
 PROFILE_HINTS = {
-    "master":    "Začne nejtvrdší variantou a při selhání automaticky zmírňuje (-Pn, méně portů, mírnější timing). Doporučeno.",
-    "intensive": "Maximální záběr — start na nejtvrdší variantě, de-eskalace stále chrání před pádem.",
-    "medium":    "Vyvážený kompromis rychlost/přesnost — start uprostřed žebříku.",
-    "light":     "Rychlý průlet — top porty, méně version detekce.",
+    "master":    "Priorita online→TCP→UDP→vuln→OS (poslední). Progresivní porty (rychlé top → pak vše), -Pn když selže ping. Doporučeno.",
+    "intensive": "Plné progresivní pokrytí všech fází (top porty → -p-), priorita a -Pn jako Master.",
+    "medium":    "Vyvážený kompromis — TCP plně (top→-p-), UDP jen rychlé top porty.",
+    "light":     "Rychlý průlet — jen rychlé top porty (bez plného -p-).",
     "custom":    "Spustí tvůj vlastní nmap příkaz na každý cíl (placeholder {target}).",
 }
 
 
-def ladder_len(phase):
-    """Počet příček v žebříku dané fáze."""
-    return len(LADDERS.get(phase, []))
+def stages_for(profile, phase):
+    """Indexy stupňů ke spuštění pro daný profil a fázi (online vždy [0])."""
+    if phase == "online":
+        return [0]
+    return list(PROFILE_STAGES.get(profile, PROFILE_STAGES["master"]).get(phase, [0]))
 
 
-def start_index(profile, phase):
-    """Startovní příčka pro danou fázi a profil (ořezaná do platného rozsahu)."""
-    idx = PROFILES.get(profile, PROFILES["master"]).get(phase, 0)
-    return max(0, min(idx, ladder_len(phase) - 1)) if ladder_len(phase) else 0
-
-
-def variant(phase, rung):
-    """Vrátí dict příčky, nebo None mimo rozsah."""
-    rungs = LADDERS.get(phase, [])
-    if 0 <= rung < len(rungs):
-        return rungs[rung]
+def stage(phase, idx):
+    rungs = STAGES.get(phase, [])
+    if 0 <= idx < len(rungs):
+        return rungs[idx]
     return None
 
 
-def build_command(phase, rung, target, open_ports=None, use_pn=False):
-    """Sestaví konkrétní nmap příkaz pro danou příčku.
+def priority(phase, stage_idx=0):
+    """Priorita úlohy pro frontu vláken (pozdější stupeň o málo nižší)."""
+    return PHASE_PRIORITY.get(phase, 0) - int(stage_idx)
 
-    Vrací ``(command:str, timeout:int, label:str)`` nebo ``None`` mimo rozsah.
-    ``{ports}`` se nahradí „-p p1,p2,…" když jsou známé otevřené porty, jinak
-    prázdnem. ``use_pn=True`` přidá ``-Pn`` (přeskočí ping).
+
+def build_command(phase, stage_idx, target, open_ports=None, use_pn=False, calm=False):
+    """Sestaví nmap příkaz pro daný stupeň. Vrací (command, timeout, label) nebo None.
+
+    ``calm=True`` zklidní timing (-T4 → -T3) jako pojistku při zaseknutí.
     """
-    v = variant(phase, rung)
-    if v is None:
+    st = stage(phase, stage_idx)
+    if st is None:
         return None
-    cmd = v["cmd"]
+    cmd = st["cmd"]
     if "{ports}" in cmd:
         if open_ports:
-            ports = ",".join(str(p) for p in open_ports)
-            cmd = cmd.replace("{ports}", f"-p {ports}")
+            cmd = cmd.replace("{ports}", "-p " + ",".join(str(p) for p in open_ports))
         else:
             cmd = cmd.replace("{ports}", "")
     cmd = cmd.replace("{target}", target)
-    cmd = " ".join(cmd.split())  # sjednotit mezery (po odstranění {ports})
+    cmd = " ".join(cmd.split())
+    if calm:
+        cmd = cmd.replace("-T4", "-T3")
     if use_pn and "-Pn" not in cmd.split():
         cmd += " -Pn"
-    return cmd, v["timeout"], v["label"]
+    return cmd, st["timeout"], st["label"]
 
 
-def phase_label(phase, rung, use_pn=False):
-    """Lidský popisek příčky pro živý panel úloh, např. „TCP · top 1000 · -Pn"."""
-    v = variant(phase, rung)
+def stage_label(phase, stage_idx, use_pn=False, calm=False):
+    """Lidský popisek stupně pro živý panel, např. „TCP · top 1000 (rychlé) · -Pn"."""
+    st = stage(phase, stage_idx)
     base = phase.upper()
-    if v is None:
+    if st is None:
         return base
-    label = f"{base} · {v['label']}"
+    label = f"{base} · {st['label']}"
+    if calm:
+        label += " · -T3"
     if use_pn:
         label += " · -Pn"
     return label
