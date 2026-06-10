@@ -4,6 +4,16 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.0.5] - 2026-06-10
+
+### Změněno
+- **Export PDF v Inspektoru TLS má verzovaný název.** Místo statického
+  `SSL_TLS_Audit_Report.pdf` se předvyplní
+  `<projekt>_TLS_Audit_<YYYYMMDD_HHMMSS>.pdf` (název dle projektu + časové
+  razítko). Když je projekt uložený, ukládací dialog míří rovnou do jeho složky
+  `reports/`; bez projektu jen do aktuálního adresáře. Název lze před uložením
+  pochopitelně přepsat.
+
 ## [5.0.4] - 2026-06-10
 
 ### Opraveno

@@ -17,11 +17,13 @@ from PySide6.QtWebEngineCore import QWebEnginePage
 
 class TlsAuditDialog(QDialog):
     """Dialog pro audit TLS a šifer - Vizuální shoda s verzí 2.1.4c."""
-    def __init__(self, scan_results, parent=None):
+    def __init__(self, scan_results, parent=None, project_name="", project_path=None):
         super().__init__(parent)
         self.setWindowTitle("Inspektor TLS & Cipher Suites (Qualys Style)")
         self.resize(1150, 700) # Zvětšeno pro detaily
         self.scan_results = scan_results
+        self.project_name = project_name or ""    # pro verzovaný název PDF reportu
+        self.project_path = project_path          # cesta k .nmapproj → složka reports/
         self.thread_pool = QThreadPool()
         self.item_map = {}            # (ip, port) -> port řádek
         self.engine_items = {}        # (ip, port, engine) -> řádek enginu pod portem
@@ -566,6 +568,20 @@ class TlsAuditDialog(QDialog):
                 for k in keys_to_remove: self.scan_results['tls_audit'].pop(f"{k[0]}:{k[1]}", None)
             self.tree.takeTopLevelItem(self.tree.indexOfTopLevelItem(item))
             
+    def _default_report_path(self):
+        """Verzovaný název reportu: ``<projekt>_TLS_Audit_<YYYYMMDD_HHMMSS>.pdf``.
+        Když je projekt uložený, předvyplní se do jeho složky ``reports/``,
+        jinak jen název v aktuálním adresáři."""
+        from ..core.project import safe_name, ProjectPaths
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        fname = f"{safe_name(self.project_name or 'projekt')}_TLS_Audit_{ts}.pdf"
+        if self.project_path:
+            try:
+                return str(ProjectPaths.from_project_file(self.project_path).reports_dir / fname)
+            except Exception:
+                pass
+        return fname
+
     def export_to_pdf(self):
         """
         Vygeneruje profesionální vícestránkový PDF report pro TLS Audit.
@@ -637,7 +653,8 @@ class TlsAuditDialog(QDialog):
                 
         if not selected_targets: return
 
-        path, _ = QFileDialog.getSaveFileName(self, "Uložit TLS Report", "SSL_TLS_Audit_Report.pdf", "PDF Files (*.pdf)")
+        path, _ = QFileDialog.getSaveFileName(self, "Uložit TLS Report",
+                                              self._default_report_path(), "PDF Files (*.pdf)")
         if not path: return
 
         # 3. HTML Šablona

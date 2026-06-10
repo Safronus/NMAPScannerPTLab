@@ -792,7 +792,9 @@ class NmapScannerApp(QWidget):
 
     def open_tls_audit_dialog(self):
         """Otevře dialog pro audit TLS a šifer."""
-        dialog = TlsAuditDialog(self.scan_results, self)
+        dialog = TlsAuditDialog(self.scan_results, self,
+                                project_name=self.project_name_edit.text(),
+                                project_path=self.current_project_path)
         dialog.exec()
         self._autosave_after_audit()
 
