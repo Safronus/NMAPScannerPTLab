@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QSplitter, QCheckBox, QDialog, QMessageBox, QDialogButtonBox, QListWidget, QListWidgetItem, QGridLayout,
     QProgressBar, QSizePolicy, QFrame, QSpinBox, QScrollArea
 )
-from PySide6.QtCore import Slot, QTimer, Qt, QSettings
+from PySide6.QtCore import Slot, QTimer, Qt, QSettings, Signal
 from PySide6.QtGui import QColor, QFont
 from ..workers.ffuf import FfufWorker, BatchDownloadWorker
 from ..widgets.checkable_combo import CheckableComboBox
@@ -671,9 +671,14 @@ class FfufDialog(QDialog):
     """
     Dialogové okno pro ffuf.
     - Paralelní skenování více cílů najednou (až MAX_PARALLEL), každý cíl má
-      vlastní progress řádek (% , v/m, req/sec, ETA).
+      vlastní progress řádek (% , v/m, req/sec, ETA) + tlačítko zrušení.
+    - Může běžet na pozadí (nemodální okno) — skeny běží dál, okno lze zavřít
+      a znovu otevřít přes tlačítko ffuf.
     - Poslední použité nastavení se pamatuje přes QSettings.
     """
+    # Emituje se po každé synchronizaci výsledků do projektu (pro autosave v app)
+    results_changed = Signal()
+
     def __init__(self, scan_results, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Directory Fuzzing (ffuf)")
@@ -935,10 +940,16 @@ class FfufDialog(QDialog):
         self.export_txt_btn.setEnabled(False) # Aktivuje se až při prvním nálezu
         bottom_layout.addWidget(self.export_txt_btn)
 
+        self.background_btn = QPushButton("⬇ Na pozadí")
+        self.background_btn.setToolTip("Skrýt okno a nechat skeny běžet na pozadí "
+                                       "(znovu otevřeš tlačítkem ffuf).")
+        self.background_btn.clicked.connect(self.send_to_background)
+        bottom_layout.addWidget(self.background_btn)
+
         self.start_btn = QPushButton("Spustit Fuzzing")
         self.start_btn.clicked.connect(self.start_fuzzing)
         bottom_layout.addWidget(self.start_btn)
-        
+
         self.stop_btn = QPushButton("Zastavit")
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self.stop_fuzzing)
@@ -1777,9 +1788,28 @@ class FfufDialog(QDialog):
         self.manager_btn.setEnabled(True)
         self.progress_scroll.setVisible(False)
         self.total_progress_bar.setVisible(False)
+
+        # Synchronizovat výsledky do projektu (i když okno běží na pozadí)
+        self._sync_results()
+
         if self.log_label.text() != "Zastaveno.":
             self.log_label.setText("Hotovo.")
-            QMessageBox.information(self, "Hotovo", "Fuzzing dokončen.")
+            # Modální „Hotovo" jen když je okno viditelné — na pozadí by kradlo focus
+            if self.isVisible():
+                QMessageBox.information(self, "Hotovo", "Fuzzing dokončen.")
+
+    def _sync_results(self):
+        """Zapíše aktuální nálezy do sdíleného scan_results a oznámí appce (autosave)."""
+        try:
+            self.scan_results["ffuf"] = list(self.json_results)
+            self.results_changed.emit()
+        except Exception:
+            pass
+
+    def send_to_background(self):
+        """Skryje okno; běžící skeny pokračují. Znovu se otevře tlačítkem ffuf."""
+        self._sync_results()
+        self.hide()
 
     # --- Uložení / obnova posledního nastavení skenu ---
     def _save_ffuf_settings(self):
@@ -1845,6 +1875,36 @@ class FfufDialog(QDialog):
             self._save_ffuf_settings()
         except Exception:
             pass
+
+        app = QApplication.instance()
+        shutting_down = bool(app and app.closingDown())
+
+        # Běží sken a nezavírá se celá aplikace → nabídnout běh na pozadí
+        if self.is_scanning and not shutting_down:
+            box = QMessageBox(self)
+            box.setWindowTitle("Fuzzing běží")
+            box.setText("Skenování stále běží. Co chceš udělat?")
+            bg = box.addButton("Nechat běžet na pozadí", QMessageBox.AcceptRole)
+            stop = box.addButton("Zastavit a zavřít", QMessageBox.DestructiveRole)
+            box.addButton("Zrušit", QMessageBox.RejectRole)
+            box.exec()
+            clicked = box.clickedButton()
+            if clicked is bg:
+                self._sync_results()
+                event.ignore()
+                self.hide()       # okno zmizí, skeny běží dál
+                return
+            if clicked is stop:
+                self.stop_fuzzing()
+                # propadne dolů → super().closeEvent (vyemituje finished)
+            else:
+                event.ignore()    # Zrušit — nic
+                return
+
+        # Zavírá se aplikace nebo sken neběží → uklidit a synchronizovat
+        if self.is_scanning:
+            self.stop_fuzzing()
+        self._sync_results()
         super().closeEvent(event)
             
     def export_results_txt(self):

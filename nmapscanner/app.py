@@ -851,22 +851,47 @@ class NmapScannerApp(QWidget):
         self._autosave_after_audit()
 
     def open_ffuf_dialog(self):
-        """Otevře ffuf dialog a spravuje předávání dat."""
+        """Otevře ffuf dialog **nemodálně** — může běžet na pozadí, zatímco
+        pracuješ v aplikaci. Opětovné kliknutí jen vynese existující okno dopředu."""
         if "ffuf" not in self.scan_results:
             self.scan_results["ffuf"] = []
 
-        # Předáváme referenci na naše výsledky
-        dialog = FfufDialog(self.scan_results, self)
+        existing = getattr(self, "ffuf_dialog", None)
+        if existing is not None:
+            existing.show()
+            existing.raise_()
+            existing.activateWindow()
+            return
 
+        dialog = FfufDialog(self.scan_results, self)
+        self.ffuf_dialog = dialog
         if self.scan_results["ffuf"]:
             dialog.load_existing_results(self.scan_results["ffuf"])
+        # Živá synchronizace + autosave (i při běhu na pozadí)
+        dialog.results_changed.connect(self._on_ffuf_results_changed)
+        dialog.finished.connect(self._on_ffuf_dialog_finished)
+        dialog.setModal(False)
+        dialog.show()
 
-        dialog.exec()
-        self._autosave_after_audit()
-        
-        # Po zavření dialogu pro jistotu znovu synchronizujeme
-        self.scan_results["ffuf"] = dialog.json_results
-        self.auto_save_project()
+    def _on_ffuf_results_changed(self):
+        """ffuf synchronizoval výsledky (i na pozadí) → autosave projektu."""
+        try:
+            self._autosave_after_audit()
+            self.auto_save_project()
+        except Exception:
+            pass
+
+    def _on_ffuf_dialog_finished(self, *args):
+        """ffuf okno bylo definitivně zavřeno (ne na pozadí) — uvolnit referenci."""
+        dlg = getattr(self, "ffuf_dialog", None)
+        if dlg is not None:
+            self.scan_results["ffuf"] = dlg.json_results
+        self.ffuf_dialog = None
+        try:
+            self._autosave_after_audit()
+            self.auto_save_project()
+        except Exception:
+            pass
 
     def open_report_dialog(self):
         """Otevře dialog souhrnného PDF reportu (klasifikace OWASP/CVSS)."""
@@ -4548,6 +4573,16 @@ class NmapScannerApp(QWidget):
         self.save_settings()
         # Bezpečně vymazat sudo heslo z paměti při zavírání.
         self._clear_sudo_password()
+
+        # ffuf běžící na pozadí — zastavit skeny a synchronizovat (bez promptu)
+        ffuf_dlg = getattr(self, "ffuf_dialog", None)
+        if ffuf_dlg is not None:
+            try:
+                if getattr(ffuf_dlg, "is_scanning", False):
+                    ffuf_dlg.stop_fuzzing()
+                ffuf_dlg._sync_results()
+            except Exception:
+                pass
 
         # Pokud běží skenování, nejdřív ho zastavit
         if self.scan_manager.is_running:

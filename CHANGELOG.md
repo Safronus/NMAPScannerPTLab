@@ -4,6 +4,17 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.8.2] - 2026-06-11
+
+### Přidáno
+- **ffuf běží na pozadí.** Okno Directory Fuzzing je nově **nemodální** — během
+  skenování můžeš normálně používat aplikaci a dělat jiné testy. Tlačítko
+  **„⬇ Na pozadí"** okno skryje a skeny běží dál; znovu ho otevřeš tlačítkem
+  ffuf (📂) v liště (vynese stávající okno dopředu). Při zavření okna během
+  skenu se appka zeptá: *nechat běžet na pozadí / zastavit a zavřít / zrušit*.
+  Výsledky se průběžně synchronizují do projektu (autosave) i při běhu na pozadí;
+  při ukončení aplikace se skeny korektně zastaví.
+
 ## [5.8.1] - 2026-06-11
 
 ### Přidáno
