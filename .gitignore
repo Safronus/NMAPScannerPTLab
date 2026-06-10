@@ -1,0 +1,84 @@
+# =====================================================================
+#  BEZPECNOSTNI .gitignore  —  NMAP Scanner (penetracni laborator)
+# ---------------------------------------------------------------------
+#  PRAVIDLO: do repozitare patri POUZE zdrojovy kod a wordlisty.
+#  ZADNA data z testovani se sem nesmi dostat (IP adresy, vysledky,
+#  screenshoty, reporty, certifikaty, projekty klientu).
+#  Pri jakekoli pochybnosti soubor IGNORUJ.
+#  (Pozn.: git nepodporuje komentare na konci radku se vzorem.)
+# =====================================================================
+
+# --- Vystupy testovani (vytvari aplikace v pracovnim adresari) ---
+# adresare s vysledky scanu (Path.cwd() / nmap_scan_results_<cas>)
+nmap_scan_results_*/
+# ulozene projekty (obsahuji cilove IP + vysledky)
+*.nmapproj
+# autosave projektu
+.nmap_scanner_autosave/
+
+# --- Reporty a exporty ---
+# Word reporty zranitelnosti
+*.docx
+*.pdf
+# exporty (certifikaty.csv, ...)
+*.csv
+# ffuf_raw_results_*.json, projektova data
+*.json
+# nmap / testssl XML vystupy
+*.xml
+# pripadne HTML reporty
+*.html
+
+# --- Screenshoty webovych sluzeb ---
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.webp
+
+# --- Docasne soubory ---
+*.tmp
+
+# --- Logy ---
+*.log
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# --- Konfigurace s tajemstvimi ---
+.env
+.env.*
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+secrets.*
+config.local.*
+
+# --- macOS / OS ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+
+# --- IDE / editory ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
