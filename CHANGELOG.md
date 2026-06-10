@@ -4,6 +4,14 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.4.2] - 2026-06-10
+
+### Opraveno
+- **Runtime ikona `assets/icon.png` chyběla v repozitáři** — bezpečnostní
+  `.gitignore` blokuje všechna `*.png` (screenshoty z testování), takže se
+  ikona nedostala do commitu 5.4.1 a na čerstvém klonu by se nezobrazila.
+  Přidána úzká výjimka `!assets/icon.png`.
+
 ## [5.4.1] - 2026-06-10
 
 ### Přidáno

@@ -31,6 +31,8 @@ nmap_scan_results_*/
 
 # --- Screenshoty webovych sluzeb ---
 *.png
+# vyjimka: ikona aplikace (staticky asset, zadna data z testovani)
+!assets/icon.png
 *.jpg
 *.jpeg
 *.gif
