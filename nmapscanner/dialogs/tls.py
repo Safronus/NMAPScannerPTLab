@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Slot, Qt, QThreadPool
 from PySide6.QtGui import QColor, QFont
 from ..workers.tls import TlsAuditWorker, SslLabsWorker, TestSslWorker
+from ..core.tls_grading import calculate_grade as tls_calculate_grade
 from ..signals import WorkerSignals
 from PySide6.QtWebEngineCore import QWebEnginePage
 
@@ -288,21 +289,23 @@ class TlsAuditDialog(QDialog):
         # která najde všechny položky s textem "Čeká" v item_map.
         self.status_label.setText(f"Přidán cíl: {target}:{port}. Klikněte na 'Prověřit neprověřené'.")
 
-    def calculate_grade(self, results):
-        """
-        Vypočítá TLS známku (A-F).
-        UPRAVENO: Rozlišuje chybu spojení (ERR) od špatné konfigurace (F).
-        """
-        # Pokud se nepodařilo detekovat žádný protokol, jde o chybu spojení, ne známku F
-        if not any(results.values()):
-            return "ERR", "#95A5A6" # Šedá barva pro chybu
-        
-        # SSLv3 je okamžitá smrt (F)
-        if results.get("sslv3"): return "F", "#C0392B"
-        if results.get("tls1_0") or results.get("tls1_1"): return "F", "#E74C3C"
-        if not results.get("tls1_2") and not results.get("tls1_3"): return "F", "#E74C3C"
-        if results.get("tls1_3") and not results.get("tls1_0"): return "A", "#2ECC71"
-        return "B", "#27AE60"
+    def calculate_grade(self, protocols, cipher_tree=None):
+        """Celková TLS známka (A/B/C/F) dle Qualys SSL Labs stropů — viz
+        ``nmapscanner.core.tls_grading.calculate_grade`` (bere v potaz protokoly
+        i klasifikaci šifer)."""
+        return tls_calculate_grade(protocols, cipher_tree)
+
+    def _grade_for_data(self, data):
+        """Vrátí (známka, barva) pro výsledek: upřednostní oficiální Qualys grade,
+        jinak spočítá lokální známku z protokolů + klasifikace šifer."""
+        qg = data.get('qualys_grade')
+        if qg:
+            first = qg[0].upper()
+            color = {"A": "#2ECC71", "B": "#27AE60", "C": "#F39C12",
+                     "D": "#E67E22", "E": "#E67E22", "F": "#E74C3C",
+                     "T": "#E67E22", "M": "#95A5A6"}.get(first, "#95A5A6")
+            return qg, color
+        return self.calculate_grade(data.get('protocols', {}), data.get('cipher_tree', {}))
 
     @Slot(str, str, dict)
     def update_result(self, ip, port, data):
@@ -324,7 +327,7 @@ class TlsAuditDialog(QDialog):
         is_connection_error = data.get('status') == "Chyba spojení"
 
         if 'protocols' in data and not is_connection_error:
-            grade, color = self.calculate_grade(data['protocols'])
+            grade, color = self._grade_for_data(data)
             
             if grade == "ERR":
                 item.setText(1, "Chyba")
@@ -528,7 +531,7 @@ class TlsAuditDialog(QDialog):
             grade = "N/A"
 
             if 'protocols' in data and not is_connection_error:
-                grade_val, _ = self.calculate_grade(data['protocols'])
+                grade_val, _ = self._grade_for_data(data)
                 if grade_val == "ERR":
                     grade = "Chyba"
                 else:
@@ -631,8 +634,8 @@ class TlsAuditDialog(QDialog):
         
         for target in selected_targets:
             if 'protocols' in target['data']:
-                g, c = self.calculate_grade(target['data']['protocols'])
-                if g == "ERR": 
+                g, c = self._grade_for_data(target['data'])
+                if g == "ERR":
                     g, c = "ERR", "#95A5A6"
             else:
                  g, c = "ERR", "#95A5A6"
@@ -653,7 +656,7 @@ class TlsAuditDialog(QDialog):
             
             grade, color = "ERR", "#95A5A6"
             if protocols:
-                grade, color = self.calculate_grade(protocols)
+                grade, color = self._grade_for_data(t_data)
             
             # --- Generování tabulky Cipher Suites ---
             ciphers_html = ""

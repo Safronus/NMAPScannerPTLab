@@ -23,8 +23,11 @@ do přehledné matice a generuje reporty.
   nimi přepínat, **navázat** na zastavený běh (doskenuje jen chyby a nedoběhlé),
   spustit **retest** bez ztráty předchozích dat a **porovnat dvě verze** (nové/
   zmizelé porty, změny služeb/OS). Master seznam cílů + přepínání mezi projekty.
-- **TLS / SSL audit** — lokálně přes `testssl.sh` a `openssl`, volitelně přes
-  veřejné SSL Labs API.
+- **TLS / SSL audit** — tři enginy: lokální `nmap` (ssl-enum-ciphers, rychlý),
+  `testssl.sh` (detailní, i pro interní IP) a Qualys SSL Labs API (jen veřejné
+  domény). Klasifikace šifer (WEAK/INSECURE/SECURE) i celková známka jsou
+  vyladěné podle Qualys SSL Labs (`core/tls_grading.py`, pokryto testem proti
+  ground-truth sadě 47 šifer).
 - **Bezpečnostní hlavičky** — kontrola 6 klíčových HTTP hlaviček (HSTS, CSP,
   X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy).
 - **Certifikáty** — detail, export, hromadný přehled.
@@ -118,6 +121,7 @@ nmapscanner/               hlavní balík aplikace
   core/scan_profiles.py    profily a žebříky variant skenu (bez Qt, testovatelné)
   core/scan_manager.py     adaptivní orchestrace fází (de-eskalace, pipeline, resume)
   core/run_history.py      historie běhů, verzování výsledků a diff (bez Qt, testovatelné)
+  core/tls_grading.py      klasifikace TLS šifer + známka dle Qualys (bez Qt, testovatelné)
   workers/                 vlákna: scan, tls, certificate, security_headers, screenshot, ffuf
   widgets/                 LogConsole, StatusMatrix, LiveTaskPanel, PhaseProgressBars, …
   dialogs/                 dialogy: startup, tls, headers, certificate, export, ffuf, runs
@@ -135,6 +139,7 @@ Headless testy (bez GUI a bez nmapu) se spouští jednotlivě, např.:
 .venv/bin/python tests/test_scan_resume.py          # navázání (resume)
 .venv/bin/python tests/test_run_history.py          # verzování + diff
 .venv/bin/python tests/test_project_versioning.py   # on-disk snapshoty verzí
+.venv/bin/python tests/test_tls_grading.py          # TLS hodnocení dle Qualys
 ```
 
 Verzování (od 2.0.0): velké zásahy → MAJOR, drobné úpravy a fixy → PATCH.

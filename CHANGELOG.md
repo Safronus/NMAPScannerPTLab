@@ -4,6 +4,31 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [4.1.0] - 2026-06-10
+
+Audit TLS — vyladěné hodnocení šifer dle Qualys SSL Labs a oprava zbývajících
+dvou enginů (Qualys API, testssl.sh).
+
+### Přidáno
+- Nový modul `nmapscanner/core/tls_grading.py` (bez Qt, testovatelný):
+  `classify_cipher` (klasifikace WEAK/INSECURE/SECURE laděná **přesně dle Qualys
+  SSL Labs**) a `calculate_grade` (celková známka A/B/C/F dle Qualys stropů).
+- Headless test `tests/test_tls_grading.py` ověřuje klasifikaci proti
+  ground-truth sadě 47 cipher suites z reálných výsledků Qualys.
+
+### Opraveno / změněno
+- **Lokální Nmap engine — hodnocení šifer** nyní odpovídá Qualysu. Hlavní opravy:
+  3DES je `WEAK` (ne `INSECURE`), statická RSA (i s GCM/CCM) je `WEAK` (bez
+  forward secrecy), CBC je `WEAK`, jednoduché DES/RC4 je `INSECURE`. Celková
+  známka bere v potaz i šifry (WEAK → strop B, INSECURE → F), ne jen protokoly.
+- **Qualys SSL Labs engine** opraven: cíl zadaný jako **IP** se přeloží reverzním
+  DNS na doménu; interní/privátní IP se odmítne s jasnou hláškou (Qualys umí jen
+  veřejné domény). Správný API flow (`startNew`, polling, ošetření rate-limitu a
+  timeoutu). Zobrazuje se **oficiální Qualys známka** (A+/A/…/T) z API.
+- **TestSSL.sh engine** opraven: robustnější parsování protokolů i cipher řádků
+  z JSON, klasifikace šifer sjednocena přes stejnou Qualys-laděnou logiku
+  (`classify_cipher`), s fallbackem na severity od testssl.
+
 ## [4.0.0] - 2026-06-10
 
 Management projektu a **verzování běhů** — historie skenů, navázání (resume),
