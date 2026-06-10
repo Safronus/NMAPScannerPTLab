@@ -23,7 +23,8 @@ class TlsAuditDialog(QDialog):
         self.resize(1150, 700) # Zvětšeno pro detaily
         self.scan_results = scan_results
         self.thread_pool = QThreadPool()
-        self.item_map = {}
+        self.item_map = {}            # (ip, port) -> port řádek
+        self.engine_items = {}        # (ip, port, engine) -> řádek enginu pod portem
         self.init_ui()
         self.load_targets()
 
@@ -123,38 +124,40 @@ class TlsAuditDialog(QDialog):
         layout.addLayout(btn_layout)
 
     def start_checks(self, only_new=False):
-        """
-        Spustí skenování s dynamickým výběrem workera podle ComboBoxu.
-        """
-        tasks = [k for k, v in self.item_map.items() if not only_new or "Čeká" in v.text(0)]
-        if not tasks: return
+        """Spustí prověření vybraným enginem. Výsledek jde do samostatného
+        řádku enginu pod portem — ostatní enginy se nepřepíšou. ``only_new``
+        prověří jen cíle, které vybraným enginem ještě prověřené nebyly."""
+        engine_idx = self.engine_combo.currentIndex()
+        engine = self.ENGINES[engine_idx] if engine_idx < len(self.ENGINES) else "Nmap"
+        WorkerClass = (TlsAuditWorker, SslLabsWorker, TestSslWorker)[engine_idx]
+
+        if only_new:
+            tasks = [k for k in self.item_map if (k[0], k[1], engine) not in self.engine_items]
+        else:
+            tasks = list(self.item_map.keys())
+        if not tasks:
+            self.status_label.setText(f"Nic k prověření enginem {engine}.")
+            return
+
         self.check_all_btn.setEnabled(False)
         self.check_new_btn.setEnabled(False)
-        self.engine_combo.setEnabled(False) # Zamezení změny enginu během běhu
+        self.engine_combo.setEnabled(False)  # zámek enginu během běhu
         self.processing_count = len(tasks)
-        
-        engine_idx = self.engine_combo.currentIndex()
-        
-        for (ip, port) in tasks:
-            item = self.item_map[(ip, port)]
-            
-            if engine_idx == 0:
-                engine_text = "Nmap"
-                WorkerClass = TlsAuditWorker
-            elif engine_idx == 1:
-                engine_text = "Qualys API"
-                WorkerClass = SslLabsWorker
-            else:
-                engine_text = "TestSSL"
-                WorkerClass = TestSslWorker
+        icon = {"Nmap": "🛰", "Qualys": "🌐", "TestSSL": "🔬"}.get(engine, "•")
 
-            item.setText(0, f"Port {port} | Prověřuji ({engine_text})...")
-            item.takeChildren()
+        for (ip, port) in tasks:
+            port_item = self.item_map[(ip, port)]
+            eitem = self._engine_item(ip, port, engine, port_item)
+            eitem.takeChildren()
+            eitem.setText(0, f"{icon} {engine} — Prověřuji…")
+            eitem.setText(1, "…")
+            eitem.setForeground(1, QColor("#7f8c8d"))
+            port_item.setExpanded(True)
+            eitem.setExpanded(True)
 
             signals = WorkerSignals()
             signals.result.connect(self.update_result)
             signals.finished.connect(self.on_worker_finished)
-            
             self.thread_pool.start(WorkerClass(ip, port, signals))
 
     def on_worker_finished(self):
@@ -238,10 +241,16 @@ class TlsAuditDialog(QDialog):
                 port_item.setForeground(0, QColor("#E67E22"))
                 
                 self.item_map[(ip, port)] = port_item
-                
-                # Načtení historie
-                if f"{ip}:{port}" in saved_data:
-                    self.update_result(ip, port, saved_data[f"{ip}:{port}"])
+
+                # Načtení uložených výsledků — per engine (nový formát) i starý single-dict.
+                saved = saved_data.get(f"{ip}:{port}")
+                if isinstance(saved, dict) and saved and all(k in self.ENGINES for k in saved.keys()):
+                    for eng, rec in saved.items():
+                        rec = dict(rec)
+                        rec.setdefault('engine', eng)
+                        self.update_result(ip, port, rec)
+                elif isinstance(saved, dict):
+                    self.update_result(ip, port, saved)
 
         self.apply_filters()
 
@@ -307,164 +316,156 @@ class TlsAuditDialog(QDialog):
             return qg, color
         return self.calculate_grade(data.get('protocols', {}), data.get('cipher_tree', {}))
 
+    ENGINES = ("Nmap", "Qualys", "TestSSL")
+
     @Slot(str, str, dict)
     def update_result(self, ip, port, data):
-        item = self.item_map.get((ip, port))
-        if not item: return
-        
-        if 'tls_audit' not in self.scan_results: self.scan_results['tls_audit'] = {}
-        self.scan_results['tls_audit'][f"{ip}:{port}"] = data
-        
+        """Aktualizuje výsledek JEN pro daný engine — ostatní enginy zůstanou.
+        Pod portem je samostatný řádek pro každý engine + historie prověření."""
+        port_item = self.item_map.get((ip, port))
+        if not port_item:
+            return
+        engine = data.get('engine', 'Nmap')
+        key = f"{ip}:{port}"
+
+        # --- uložení per engine + historie (bez přepisu jiných enginů) ---
+        store = self.scan_results.setdefault('tls_audit', {})
+        entry = store.get(key)
+        if not (isinstance(entry, dict) and entry and all(k in self.ENGINES for k in entry.keys())):
+            migrated = {}
+            if isinstance(entry, dict) and ('protocols' in entry or 'engine' in entry):
+                migrated[entry.get('engine', 'Nmap')] = entry
+            entry = migrated
+            store[key] = entry
+
+        grade, color = self._grade_for_data(data)
+        has_proto = any((data.get('protocols') or {}).values())
+        status = data.get('status', '')
+        in_progress = (status not in ("Hotovo", "Chyba", "Chyba spojení")
+                       and not has_proto and 'error' not in data)
+
+        history = list((entry.get(engine) or {}).get('history', []))
+        if not in_progress and (has_proto or 'error' in data):
+            history.append({'time': data.get('check_time', ''), 'grade': grade})
+        rec = dict(data)
+        rec['history'] = history
+        entry[engine] = rec
+
         domain = data.get('domain', '-')
-        parent = item.parent()
-        if parent:
-            parent.setText(0, f"{ip} ({domain})" if domain != "-" else ip)
+        ip_parent = port_item.parent()
+        if ip_parent and domain not in ('-', ip, ''):
+            ip_parent.setText(0, f"{ip} ({domain})")
+        port_item.setText(0, f"Port {port}")
+        port_item.setExpanded(True)
 
-        check_time = data.get('check_time', 'Čeká...')
-        item.setText(0, f"Port {port} | {check_time}")
-        item.takeChildren()
+        # --- řádek enginu pod portem ---
+        eitem = self._engine_item(ip, port, engine, port_item)
+        eitem.takeChildren()
+        icon = {"Nmap": "🛰", "Qualys": "🌐", "TestSSL": "🔬"}.get(engine, "•")
+        when = data.get('check_time', '')
+        eitem.setText(0, f"{icon} {engine}   ·   {len(history)}× prověřeno"
+                      + (f"   ·   {when}" if when else ""))
+        eitem.setFont(0, QFont("Arial", 10, QFont.Bold))
+        eitem.setExpanded(True)
 
-        is_connection_error = data.get('status') == "Chyba spojení"
-
-        if 'protocols' in data and not is_connection_error:
-            grade, color = self._grade_for_data(data)
-            
-            if grade == "ERR":
-                item.setText(1, "Chyba")
-                item.setFont(1, QFont("Arial", 10))
-            else:
-                item.setText(1, grade)
-                item.setFont(1, QFont("Arial", 12, QFont.Bold))
-            
-            item.setForeground(1, QColor(color))
-            item.setTextAlignment(1, Qt.AlignCenter)
-
-            p = data['protocols']
-            # UPRAVENO: Mapování pro 6 protokolů (včetně SSLv2/v3)
-            mapping = [
-                ("sslv2", 2), ("sslv3", 3), 
-                ("tls1_0", 4), ("tls1_1", 5), 
-                ("tls1_2", 6), ("tls1_3", 7)
-            ]
-            
-            for key, col in mapping:
-                supported = p.get(key)
-                text = "-" if grade == "ERR" else ("✅" if supported else "❌")
-                item.setText(col, text)
-                item.setTextAlignment(col, Qt.AlignCenter)
-                
-                # Červená pro nebezpečné (SSLv2, SSLv3, TLS 1.0, TLS 1.1)
-                if key in ["sslv2", "sslv3", "tls1_0", "tls1_1"] and supported:
-                    item.setForeground(col, QColor("#E74C3C"))
-                else:
-                    item.setForeground(col, QColor("#f0f0f0"))
-
-            # 3. Strom šifer s vizuálním seskupením a počty
-            cipher_tree = data.get('cipher_tree', {})
-            sorted_protos = sorted(cipher_tree.keys(), reverse=True)
-            
-            proto_safety = {
-                "TLSv1.3": ("SECURE", "#2ECC71", "🔒"),
-                "TLSv1.2": ("SECURE", "#27AE60", "🔒"),
-                "TLSv1.1": ("INSECURE", "#E67E22", "🔓"),
-                "TLSv1.0": ("INSECURE", "#C0392B", "🔓"),
-                "SSLv3":   ("INSECURE", "#C0392B", "🔓"),
-                "SSLv2":   ("INSECURE", "#C0392B", "🔓")
-            }
-            
-            rank_map = {"SECURE": 0, "WEAK": 1, "INSECURE": 2}
-
-            for proto in sorted_protos:
-                ciphers = cipher_tree[proto]
-                
-                ciphers.sort(key=lambda x: (
-                    rank_map.get(x.get('grade_label', 'INSECURE'), 3), 
-                    x.get('name', '')
-                ))
-
-                group_counts = {}
-                for c in ciphers:
-                    lbl = c.get('grade_label', 'INSECURE')
-                    group_counts[lbl] = group_counts.get(lbl, 0) + 1
-
-                safety_label, safety_color, icon = proto_safety.get(proto, ("UNKNOWN", "#95A5A6", "?"))
-                
-                proto_item = QTreeWidgetItem(item)
-                proto_item.setText(0, f"{icon} {proto}   [{safety_label}]")
-                proto_item.setFont(0, QFont("Arial", 10, QFont.Bold))
-                proto_item.setForeground(0, QColor(safety_color))
-                proto_item.setExpanded(True)
-                
-                last_group = None
-                
-                for c in ciphers:
-                    current_group = c.get('grade_label', 'INSECURE')
-                    
-                    if current_group != last_group:
-                        separator = QTreeWidgetItem(proto_item)
-                        
-                        sep_title = current_group
-                        sep_color = "#999"
-                        
-                        if current_group == "SECURE": 
-                            sep_title = "Strong / Secure Suites"
-                            sep_color = "#27AE60"
-                        elif current_group == "WEAK": 
-                            sep_title = "Weak Suites"
-                            sep_color = "#F39C12"
-                        elif current_group == "INSECURE": 
-                            sep_title = "Insecure Suites"
-                            sep_color = "#E74C3C"
-                        
-                        count = group_counts.get(current_group, 0)
-                        separator.setText(0, f"▼ {sep_title} ({count})")
-                        
-                        separator.setForeground(0, QColor(sep_color))
-                        separator.setFont(0, QFont("Arial", 9, QFont.Bold))
-                        separator.setFirstColumnSpanned(True)
-                        separator.setFlags(Qt.ItemIsEnabled)
-                        
-                        last_group = current_group
-
-                    c_name = c.get('name', 'Unknown')
-                    c_kex = c.get('kex_info', '')
-                    
-                    name_display = f"  {c_name}"
-                    if c_kex:
-                        name_display += f" ({c_kex})"
-                    
-                    tag = c.get('grade_tag')
-                    if tag:
-                        name_display += f" {tag}"
-                        
-                    cipher_item = QTreeWidgetItem(proto_item)
-                    cipher_item.setText(0, name_display)
-                    
-                    c_color = c.get('grade_color')
-                    if not c_color:
-                        old_grade = c.get('grade', 'C')
-                        if old_grade == 'A': c_color = "#2ECC71"
-                        elif old_grade in ['B', 'C']: c_color = "#F39C12"
-                        elif old_grade in ['D', 'E', 'F']: c_color = "#E74C3C"
-                        else: c_color = "#95A5A6"
-                    
-                    cipher_item.setForeground(0, QColor(c_color))
-                    cipher_item.setFont(0, QFont("Consolas", 9))
-
-        else:
-            item.setText(1, "Chyba")
-            item.setForeground(1, QColor("#95A5A6"))
-            item.setToolTip(1, data.get('error', 'Chyba spojení'))
-            
-            # Vyčistit sloupce pro chybu (všech 6 protokolů)
+        if in_progress:
+            eitem.setText(1, "…")
+            eitem.setForeground(1, QColor("#7f8c8d"))
+            eitem.setToolTip(1, status)
             for col in range(2, 8):
-                item.setText(col, "-")
-                item.setForeground(col, QColor("#95A5A6"))
-                item.setTextAlignment(col, Qt.AlignCenter)
-            
+                eitem.setText(col, "")
+            self.apply_filters()
+            return
+
+        if 'error' in data or status == "Chyba spojení" or not has_proto:
+            eitem.setText(1, "Chyba")
+            eitem.setForeground(1, QColor("#E74C3C"))
+            eitem.setTextAlignment(1, Qt.AlignCenter)
+            err = data.get('error') or "Chyba spojení / žádná data"
+            child = QTreeWidgetItem(eitem, [f"⚠️ {err}", ""])
+            child.setForeground(0, QColor("#E74C3C"))
+            child.setFirstColumnSpanned(True)
+            for col in range(2, 8):
+                eitem.setText(col, "-")
+                eitem.setForeground(col, QColor("#95A5A6"))
+                eitem.setTextAlignment(col, Qt.AlignCenter)
+            self.apply_filters()
+            return
+
+        eitem.setText(1, grade)
+        eitem.setFont(1, QFont("Arial", 11, QFont.Bold))
+        eitem.setForeground(1, QColor(color))
+        eitem.setTextAlignment(1, Qt.AlignCenter)
+        self._render_engine_row(eitem, data)
         self.apply_filters()
-        
-    # --- Zbytek třídy (apply_filters, load_targets, atd.) zůstává stejný ---
+
+    def _engine_item(self, ip, port, engine, port_item):
+        k = (ip, port, engine)
+        it = self.engine_items.get(k)
+        if it is None or it.parent() is not port_item:
+            it = QTreeWidgetItem(port_item)
+            self.engine_items[k] = it
+        return it
+
+    def _render_engine_row(self, eitem, data):
+        """Vykreslí protokolové sloupce + strom šifer na řádek enginu."""
+        p = data.get('protocols', {})
+        for key, col in [("sslv2", 2), ("sslv3", 3), ("tls1_0", 4),
+                         ("tls1_1", 5), ("tls1_2", 6), ("tls1_3", 7)]:
+            supported = p.get(key)
+            eitem.setText(col, "✅" if supported else "❌")
+            eitem.setTextAlignment(col, Qt.AlignCenter)
+            if key in ("sslv2", "sslv3", "tls1_0", "tls1_1") and supported:
+                eitem.setForeground(col, QColor("#E74C3C"))
+            else:
+                eitem.setForeground(col, QColor("#bdc3c7"))
+
+        cipher_tree = data.get('cipher_tree', {})
+        proto_safety = {
+            "TLSv1.3": ("SECURE", "#2ECC71", "🔒"), "TLSv1.2": ("SECURE", "#27AE60", "🔒"),
+            "TLSv1.1": ("INSECURE", "#E67E22", "🔓"), "TLSv1.0": ("INSECURE", "#C0392B", "🔓"),
+            "SSLv3": ("INSECURE", "#C0392B", "🔓"), "SSLv2": ("INSECURE", "#C0392B", "🔓"),
+        }
+        rank_map = {"SECURE": 0, "WEAK": 1, "INSECURE": 2}
+        for proto in sorted(cipher_tree.keys(), reverse=True):
+            ciphers = sorted(cipher_tree[proto],
+                             key=lambda x: (rank_map.get(x.get('grade_label', 'INSECURE'), 3),
+                                            x.get('name', '')))
+            counts = {}
+            for c in ciphers:
+                lbl = c.get('grade_label', 'INSECURE')
+                counts[lbl] = counts.get(lbl, 0) + 1
+            slabel, scolor, sicon = proto_safety.get(proto, ("UNKNOWN", "#95A5A6", "?"))
+            proto_item = QTreeWidgetItem(eitem)
+            proto_item.setText(0, f"{sicon} {proto}   [{slabel}]")
+            proto_item.setFont(0, QFont("Arial", 10, QFont.Bold))
+            proto_item.setForeground(0, QColor(scolor))
+            proto_item.setExpanded(True)
+            last_group = None
+            for c in ciphers:
+                grp = c.get('grade_label', 'INSECURE')
+                if grp != last_group:
+                    title = {"SECURE": "Strong / Secure Suites", "WEAK": "Weak Suites",
+                             "INSECURE": "Insecure Suites"}.get(grp, grp)
+                    gcolor = {"SECURE": "#27AE60", "WEAK": "#F39C12",
+                              "INSECURE": "#E74C3C"}.get(grp, "#999")
+                    sep = QTreeWidgetItem(proto_item)
+                    sep.setText(0, f"▼ {title} ({counts.get(grp, 0)})")
+                    sep.setForeground(0, QColor(gcolor))
+                    sep.setFont(0, QFont("Arial", 9, QFont.Bold))
+                    sep.setFirstColumnSpanned(True)
+                    sep.setFlags(Qt.ItemIsEnabled)
+                    last_group = grp
+                name_display = f"  {c.get('name', 'Unknown')}"
+                if c.get('kex_info'):
+                    name_display += f" ({c['kex_info']})"
+                if c.get('grade_tag'):
+                    name_display += f" {c['grade_tag']}"
+                citem = QTreeWidgetItem(proto_item)
+                citem.setText(0, name_display)
+                citem.setForeground(0, QColor(c.get('grade_color') or "#95A5A6"))
+                citem.setFont(0, QFont("Consolas", 9))
+
     def apply_filters(self):
         root = self.tree.invisibleRootItem()
         for i in range(root.childCount()):
@@ -472,11 +473,18 @@ class TlsAuditDialog(QDialog):
             ip_visible = False
             for j in range(ip_item.childCount()):
                 port_item = ip_item.child(j)
-                grade = port_item.text(1)
-                hide = (grade == "A" and self.filter_secure.isChecked()) or \
-                       ("Chyba" in grade and self.filter_error.isChecked())
-                port_item.setHidden(hide)
-                if not hide: ip_visible = True
+                port_visible = port_item.childCount() == 0  # port bez prověření necháme vidět
+                for e in range(port_item.childCount()):
+                    erow = port_item.child(e)
+                    grade = erow.text(1)
+                    hide = (grade == "A" and self.filter_secure.isChecked()) or \
+                           ("Chyba" in grade and self.filter_error.isChecked())
+                    erow.setHidden(hide)
+                    if not hide:
+                        port_visible = True
+                port_item.setHidden(not port_visible)
+                if port_visible:
+                    ip_visible = True
             ip_item.setHidden(not ip_visible)
 
     def show_context_menu(self, position):
@@ -498,6 +506,8 @@ class TlsAuditDialog(QDialog):
             ip = item.parent().text(0).split(' ')[0]
             port = item.text(0).split('|')[0].replace("Port ", "").strip()
             self.item_map.pop((ip, port), None)
+            for ek in [k for k in self.engine_items if k[0] == ip and k[1] == port]:
+                self.engine_items.pop(ek, None)
             if 'tls_audit' in self.scan_results:
                 self.scan_results['tls_audit'].pop(f"{ip}:{port}", None)
             item.parent().removeChild(item)
@@ -505,6 +515,8 @@ class TlsAuditDialog(QDialog):
             ip = item.text(0).split(' ')[0]
             keys_to_remove = [k for k in self.item_map.keys() if k[0] == ip]
             for k in keys_to_remove: self.item_map.pop(k, None)
+            for ek in [k for k in self.engine_items if k[0] == ip]:
+                self.engine_items.pop(ek, None)
             if 'tls_audit' in self.scan_results:
                 for k in keys_to_remove: self.scan_results['tls_audit'].pop(f"{k[0]}:{k[1]}", None)
             self.tree.takeTopLevelItem(self.tree.indexOfTopLevelItem(item))
@@ -523,33 +535,30 @@ class TlsAuditDialog(QDialog):
         hide_secure = self.filter_secure.isChecked()
         hide_errors = self.filter_error.isChecked()
 
-        for key, data in saved_data.items():
-            # Musíme zjistit stav/známku pro aplikaci filtru
-            should_include = True
-            
-            is_connection_error = data.get('status') == "Chyba spojení"
-            grade = "N/A"
-
-            if 'protocols' in data and not is_connection_error:
-                grade_val, _ = self._grade_for_data(data)
-                if grade_val == "ERR":
-                    grade = "Chyba"
-                else:
-                    grade = grade_val
+        for key, entry in saved_data.items():
+            # entry je engine-mapa {engine: rec}; starý formát = jeden dict.
+            if isinstance(entry, dict) and entry and all(k in self.ENGINES for k in entry.keys()):
+                items = list(entry.items())
+            elif isinstance(entry, dict):
+                items = [(entry.get('engine', 'Nmap'), entry)]
             else:
-                grade = "Chyba"
+                continue
 
-            # Logika filtrování
-            if grade == "A" and hide_secure:
-                should_include = False
-            elif "Chyba" in grade and hide_errors:
-                should_include = False
-            
-            if should_include:
-                available_data.append({
-                    'name': key, 
-                    'data': data
-                })
+            for engine, data in items:
+                if not isinstance(data, dict):
+                    continue
+                is_connection_error = data.get('status') == "Chyba spojení"
+                if 'protocols' in data and not is_connection_error:
+                    grade_val, _ = self._grade_for_data(data)
+                    grade = "Chyba" if grade_val == "ERR" else grade_val
+                else:
+                    grade = "Chyba"
+
+                if grade == "A" and hide_secure:
+                    continue
+                if "Chyba" in grade and hide_errors:
+                    continue
+                available_data.append({'name': f"{key} · {engine}", 'data': data})
         
         if not available_data:
             QMessageBox.warning(self, "Export", "Nejsou k dispozici žádná data (nebo jsou všechna skryta filtry).")

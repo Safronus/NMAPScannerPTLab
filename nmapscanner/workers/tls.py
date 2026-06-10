@@ -45,6 +45,7 @@ class TlsAuditWorker(QRunnable):
         
         scan_data = {
             'ip': self.ip, 'port': self.port, 'domain': domain_name,
+            'engine': 'Nmap',
             'protocols': {},
             'cipher_tree': {},
             'check_time': datetime.now().strftime('%d.%m.%Y %H:%M:%S'),
@@ -176,6 +177,7 @@ class SslLabsWorker(QRunnable):
     def run(self):
         scan_data = {
             'ip': self.ip, 'port': self.port, 'domain': self.ip,
+            'engine': 'Qualys',
             'protocols': {}, 'cipher_tree': {},
             'check_time': datetime.now().strftime('%d.%m.%Y %H:%M:%S'),
             'status': "Hotovo"
@@ -329,6 +331,7 @@ class TestSslWorker(QRunnable):
     def run(self):
         scan_data = {
             'ip': self.ip, 'port': self.port, 'domain': self.ip,
+            'engine': 'TestSSL',
             'protocols': {}, 'cipher_tree': {},
             'check_time': datetime.now().strftime('%d.%m.%Y %H:%M:%S'),
             'status': "Hotovo"

@@ -4,6 +4,21 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [4.9.0] - 2026-06-10
+
+TLS Inspektor — oddělení enginů do pod-řádků + historie prověřování.
+
+### Změněno
+- **TLS okno: výsledky per engine.** Pod každým cílem:portem je teď samostatný
+  řádek pro **Nmap / Qualys / TestSSL** — každý se svou známkou, protokoly,
+  šiframi a počtem „Nx prověřeno". Spuštění jednoho enginu už **nepřepíše**
+  výsledky druhého; aktualizuje se jen jeho řádek (se záznamem historie).
+- „Prověřit neprověřené" se vztahuje k vybranému enginu (prověří jen cíle, které
+  tím enginem ještě prověřené nebyly).
+- Workery hlásí svůj engine; uložení v projektu je `tls_audit[ip:port][engine]`
+  vč. historie (starý formát se při načtení zmigruje). PDF export i filtry
+  upraveny na nový model.
+
 ## [4.8.0] - 2026-06-10
 
 Oprava pádu při zavírání během skenu, spolehlivější ukládání projektu, funkční
