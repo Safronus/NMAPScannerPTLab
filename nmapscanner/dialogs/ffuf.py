@@ -549,14 +549,31 @@ SETTINGS_APP = "NmapScannerApp"
 MAX_PARALLEL = 4
 
 
+def _fmt_int(n):
+    return f"{int(n):,}".replace(",", " ")
+
+
+def _fmt_secs(seconds):
+    seconds = max(0, int(seconds))
+    m, s = divmod(seconds, 60)
+    h, m = divmod(m, 60)
+    if h > 0:
+        return f"{h}h {m}m {s}s"
+    if m > 0:
+        return f"{m}m {s}s"
+    return f"{s}s"
+
+
 class ScanProgressRow(QWidget):
     """
     Jeden řádek průběhu pro jeden běžící cíl: název + progress bar (%, v/m) +
-    rychlost (req/sec) + ETA. Při paralelním skenování má každý cíl vlastní řádek.
+    zbývající requesty + čas (ETA) + tlačítko zrušení tohoto skenu.
     """
-    def __init__(self, target_url, parent=None):
+    def __init__(self, target_url, on_cancel=None, parent=None):
         super().__init__(parent)
         self.target_url = target_url
+        self._on_cancel = on_cancel
+        self._cancelled = False
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(2, 1, 2, 1)
@@ -578,41 +595,67 @@ class ScanProgressRow(QWidget):
         self.bar.setRange(0, 0)  # indeterminate „busy", než přijde první progress
         layout.addWidget(self.bar, 1)
 
+        # Zbývá: počet requestů
+        self.remaining = QLabel("–")
+        self.remaining.setStyleSheet("font-size: 11px; color: #888;")
+        self.remaining.setFixedWidth(120)
+        self.remaining.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.remaining.setToolTip("Zbývající počet requestů")
+        layout.addWidget(self.remaining)
+
         self.rps = QLabel("-")
         self.rps.setStyleSheet("font-size: 11px; color: #888;")
-        self.rps.setFixedWidth(95)
+        self.rps.setFixedWidth(90)
         self.rps.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         layout.addWidget(self.rps)
 
         self.eta = QLabel("Zbývá: -")
         self.eta.setStyleSheet("font-size: 11px; color: #888;")
-        self.eta.setFixedWidth(110)
+        self.eta.setFixedWidth(100)
         self.eta.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         layout.addWidget(self.eta)
 
+        # Zrušit tento sken
+        self.cancel_btn = QPushButton("✕")
+        self.cancel_btn.setToolTip("Zrušit tento sken")
+        self.cancel_btn.setFixedSize(22, 18)
+        self.cancel_btn.setStyleSheet("QPushButton { color:#C0392B; font-weight:bold; }")
+        self.cancel_btn.clicked.connect(self._cancel_clicked)
+        layout.addWidget(self.cancel_btn)
+
+    def _cancel_clicked(self):
+        if self._cancelled:
+            return
+        self._cancelled = True
+        self.cancel_btn.setEnabled(False)
+        self.bar.setFormat("Ruším…")
+        self.eta.setText("Zbývá: –")
+        if callable(self._on_cancel):
+            self._on_cancel()
+
     def apply_progress(self, progress, total, rps):
+        if self._cancelled:
+            return
+        remaining = max(0, total - progress) if total > 0 else 0
         if total > 0:
             self.bar.setRange(0, total)
             self.bar.setValue(progress)
             percent = int((progress / total) * 100)
-            val_str = f"{progress:,}".replace(",", " ")
-            tot_str = f"{total:,}".replace(",", " ")
-            self.bar.setFormat(f"{percent}% - {val_str} / {tot_str}")
+            self.bar.setFormat(f"{percent}% - {_fmt_int(progress)} / {_fmt_int(total)}")
+            self.remaining.setText(f"zbývá {_fmt_int(remaining)} req")
 
         self.rps.setText(f"{rps} req/sec")
 
-        if rps > 0 and total > progress:
-            seconds_left = int((total - progress) / rps)
-            m, s = divmod(seconds_left, 60)
-            h, m = divmod(m, 60)
-            eta = f"{h}h {m}m {s}s" if h > 0 else f"{m}m {s}s"
+        if rps > 0 and remaining > 0:
+            eta = _fmt_secs(remaining / rps)
         elif total > 0 and progress >= total:
             eta = "Hotovo"
         else:
-            eta = "Výpočet..."
+            eta = "výpočet…"
         self.eta.setText(f"Zbývá: {eta}")
 
     def mark_done(self):
+        self.cancel_btn.setEnabled(False)
         if self.bar.maximum() > 0:
             self.bar.setValue(self.bar.maximum())
             self.bar.setFormat("100% - Hotovo")
@@ -620,6 +663,7 @@ class ScanProgressRow(QWidget):
             self.bar.setRange(0, 1)
             self.bar.setValue(1)
             self.bar.setFormat("Hotovo")
+        self.remaining.setText("zbývá 0 req")
         self.eta.setText("Zbývá: Hotovo")
 
 
@@ -1497,10 +1541,6 @@ class FfufDialog(QDialog):
             "follow_redirects": self.redirect_check.isChecked(),
         }
 
-        # Progress řádek pro tento cíl (vložit nad strech na konci layoutu)
-        row = ScanProgressRow(current_url)
-        self.progress_rows_layout.insertWidget(self.progress_rows_layout.count() - 1, row)
-
         worker = FfufWorker(current_url, self.current_wordlist, options)
 
         ctx = {
@@ -1509,8 +1549,14 @@ class FfufDialog(QDialog):
             "settings": settings_text,
             "has_results": False,
             "worker": worker,
-            "row": row,
+            "row": None,
+            "cancelled": False,
         }
+
+        # Progress řádek pro tento cíl s tlačítkem zrušení tohoto skenu
+        row = ScanProgressRow(current_url, on_cancel=lambda c=ctx: self._cancel_ctx(c))
+        ctx["row"] = row
+        self.progress_rows_layout.insertWidget(self.progress_rows_layout.count() - 1, row)
         self.active_ctxs.append(ctx)
 
         # Signály vážeme přes uzávěr s konkrétním kontextem (paralelně bezpečné)
@@ -1640,6 +1686,17 @@ class FfufDialog(QDialog):
             data.get('total', 0),
             data.get('rps', 0),
         )
+
+    def _cancel_ctx(self, ctx):
+        """Zruší JEN tento jeden běžící sken; uvolněný slot zabere další z fronty.
+        Ostatní paralelní skeny běží dál."""
+        if ctx.get("cancelled"):
+            return
+        ctx["cancelled"] = True
+        worker = ctx.get("worker")
+        if worker:
+            worker.stop()   # ukončí ffuf proces → worker emitne finished → on_worker_finished
+        self.log_label.setText(f"Ruším sken: {ctx['url']}…")
 
     def on_worker_finished(self, ctx):
         print(f"DEBUG: [FfufDialog] Worker finished: {ctx['url']}")

@@ -4,6 +4,19 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.8.1] - 2026-06-11
+
+### Přidáno
+- **ffuf: zrušení jednotlivého skenu + zbývající requesty a čas.** Každý řádek
+  průběhu má nově tlačítko **✕** pro zrušení právě tohoto cíle (ostatní paralelní
+  skeny běží dál; uvolněný slot zabere další cíl z fronty). V řádku navíc přibyl
+  údaj **„zbývá N req"** a přesnější ETA — užitečné, když je cíl pomalý/filtrovaný
+  (např. 2 req/s a 1000 h do konce → vidíš to a sken zrušíš).
+- **Kontextová akce „Otevřít v prohlížeči" nad cíli — rozšířená.** Pravý klik na
+  cíl v matici → podnabídka se **všemi otevřenými porty**; u jednoznačných se
+  nabídne HTTP/HTTPS dle služby, u neznámých portů obě varianty (http i https),
+  ať lze zkusit web na libovolném portu. Otevírá se v systémovém prohlížeči.
+
 ## [5.8.0] - 2026-06-11
 
 ### Změněno

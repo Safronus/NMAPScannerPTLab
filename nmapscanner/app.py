@@ -2138,21 +2138,9 @@ class NmapScannerApp(QWidget):
         menu.addAction(f"🔁 Re-scan Vuln — {sfx}", lambda: self.rescan_target(targets, ["vuln"]))
         menu.addAction(f"🔁 Re-scan OS — {sfx}", lambda: self.rescan_target(targets, ["osscan"]))
         menu.addSeparator()
-        # Otevřít web cíle v prohlížeči — jen pro jeden cíl (s výběrem portu/schématu)
+        # Otevřít cíl v prohlížeči — jen pro jeden cíl (výběr portu + schématu)
         if len(targets) == 1:
-            web_ports = self._web_ports_for(targets[0])
-            if web_ports:
-                open_menu = menu.addMenu(f"🌐 Otevřít v prohlížeči — {targets[0]}")
-                for pnum, scheme, product in sorted(web_ports):
-                    label = f"{scheme}://{targets[0]}:{pnum}"
-                    if product:
-                        label += f"   ({product})"
-                    open_menu.addAction(
-                        label,
-                        lambda s=scheme, t=targets[0], p=pnum: self._open_in_browser(s, t, p))
-            else:
-                act = menu.addAction(f"🌐 Otevřít v prohlížeči — {targets[0]} (žádný web port)")
-                act.setEnabled(False)
+            self._add_open_in_browser_menu(menu, targets[0])
         menu.addSeparator()
         menu.addAction(f"🌐 Detekovat web server (IIS/Apache/nginx) — {sfx}",
                        lambda: self.detect_webserver(targets))
@@ -2299,6 +2287,48 @@ class NmapScannerApp(QWidget):
                 product = " ".join(x for x in [info.get("product", ""), info.get("version", "")] if x).strip()
                 out.append((pnum, scheme, product))
         return out
+
+    def _open_ports_for(self, target):
+        """Všechny otevřené TCP porty cíle jako [(port, name)]."""
+        tcp_data = (self.scan_results.get("tcp", {}) or {}).get(target, {}) or {}
+        out = []
+        for port, info in (tcp_data.get("tcp", {}) or {}).items():
+            if not isinstance(info, dict) or info.get("state") != "open":
+                continue
+            try:
+                pnum = int(port)
+            except (TypeError, ValueError):
+                continue
+            out.append((pnum, (info.get("name") or "").lower()))
+        return sorted(out)
+
+    def _schemes_for_port(self, pnum, name):
+        """Vrátí vhodná schémata pro port: ['https'] / ['http'] / ['http','https']."""
+        https_ports = {443, 8443, 9443, 4443, 10443}
+        http_ports = {80, 8080, 8000, 8008, 8081, 8888, 3000, 5000, 280}
+        if "https" in name or "ssl" in name or "tls" in name or pnum in https_ports:
+            return ["https"]
+        if "http" in name or pnum in http_ports:
+            return ["http"]
+        # neznámá služba — nabídnout obě, ať si uživatel zkusí web na libovolném portu
+        return ["http", "https"]
+
+    def _add_open_in_browser_menu(self, menu, target):
+        """Přidá do menu podnabídku „Otevřít v prohlížeči" se všemi otevřenými porty."""
+        open_ports = self._open_ports_for(target)
+        if not open_ports:
+            act = menu.addAction(f"🌐 Otevřít v prohlížeči — {target} (žádné otevřené porty)")
+            act.setEnabled(False)
+            return
+        sub = menu.addMenu(f"🌐 Otevřít v prohlížeči — {target}")
+        for pnum, name in open_ports:
+            for scheme in self._schemes_for_port(pnum, name):
+                label = f"{scheme}://{target}:{pnum}"
+                if name:
+                    label += f"   ({name})"
+                sub.addAction(
+                    label,
+                    lambda s=scheme, t=target, p=pnum: self._open_in_browser(s, t, p))
 
     def _open_in_browser(self, scheme, target, port):
         """Otevře cíl v systémovém prohlížeči (cross-platform přes QDesktopServices)."""
