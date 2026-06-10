@@ -4,6 +4,19 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.8.0] - 2026-06-11
+
+### Změněno
+- **PDF report přepracován do oficiálního stylu PT Lab** (dle reálného reportu
+  laboratoře): bílé pozadí, patkové písmo, opakující se hlavička s logem PT Lab
+  a adresou laboratoře na každé straně, červená patička „CITLIVÁ DATA / SENSITIVE
+  DATA", modré hlavičky tabulek a barevně kódované buňky rizika. Obsahuje úvod,
+  rozepsané OWASP Top 10:2025, barevnou stupnici INFO/LOW/MEDIUM/HIGH/CRITICAL
+  (pásma CVSS v4.0), soupis cílů, použité nástroje, hlavní část nálezů per IP
+  (tabulky IP|Porty|Služba|Zranitelnost|Riziko) + doporučení, souhrn a závěr.
+  Dvojjazyčně (CZ/EN). `core/report_html.py` (technický report; manažerská
+  varianta a editovatelná pole přijdou v navazujících verzích).
+
 ## [5.7.2] - 2026-06-10
 
 ### Přidáno (základy pro nové reporty)
