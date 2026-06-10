@@ -482,3 +482,240 @@ class TestSslWorker(QRunnable):
         self.signals.result.emit(self.ip, self.port, scan_data)
         self.signals.finished.emit()
 
+
+def _proto_display(raw):
+    """Z různých zápisů verze protokolu (``TLSv1.2``, ``TLS 1.2``, ``1.2``,
+    ``tls1_2``, ``SSLv3``…) udělá jednotný název pro vizuál (``TLSv1.2``…)."""
+    k = (raw or "").lower().replace(" ", "").replace(".", "_").replace("v", "")
+    if "1_3" in k:
+        return "TLSv1.3"
+    if "1_2" in k:
+        return "TLSv1.2"
+    if "1_1" in k:
+        return "TLSv1.1"
+    if "1_0" in k or k.endswith("tls1") or k == "tls1":
+        return "TLSv1.0"
+    if "ssl3" in k or "ssl_3" in k:
+        return "SSLv3"
+    if "ssl2" in k or "ssl_2" in k:
+        return "SSLv2"
+    return raw or "TLSv1.2"
+
+
+class SslscanWorker(QRunnable):
+    """Worker pro lokální nástroj ``sslscan`` (rychlý, funguje i pro interní IP).
+
+    Vyžaduje instalaci (``brew install sslscan``). Parsuje XML výstup
+    (``--xml=-``): podporu protokolů z ``<protocol enabled="1">`` a šifry z
+    ``<cipher status="accepted|preferred" cipher="…">`` (OpenSSL názvy).
+    """
+    def __init__(self, ip, port, signals, cancel_event=None):
+        super().__init__()
+        self.ip = ip
+        self.port = str(port)
+        self.signals = signals
+        self.cancel_event = cancel_event
+
+    def _is_cancelled(self):
+        return self.cancel_event is not None and self.cancel_event.is_set()
+
+    @Slot()
+    def run(self):
+        scan_data = {
+            'ip': self.ip, 'port': self.port, 'domain': self.ip,
+            'engine': 'Sslscan',
+            'protocols': {}, 'cipher_tree': {},
+            'check_time': datetime.now().strftime('%d.%m.%Y %H:%M:%S'),
+            'status': "Hotovo",
+        }
+
+        binp = shutil.which("sslscan")
+        if not binp:
+            scan_data['status'] = "Chyba"
+            scan_data['error'] = "Nástroj 'sslscan' nenalezen. Instalace: brew install sslscan"
+            self.signals.result.emit(self.ip, self.port, scan_data)
+            self.signals.finished.emit()
+            return
+
+        try:
+            scan_data['status'] = "sslscan: Prověřuji…"
+            self.signals.result.emit(self.ip, self.port, scan_data)
+
+            cmd = [binp, "--no-colour", "--xml=-", f"{self.ip}:{self.port}"]
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+
+            if self._is_cancelled():
+                scan_data['status'] = "Zrušeno"
+                scan_data['error'] = "Prověření zrušeno uživatelem."
+                self.signals.result.emit(self.ip, self.port, scan_data)
+                self.signals.finished.emit()
+                return
+
+            xml = proc.stdout or ""
+            start = xml.find("<?xml")
+            if start == -1:
+                start = xml.find("<document")
+            if start > 0:
+                xml = xml[start:]
+            if not xml.strip():
+                raise Exception("sslscan nevrátil XML výstup (cíl nedostupný?).")
+            root = ET.fromstring(xml)
+
+            proto_map = {
+                ("ssl", "2"): "sslv2", ("ssl", "3"): "sslv3",
+                ("tls", "1.0"): "tls1_0", ("tls", "1.1"): "tls1_1",
+                ("tls", "1.2"): "tls1_2", ("tls", "1.3"): "tls1_3",
+            }
+            for pe in root.iter("protocol"):
+                key = (pe.get("type", "").lower(), pe.get("version", ""))
+                if pe.get("enabled") == "1" and key in proto_map:
+                    scan_data['protocols'][proto_map[key]] = True
+
+            cipher_tree = {}
+            for ce in root.iter("cipher"):
+                if ce.get("status") not in ("accepted", "preferred"):
+                    continue
+                cname = ce.get("cipher") or ""
+                if not cname:
+                    continue
+                proto_name = _proto_display(ce.get("sslversion", ""))
+                grade_label, grade_color, grade_tag = classify_cipher(cname)
+                bits = ce.get("bits")
+                curve = ce.get("curve") or ce.get("ecdhecurvename") or ""
+                kex = " ".join(x for x in [(f"{bits} bit" if bits else ""), curve] if x)
+                cipher_tree.setdefault(proto_name, []).append({
+                    'name': cname,
+                    'grade_label': grade_label,
+                    'grade_color': grade_color,
+                    'grade_tag': grade_tag,
+                    'kex_info': kex,
+                })
+
+            scan_data['cipher_tree'] = cipher_tree
+            scan_data['status'] = "Hotovo"
+
+        except Exception as e:
+            scan_data['status'] = "Chyba"
+            scan_data['error'] = str(e)[:140]
+
+        self.signals.result.emit(self.ip, self.port, scan_data)
+        self.signals.finished.emit()
+
+
+class SslyzeWorker(QRunnable):
+    """Worker pro ``sslyze`` (detailní lokální analýza, funguje i pro interní IP).
+
+    Vyžaduje instalaci (``pip install sslyze``). Spustí ``sslyze --json_out=…``
+    a z JSONu vytáhne podporu protokolů a přijaté cipher suites (IANA názvy).
+    """
+    def __init__(self, ip, port, signals, cancel_event=None):
+        super().__init__()
+        self.ip = ip
+        self.port = str(port)
+        self.signals = signals
+        self.cancel_event = cancel_event
+
+    def _is_cancelled(self):
+        return self.cancel_event is not None and self.cancel_event.is_set()
+
+    @Slot()
+    def run(self):
+        scan_data = {
+            'ip': self.ip, 'port': self.port, 'domain': self.ip,
+            'engine': 'Sslyze',
+            'protocols': {}, 'cipher_tree': {},
+            'check_time': datetime.now().strftime('%d.%m.%Y %H:%M:%S'),
+            'status': "Hotovo",
+        }
+
+        binp = shutil.which("sslyze")
+        if not binp:
+            scan_data['status'] = "Chyba"
+            scan_data['error'] = "Nástroj 'sslyze' nenalezen. Instalace: pip install sslyze"
+            self.signals.result.emit(self.ip, self.port, scan_data)
+            self.signals.finished.emit()
+            return
+
+        import json
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
+            json_path = tmp.name
+
+        try:
+            scan_data['status'] = "sslyze: Prověřuji…"
+            self.signals.result.emit(self.ip, self.port, scan_data)
+
+            cmd = [binp, f"--json_out={json_path}", f"{self.ip}:{self.port}"]
+            subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+
+            if self._is_cancelled():
+                try:
+                    os.path.exists(json_path) and os.remove(json_path)
+                except OSError:
+                    pass
+                scan_data['status'] = "Zrušeno"
+                scan_data['error'] = "Prověření zrušeno uživatelem."
+                self.signals.result.emit(self.ip, self.port, scan_data)
+                self.signals.finished.emit()
+                return
+
+            if not os.path.exists(json_path):
+                raise Exception("sslyze nevygeneroval JSON výstup.")
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            os.remove(json_path)
+
+            servers = data.get("server_scan_results") or []
+            if not servers:
+                raise Exception("sslyze nevrátil výsledky (cíl nedostupný?).")
+            scan = servers[0].get("scan_result") or servers[0].get("scan_commands_results") or {}
+
+            proto_map = {
+                "ssl_2_0_cipher_suites": ("sslv2", "SSLv2"),
+                "ssl_3_0_cipher_suites": ("sslv3", "SSLv3"),
+                "tls_1_0_cipher_suites": ("tls1_0", "TLSv1.0"),
+                "tls_1_1_cipher_suites": ("tls1_1", "TLSv1.1"),
+                "tls_1_2_cipher_suites": ("tls1_2", "TLSv1.2"),
+                "tls_1_3_cipher_suites": ("tls1_3", "TLSv1.3"),
+            }
+            cipher_tree = {}
+            for skey, (pkey, pname) in proto_map.items():
+                node = scan.get(skey) or {}
+                # sslyze 5.x výsledek zabaluje do ``result``; starší ne.
+                res = node.get("result") if isinstance(node.get("result"), dict) else node
+                accepted = (res or {}).get("accepted_cipher_suites") or []
+                if not accepted:
+                    continue
+                scan_data['protocols'][pkey] = True
+                for it in accepted:
+                    if not isinstance(it, dict):
+                        continue
+                    cs = it.get("cipher_suite") or {}
+                    cname = cs.get("name") or cs.get("openssl_name") or ""
+                    if not cname:
+                        continue
+                    grade_label, grade_color, grade_tag = classify_cipher(cname)
+                    ek = it.get("ephemeral_key") or {}
+                    kex = ek.get("curve_name") or (f"{ek.get('size')} bit" if ek.get("size") else "")
+                    cipher_tree.setdefault(pname, []).append({
+                        'name': cname,
+                        'grade_label': grade_label,
+                        'grade_color': grade_color,
+                        'grade_tag': grade_tag,
+                        'kex_info': kex,
+                    })
+
+            scan_data['cipher_tree'] = cipher_tree
+            scan_data['status'] = "Hotovo"
+
+        except Exception as e:
+            try:
+                os.path.exists(json_path) and os.remove(json_path)
+            except OSError:
+                pass
+            scan_data['status'] = "Chyba"
+            scan_data['error'] = str(e)[:140]
+
+        self.signals.result.emit(self.ip, self.port, scan_data)
+        self.signals.finished.emit()
+

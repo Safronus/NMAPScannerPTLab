@@ -14,7 +14,11 @@ import threading
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from nmapscanner.workers.tls import SslLabsWorker, TestSslWorker, TlsAuditWorker
+import shutil
+
+from nmapscanner.workers.tls import (
+    SslLabsWorker, TestSslWorker, TlsAuditWorker, SslyzeWorker, SslscanWorker
+)
 
 
 class _FakeSig:
@@ -37,14 +41,29 @@ class _FakeSignals:
 def main():
     fails = []
 
-    # 1) kompatibilní signatura — workery přijmou cancel_event i bez něj
+    # 1) kompatibilní signatura — všechny workery přijmou cancel_event i bez něj
     ev = threading.Event()
-    for cls in (TlsAuditWorker, SslLabsWorker, TestSslWorker):
+    for cls in (TlsAuditWorker, SslLabsWorker, TestSslWorker, SslyzeWorker, SslscanWorker):
         try:
             cls("1.1.1.1", "443", _FakeSignals(), ev)
             cls("1.1.1.1", "443", _FakeSignals())  # bez cancel_event (default None)
         except TypeError as e:
             fails.append(f"{cls.__name__} nepřijal cancel_event: {e}")
+
+    # 1b) chybějící nástroj → 'Chyba' s návodem na instalaci + finished
+    #     (deterministické jen, když nástroj NENÍ nainstalován — jinak by se
+    #     spustil reálný subprocess, což v testu nechceme).
+    for cls, binname, hint in ((SslscanWorker, "sslscan", "brew install"),
+                               (SslyzeWorker, "sslyze", "pip install")):
+        if shutil.which(binname):
+            continue
+        s = _FakeSignals()
+        cls("1.2.3.4", "443", s).run()
+        recs = [c[2] for c in s.result.calls if len(c) >= 3]
+        if not recs or recs[-1].get("status") != "Chyba" or hint not in (recs[-1].get("error") or ""):
+            fails.append(f"{cls.__name__} bez nástroje nehlásí instalaci: {recs[-1] if recs else None}")
+        if not s.finished.calls:
+            fails.append(f"{cls.__name__} bez nástroje neemitoval finished")
 
     # 2) Qualys s předem nastaveným zrušením → 'Zrušeno' bez síťového dotazu.
     #    'example.com' není IP, takže _resolve_host nesahá na DNS; kontrola

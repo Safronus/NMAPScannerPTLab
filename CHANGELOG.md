@@ -4,6 +4,28 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.2.0] - 2026-06-10
+
+### Přidáno
+- **Inspektor TLS: dva nové enginy — `sslscan` a `SSLyze`** (vedle Nmap, Qualys,
+  TestSSL). Oba lokální, fungují i na interní/bezdoménové IP:
+  - `SslscanWorker` — parsuje XML (`sslscan --xml=-`): podporu protokolů a přijaté
+    šifry (OpenSSL názvy → klasifikace přes `tls_grading`). Instalace
+    `brew install sslscan`.
+  - `SslyzeWorker` — spustí `sslyze --json_out=…` a z JSONu vytáhne protokoly a
+    accepted cipher suites (IANA názvy). Instalace `pip install sslyze`.
+  - Když nástroj chybí, engine vrátí jasnou chybu s návodem na instalaci.
+  - Každý engine má jako dosud vlastní pod-řádek s historií; zrušitelnost
+    (tlačítko Zastavit) i zavření dialogu fungují stejně.
+- **Tlačítko „🧪 Prověřit VŠEMI enginy"** — spustí pro všechny cíle všech pět
+  enginů naráz (každý do svého pod-řádku). Qualys u interních/bezdoménových cílů
+  jen vrátí chybu, ostatní projdou.
+
+### Změněno
+- Spouštění enginů refaktorováno do `_start_engine(idx, tasks)`; enginy/workery/
+  ikony jsou v jedné tabulce (`ENGINES`/`WORKERS`/`ICONS`) — přidání dalšího
+  enginu = jeden řádek na stejný index.
+
 ## [5.1.4] - 2026-06-10
 
 ### Přidáno

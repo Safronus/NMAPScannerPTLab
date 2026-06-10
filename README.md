@@ -29,11 +29,13 @@ do přehledné matice a generuje reporty.
   **timeline** běhu; matice podporuje **výběr více cílů** (Ctrl/Cmd-/Shift-klik),
   takže re-scan jde spustit nad celým výběrem najednou. Master seznam cílů +
   přepínání mezi projekty.
-- **TLS / SSL audit** — tři enginy: lokální `nmap` (ssl-enum-ciphers, rychlý),
-  `testssl.sh` (detailní, i pro interní IP) a Qualys SSL Labs API (jen veřejné
-  domény). Klasifikace šifer (WEAK/INSECURE/SECURE) i celková známka jsou
-  vyladěné podle Qualys SSL Labs (`core/tls_grading.py`, pokryto testem proti
-  ground-truth sadě 47 šifer).
+- **TLS / SSL audit** — pět nezávislých enginů: lokální `nmap` (ssl-enum-ciphers,
+  rychlý), `testssl.sh` (detailní), **`sslscan`** (rychlý lokální) a **`sslyze`**
+  (detailní lokální) — všechny i pro interní IP — a Qualys SSL Labs API (jen
+  veřejné domény). Každý engine má vlastní pod-řádek s historií; tlačítko
+  **Prověřit všemi** spustí všechny naráz. Klasifikace šifer
+  (WEAK/INSECURE/SECURE) i celková známka jsou vyladěné podle Qualys SSL Labs
+  (`core/tls_grading.py`, pokryto testem proti ground-truth sadě 47 šifer).
 - **Bezpečnostní hlavičky** — kontrola 6 klíčových HTTP hlaviček (HSTS, CSP,
   X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy).
 - **Certifikáty** — detail, export, hromadný přehled.
@@ -63,6 +65,8 @@ pip install -r requirements.txt
 | `nmap`        | scan portů/služeb          | `brew install nmap`        |
 | `ffuf`        | fuzzing adresářů           | `brew install ffuf`        |
 | `testssl.sh`  | TLS audit interních IP     | `brew install testssl`     |
+| `sslscan`     | TLS audit (engine, volitelný) | `brew install sslscan`  |
+| `sslyze`      | TLS audit (engine, volitelný) | `pip install sslyze`    |
 | `openssl`     | detaily certifikátů        | součást systému            |
 | Google Chrome | Selenium screenshoty       | `brew install --cask google-chrome` (chromedriver řeší Selenium Manager) |
 

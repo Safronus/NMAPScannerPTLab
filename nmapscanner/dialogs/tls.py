@@ -9,7 +9,9 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Slot, Qt, QThreadPool
 from PySide6.QtGui import QColor, QFont
-from ..workers.tls import TlsAuditWorker, SslLabsWorker, TestSslWorker
+from ..workers.tls import (
+    TlsAuditWorker, SslLabsWorker, TestSslWorker, SslyzeWorker, SslscanWorker
+)
 from ..core.tls_grading import calculate_grade as tls_calculate_grade
 from ..signals import WorkerSignals
 from PySide6.QtWebEngineCore import QWebEnginePage
@@ -37,7 +39,8 @@ class TlsAuditDialog(QDialog):
     def init_ui(self):
         """
         Inicializace UI dialogu pro TLS Audit.
-        Verze 2.2.0: Tři nezávislé enginy pro skenování (Nmap, Qualys, TestSSL).
+        Pět nezávislých enginů (Nmap, Qualys, TestSSL, SSLyze, sslscan) + možnost
+        „Prověřit všemi". Každý engine píše do vlastního pod-řádku pod portem.
         """
         layout = QVBoxLayout(self)
         info_layout = QHBoxLayout()
@@ -47,9 +50,11 @@ class TlsAuditDialog(QDialog):
         info_layout.addWidget(QLabel("Engine:"))
         self.engine_combo = QComboBox()
         self.engine_combo.addItems([
-            "Nmap (Rychlý lokální sken)", 
+            "Nmap (Rychlý lokální sken)",
             "Qualys SSL Labs API (Veřejné cíle, detailní)",
-            "TestSSL.sh (Detailní, pro lokální i veřejné)"
+            "TestSSL.sh (Detailní, pro lokální i veřejné)",
+            "SSLyze (Detailní lokální analýza)",
+            "sslscan (Rychlý lokální sken)",
         ])
         info_layout.addWidget(self.engine_combo)
         
@@ -119,6 +124,13 @@ class TlsAuditDialog(QDialog):
         self.check_new_btn.clicked.connect(lambda: self.start_checks(True))
         btn_layout.addWidget(self.check_new_btn)
 
+        self.check_all_engines_btn = QPushButton("🧪 Prověřit VŠEMI enginy")
+        self.check_all_engines_btn.setToolTip(
+            "Spustí pro všechny cíle Nmap, Qualys, TestSSL, SSLyze i sslscan naráz "
+            "(každý do svého pod-řádku).")
+        self.check_all_engines_btn.clicked.connect(self.start_all_engines)
+        btn_layout.addWidget(self.check_all_engines_btn)
+
         self.stop_btn = QPushButton("⏹ Zastavit")
         self.stop_btn.clicked.connect(self.stop_checks)
         self.stop_btn.setEnabled(False)
@@ -135,14 +147,11 @@ class TlsAuditDialog(QDialog):
         layout.addLayout(btn_layout)
 
     def start_checks(self, only_new=False):
-        """Spustí prověření vybraným enginem. Výsledek jde do samostatného
+        """Spustí prověření VYBRANÝM enginem (combo). Výsledek jde do samostatného
         řádku enginu pod portem — ostatní enginy se nepřepíšou. ``only_new``
         prověří jen cíle, které vybraným enginem ještě prověřené nebyly."""
-        import threading
         engine_idx = self.engine_combo.currentIndex()
         engine = self.ENGINES[engine_idx] if engine_idx < len(self.ENGINES) else "Nmap"
-        WorkerClass = (TlsAuditWorker, SslLabsWorker, TestSslWorker)[engine_idx]
-
         if only_new:
             tasks = [k for k in self.item_map if (k[0], k[1], engine) not in self.engine_items]
         else:
@@ -150,16 +159,33 @@ class TlsAuditDialog(QDialog):
         if not tasks:
             self.status_label.setText(f"Nic k prověření enginem {engine}.")
             return
+        self._start_engine(engine_idx, tasks)
+        self.status_label.setText(f"Prověřuji enginem {engine}… (lze Zastavit)")
 
-        # Nic NEzamykáme — každý engine píše do vlastního pod-řádku per cíl, takže
-        # běhy se navzájem nepřepisují a uživatel může spustit další test kdykoli
-        # (i jiný engine souběžně). Jediný indikátor aktivity je tlačítko Zastavit.
+    def start_all_engines(self):
+        """Spustí VŠECHNY enginy pro všechny cíle naráz (každý do svého pod-řádku).
+        Qualys u interních/bezdoménových cílů jen vrátí chybu — ostatní projdou."""
+        tasks = list(self.item_map.keys())
+        if not tasks:
+            self.status_label.setText("Nejsou žádné cíle k prověření.")
+            return
+        for idx in range(len(self.ENGINES)):
+            self._start_engine(idx, tasks)
+        self.status_label.setText(
+            f"Prověřuji všemi enginy ({len(self.ENGINES)}× {len(tasks)} cílů)… (lze Zastavit)")
+
+    def _start_engine(self, engine_idx, tasks):
+        """Nastartuje workery jednoho enginu pro zadané cíle. Nic NEzamyká — každý
+        engine píše do vlastního pod-řádku per cíl, takže běhy se nepřepisují a lze
+        spustit i víc enginů souběžně. Jediný indikátor aktivity je tlačítko Zastavit."""
+        import threading
+        engine = self.ENGINES[engine_idx]
+        WorkerClass = self.WORKERS[engine_idx]
         cancel_event = threading.Event()
         self._cancel_events.append(cancel_event)
         self._active += len(tasks)
         self.stop_btn.setEnabled(True)
-        self.status_label.setText(f"Prověřuji enginem {engine}… (lze Zastavit)")
-        icon = {"Nmap": "🛰", "Qualys": "🌐", "TestSSL": "🔬"}.get(engine, "•")
+        icon = self.ICONS.get(engine, "•")
 
         for (ip, port) in tasks:
             port_item = self.item_map[(ip, port)]
@@ -348,7 +374,11 @@ class TlsAuditDialog(QDialog):
             return qg, color
         return self.calculate_grade(data.get('protocols', {}), data.get('cipher_tree', {}))
 
-    ENGINES = ("Nmap", "Qualys", "TestSSL")
+    # Pořadí musí sedět s položkami engine_combo. Přidání nového enginu = doplnit
+    # combo (init_ui), ENGINES, WORKERS a ICONS na stejný index.
+    ENGINES = ("Nmap", "Qualys", "TestSSL", "Sslyze", "Sslscan")
+    WORKERS = (TlsAuditWorker, SslLabsWorker, TestSslWorker, SslyzeWorker, SslscanWorker)
+    ICONS = {"Nmap": "🛰", "Qualys": "🌐", "TestSSL": "🔬", "Sslyze": "🧪", "Sslscan": "📡"}
 
     @Slot(str, str, dict)
     def update_result(self, ip, port, data):
@@ -364,7 +394,7 @@ class TlsAuditDialog(QDialog):
         if data.get('status') == "Zrušeno":
             eitem = self._engine_item(ip, port, engine, port_item)
             eitem.takeChildren()
-            icon = {"Nmap": "🛰", "Qualys": "🌐", "TestSSL": "🔬"}.get(engine, "•")
+            icon = self.ICONS.get(engine, "•")
             eitem.setText(0, f"{icon} {engine} — zrušeno uživatelem")
             eitem.setText(1, "—")
             eitem.setForeground(1, QColor("#95A5A6"))
@@ -407,7 +437,7 @@ class TlsAuditDialog(QDialog):
         # --- řádek enginu pod portem ---
         eitem = self._engine_item(ip, port, engine, port_item)
         eitem.takeChildren()
-        icon = {"Nmap": "🛰", "Qualys": "🌐", "TestSSL": "🔬"}.get(engine, "•")
+        icon = self.ICONS.get(engine, "•")
         when = data.get('check_time', '')
         eitem.setText(0, f"{icon} {engine}   ·   {len(history)}× prověřeno"
                       + (f"   ·   {when}" if when else ""))
