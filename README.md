@@ -65,6 +65,12 @@ pip install -r requirements.txt
 python nmap-scanner.py
 ```
 
+> 🔒 **Sudo:** nmap potřebuje root (SYN/UDP/OS sken). Když sudo žádá heslo,
+> aplikace si o něj řekne v **dialogu** a předá ho nmap na stdin (`sudo -S`,
+> heslo není vidět v `ps`). Heslo se drží **jen v RAM** (nikdy na disk) a jde
+> ho kdykoli vymazat tlačítkem „Zapomenout sudo heslo". Pokud běžíš jako root
+> nebo máš `NOPASSWD` sudo, na nic se neptá.
+
 ## Projektové složky (od 2.1.0)
 
 Každý projekt má **vlastní složku** a všechna data skenu se ukládají dovnitř:
@@ -142,6 +148,7 @@ Headless testy (bez GUI a bez nmapu) se spouští jednotlivě, např.:
 .venv/bin/python tests/test_run_history.py          # verzování + diff
 .venv/bin/python tests/test_project_versioning.py   # on-disk snapshoty verzí
 .venv/bin/python tests/test_tls_grading.py          # TLS hodnocení dle Qualys
+.venv/bin/python tests/test_sudo.py                 # sudo heslo jen na stdin (ne v ps)
 ```
 
 Verzování (od 2.0.0): velké zásahy → MAJOR, drobné úpravy a fixy → PATCH.

@@ -18,7 +18,8 @@ class ScanWorker(QRunnable):
     * ``"fail"``      – chyba/timeout (manager zmírní na další příčku)
     """
 
-    def __init__(self, phase, target, rung, command, label, used_pn, timeout, signals):
+    def __init__(self, phase, target, rung, command, label, used_pn, timeout, signals,
+                 sudo_password=None, use_sudo=True):
         super().__init__()
         self.phase = phase
         self.target = target
@@ -28,6 +29,24 @@ class ScanWorker(QRunnable):
         self.used_pn = used_pn
         self.timeout = timeout
         self.signals = signals
+        # sudo_password: bytes/bytearray (předá se na stdin přes `sudo -S`) nebo None.
+        # use_sudo: zda nmap obalit sudem (False = už běžíme jako root / sudo netřeba).
+        self.sudo_password = sudo_password
+        self.use_sudo = use_sudo
+
+    def _build_command(self):
+        """Sestaví argv pro spuštění (případně obalený sudem) a vstup pro stdin.
+
+        Heslo se NIKDY nedává na příkazovou řádku (nebylo by vidět v `ps`) — jen
+        na stdin přes ``sudo -S``. Vrací ``(argv, stdin_bytes_or_None)``.
+        """
+        parts = self.command.split()
+        if not self.use_sudo:
+            return parts, None
+        if self.sudo_password is not None:
+            return (["sudo", "-S", "-p", ""] + parts, bytes(self.sudo_password) + b"\n")
+        # sudo bez hesla (NOPASSWD / platná cache); -n = neptat se, raději selhat
+        return (["sudo", "-n"] + parts, None)
 
     @Slot()
     def run(self):
@@ -35,31 +54,41 @@ class ScanWorker(QRunnable):
         self.signals.log.emit("info", f"🔍 [{self.label}] {self.target} – START")
         self.signals.log.emit("info", f"   Příkaz: {self.command}")
 
-        full_command = self.command.split()
-        if full_command and full_command[0] != 'sudo':
-            full_command.insert(0, 'sudo')
+        full_command, stdin_bytes = self._build_command()
 
         start_time = time.time()
         outcome = "ok"
         data = {}
 
         try:
+            # Bajtový režim (text=False), ať se heslo drží jen jako bytes a nekopíruje
+            # do nemazatelného str; výstup dekódujeme ručně.
             result = subprocess.run(
-                full_command, capture_output=True, text=True,
+                full_command, input=stdin_bytes, capture_output=True,
                 check=False, timeout=self.timeout
             )
             elapsed = time.time() - start_time
-            stderr = result.stderr or ""
+            stdout = (result.stdout or b"").decode("utf-8", "replace")
+            stderr = (result.stderr or b"").decode("utf-8", "replace")
             host_down_msg = "Host seems down" in stderr
+            sudo_err = result.returncode != 0 and (
+                "incorrect password" in stderr.lower()
+                or "a password is required" in stderr.lower()
+                or "sudo:" in stderr.lower() and "password" in stderr.lower())
 
-            if result.returncode != 0 and not host_down_msg:
+            if sudo_err:
+                outcome = "fail"
+                data = {"error": "sudo: chybné/chybějící heslo nebo nedostatečná oprávnění"}
+                self.signals.log.emit(
+                    "error", f"🔒 [{self.label}] {self.target} – sudo selhalo (heslo?)")
+            elif result.returncode != 0 and not host_down_msg:
                 outcome = "fail"
                 detail = stderr.strip()[:400] or f"nmap skončil s kódem {result.returncode}"
                 data = {"error": detail}
                 self.signals.log.emit(
                     "error", f"❌ [{self.label}] {self.target} – CHYBA ({elapsed:.1f}s): {detail[:160]}")
             else:
-                is_up = self.is_host_up_from_xml(result.stdout, self.target)
+                is_up = self.is_host_up_from_xml(stdout, self.target)
 
                 if self.phase == "online":
                     if is_up:
@@ -74,7 +103,7 @@ class ScanWorker(QRunnable):
                             "info", f"⚠️ [{self.label}] {self.target} – neodpovídá na ping ({elapsed:.1f}s)")
                 else:
                     scanner = nmap.PortScanner()
-                    scan_data = scanner.analyse_nmap_xml_scan(result.stdout)
+                    scan_data = scanner.analyse_nmap_xml_scan(stdout)
                     scan_result = scan_data.get("scan", {}).get(self.target, {}) or {}
 
                     if not is_up and not self.used_pn:

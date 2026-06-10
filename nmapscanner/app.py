@@ -1,6 +1,7 @@
 import os
 import time
 import json
+import subprocess
 from datetime import datetime
 
 
@@ -14,7 +15,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QTextEdit, QLineEdit, QPushButton, QVBoxLayout,
     QTreeWidget, QTreeWidgetItem, QLabel, QGroupBox, QHeaderView, QFileDialog,
     QTabWidget, QHBoxLayout, QSplitter, QCheckBox, QDialog, QMessageBox, QDialogButtonBox, QComboBox, QProgressDialog,
-    QRadioButton
+    QRadioButton, QInputDialog
 )
 from PySide6.QtCore import Slot, Signal, QMutex, QMutexLocker, QTimer, Qt, QThread, QSettings
 from PySide6.QtGui import QColor, QPixmap
@@ -62,6 +63,9 @@ class NmapScannerApp(QWidget):
         self.viewing_run_id = None
         self._pending_snapshots = {}   # run_id -> scan_results (dosud neuložené na disk)
         self._stop_requested = False
+        # Sudo heslo drženo POUZE v RAM (nikdy na disk) jako mazatelná bytearray.
+        self._sudo_pw = None
+        self._use_sudo = True
 
         # PŘIDÁNO: Inicializace FIXNÍCH šířek pro pravé sekce (nemění se)
         self.ip_summary_width = 1200  # Fixní 1200px
@@ -343,6 +347,11 @@ class NmapScannerApp(QWidget):
         btn_layout.addWidget(self.scan_button)
         btn_layout.addWidget(self.stop_button)
         left_panel.addLayout(btn_layout)
+
+        self.forget_sudo_btn = QPushButton("🔒 Zapomenout sudo heslo")
+        self.forget_sudo_btn.setToolTip("Bezpečně vymaže sudo heslo z paměti (drží se jen v RAM, nikdy na disk).")
+        self.forget_sudo_btn.clicked.connect(self.forget_sudo_password)
+        left_panel.addWidget(self.forget_sudo_btn)
 
         # Nový layout pro Export / Import / Přepnutí projektu
         export_import_layout = QVBoxLayout()
@@ -1876,6 +1885,92 @@ class NmapScannerApp(QWidget):
         self.worker_signals.log.emit("info", f"🔄 Vytvořena projektová složka: {paths.root}")
         return paths
 
+    # ====================== SUDO HESLO (jen v RAM) ======================
+    def _ensure_sudo(self):
+        """Zajistí, že nmap půjde spustit s root právy. Vrací True, lze-li pokračovat.
+
+        Pořadí: už root? → sudo bez hesla (NOPASSWD/cache)? → dříve zadané platné
+        heslo? → zeptat se v dialogu (max 3 pokusy). Heslo se nikdy neukládá na
+        disk, drží se jen jako mazatelná bytearray v RAM.
+        """
+        # 1) Už běžíme jako root → sudo netřeba.
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self._use_sudo = False
+            return True
+        self._use_sudo = True
+        # 2) sudo bez hesla (NOPASSWD nebo platná cache)?
+        try:
+            r = subprocess.run(["sudo", "-n", "true"], capture_output=True, timeout=5)
+            if r.returncode == 0 and self._sudo_pw is None:
+                return True
+        except Exception:
+            pass
+        # 3) Už máme platné heslo z dřívějška?
+        if self._sudo_pw is not None and self._sudo_validate(self._sudo_pw):
+            return True
+        # 4) Zeptat se (max 3 pokusy).
+        for _ in range(3):
+            pw = self._ask_sudo_password()
+            if pw is None:
+                return False  # zrušeno uživatelem
+            if self._sudo_validate(pw):
+                self._set_sudo_password(pw)
+                return True
+            # špatné heslo → vynulovat pokus a zkusit znovu
+            self._wipe(pw)
+            QMessageBox.warning(self, "Sudo", "Špatné heslo. Zkus to prosím znovu.")
+        return False
+
+    def _ask_sudo_password(self):
+        """Modální dialog na sudo heslo. Vrací bytearray nebo None (zrušeno)."""
+        text, ok = QInputDialog.getText(
+            self, "Sudo heslo",
+            "Nmap potřebuje root oprávnění (SYN/UDP/OS sken).\n"
+            "Zadej sudo heslo — neukládá se na disk, drží se jen v paměti:",
+            QLineEdit.Password)
+        if not ok:
+            return None
+        # Z Qt přijde nemazatelný str; co nejdřív převedeme na mazatelnou bytearray.
+        return bytearray(text, "utf-8")
+
+    def _sudo_validate(self, pw_bytes):
+        """Ověří heslo přes `sudo -S -v` (heslo jde na stdin, ne do `ps`)."""
+        try:
+            r = subprocess.run(["sudo", "-S", "-p", "", "-v"],
+                               input=bytes(pw_bytes) + b"\n",
+                               capture_output=True, timeout=10)
+            return r.returncode == 0
+        except Exception:
+            return False
+
+    def _set_sudo_password(self, pw_bytes):
+        self._clear_sudo_password()
+        self._sudo_pw = pw_bytes
+
+    @staticmethod
+    def _wipe(ba):
+        """Přepíše bytearray nulami (nejlepší možné smazání z RAM v CPythonu)."""
+        if isinstance(ba, bytearray):
+            for i in range(len(ba)):
+                ba[i] = 0
+
+    def _clear_sudo_password(self):
+        """Bezpečně zapomene sudo heslo (vynuluje buffer a zahodí referenci)."""
+        self._wipe(self._sudo_pw)
+        self._sudo_pw = None
+        # zneukazovat heslo manažeru po vymazání
+        if hasattr(self, "scan_manager"):
+            self.scan_manager.sudo_password = None
+
+    @Slot()
+    def forget_sudo_password(self):
+        if self.scan_manager.is_running:
+            QMessageBox.information(self, "Sudo", "Nelze zapomenout heslo během skenování.")
+            return
+        had = self._sudo_pw is not None
+        self._clear_sudo_password()
+        self.status_label.setText("Sudo heslo zapomenuto." if had else "Žádné sudo heslo není uložené.")
+
     # ====================== BĚHY / VERZE ======================
     def _parse_active_targets(self):
         cleaned_text = self.cleaned_output_text.toPlainText()
@@ -1899,6 +1994,11 @@ class NmapScannerApp(QWidget):
         enabled_phases = {phase: cb.isChecked() for phase, cb in self.phase_checkboxes.items()}
         if profile != "custom" and not any(enabled_phases.values()):
             self.status_label.setText("Není povolena žádná fáze.")
+            return
+
+        # Root oprávnění pro nmap (případně dialog na sudo heslo) — před změnami stavu.
+        if not self._ensure_sudo():
+            self.status_label.setText("Sken zrušen — bez root oprávnění (sudo) nelze skenovat.")
             return
 
         # Uložit dosavadní aktivní verzi (ať o ni nepřijdeme) a doplnit master cíle.
@@ -1926,6 +2026,9 @@ class NmapScannerApp(QWidget):
         self._stop_requested = False
         self._lock_run_ui()
         self.refresh_runs_combo()
+        # Předat sudo kontext manažeru (queued emit zajistí viditelnost ve vlákně manažeru).
+        self.scan_manager.sudo_password = self._sudo_pw
+        self.scan_manager.use_sudo = self._use_sudo
         self.start_scan_requested.emit(targets, profile, enabled_phases, custom_command, False, {})
 
     def resume_run(self):
@@ -1945,6 +2048,10 @@ class NmapScannerApp(QWidget):
             self.status_label.setText("Tento běh je kompletní — není co navazovat.")
             return
 
+        if not self._ensure_sudo():
+            self.status_label.setText("Navázání zrušeno — bez root oprávnění (sudo) nelze skenovat.")
+            return
+
         ctx = self._build_resume_ctx(run)
         run.status = "running"
 
@@ -1961,6 +2068,8 @@ class NmapScannerApp(QWidget):
         self._stop_requested = False
         self._lock_run_ui()
         self.refresh_runs_combo()
+        self.scan_manager.sudo_password = self._sudo_pw
+        self.scan_manager.use_sudo = self._use_sudo
         self.start_scan_requested.emit(run.targets, run.profile, run.enabled_phases,
                                        run.custom_command, True, ctx)
 
@@ -4041,7 +4150,9 @@ class NmapScannerApp(QWidget):
     def closeEvent(self, event):
         """Při zavření aplikace nabídnout uložení projektu."""
         self.save_settings()
-        
+        # Bezpečně vymazat sudo heslo z paměti při zavírání.
+        self._clear_sudo_password()
+
         # Pokud běží skenování, nejdřív ho zastavit
         if self.scan_manager.is_running:
             reply = QMessageBox.question(

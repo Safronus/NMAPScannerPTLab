@@ -32,6 +32,10 @@ class ScanManager(QObject):
         self.max_concurrent = max_concurrent
         self.thread_pool = QThreadPool()
         self.is_running = False
+        # Sudo kontext (nastaví aplikace před spuštěním; _reset_state ho NEmaže):
+        # sudo_password = bytes/bytearray nebo None; use_sudo = obalit nmap sudem.
+        self.sudo_password = None
+        self.use_sudo = True
         self.signals.task_outcome.connect(self.on_task_outcome)
         self._reset_state()
 
@@ -245,7 +249,8 @@ class ScanManager(QObject):
             return
         command, timeout, _vl = built
         label = sp.stage_label(phase, stage_idx, use_pn, calm)
-        worker = ScanWorker(phase, target, stage_idx, command, label, use_pn, timeout, self.signals)
+        worker = ScanWorker(phase, target, stage_idx, command, label, use_pn, timeout,
+                            self.signals, sudo_password=self.sudo_password, use_sudo=self.use_sudo)
         self.thread_pool.start(worker, sp.priority(phase, stage_idx))
 
     def _bump(self, phase):
@@ -290,7 +295,8 @@ class ScanManager(QObject):
         if use_pn and "-Pn" not in cmd.split():
             cmd += " -Pn"
         label = "CUSTOM" + (" · -Pn" if use_pn else "")
-        worker = ScanWorker("tcp", target, 0, cmd, label, use_pn, 3600, self.signals)
+        worker = ScanWorker("tcp", target, 0, cmd, label, use_pn, 3600, self.signals,
+                            sudo_password=self.sudo_password, use_sudo=self.use_sudo)
         self.thread_pool.start(worker, sp.PHASE_PRIORITY["tcp"])
 
     # ---- pomocné -----------------------------------------------------

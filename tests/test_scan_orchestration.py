@@ -43,7 +43,11 @@ def run_workflow():
     seen_cmds = []
 
     def R(rc=0, out="", err=""):
-        return types.SimpleNamespace(returncode=rc, stdout=out, stderr=err)
+        # Worker běží v bajtovém režimu (kvůli sudo heslu na stdin) → stdout/stderr bytes.
+        return types.SimpleNamespace(
+            returncode=rc,
+            stdout=out.encode() if isinstance(out, str) else out,
+            stderr=err.encode() if isinstance(err, str) else err)
 
     def fake_run(cmd, **kw):
         s = " ".join(cmd)

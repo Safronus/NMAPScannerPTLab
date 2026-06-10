@@ -34,7 +34,7 @@ def main():
         ph = ("online" if "-sn" in cmd else "udp" if "-sU" in cmd else "osscan" if "-O" in cmd
               else "vuln" if "--script" in cmd else "tcp")
         calls[(tgt, ph)] = calls.get((tgt, ph), 0) + 1
-        return types.SimpleNamespace(returncode=0, stdout=xml(tgt, udp=(53,)), stderr="")
+        return types.SimpleNamespace(returncode=0, stdout=xml(tgt, udp=(53,)).encode(), stderr=b"")
 
     scanmod.subprocess.run = fake_run
 

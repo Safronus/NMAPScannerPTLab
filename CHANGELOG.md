@@ -4,6 +4,31 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [4.4.0] - 2026-06-10
+
+Sudo heslo pro nmap přes dialog v aplikaci — místo neviditelného čekání na
+heslo v terminálu.
+
+### Přidáno
+- Když nmap potřebuje root (SYN/UDP/OS sken) a sudo žádá heslo, aplikace ho
+  vyžádá v **modálním dialogu** (skrytý vstup) a předá ho nmap **na stdin**
+  (`sudo -S`) — **nikdy ne na příkazovou řádku** (není vidět v `ps`).
+- Preflight před spuštěním běhu: pokud appka běží jako root, nebo je sudo
+  bez hesla (NOPASSWD/platná cache), na nic se neptá. Heslo se ověří
+  (`sudo -S -v`) hned, takže se chybné heslo pozná okamžitě (max 3 pokusy).
+- Heslo se drží **pouze v RAM** jako mazatelná `bytearray`, nikdy se neukládá
+  na disk ani do nastavení. Tlačítko **„🔒 Zapomenout sudo heslo"** ho
+  bezpečně vynuluje; vymaže se i při zavření aplikace.
+- Worker běží v bajtovém režimu, ať se heslo drží jen jako `bytes` (nekopíruje
+  se do nemazatelného `str`). Headless test `tests/test_sudo.py` ověřuje, že
+  heslo jde jen na stdin (ne do argv) a že fungují tři režimy sudo.
+
+### Poznámka
+- Bezpečné mazání z RAM je v CPythonu **best-effort**: drženou `bytearray`
+  přepíšeme nulami, ale vstup z dialogu vytvoří dočasný neměnný `str`, který
+  nelze spolehlivě přepsat, a OS může paměť odložit do swapu. Jde o rozumné
+  minimum, ne tvrdou záruku.
+
 ## [4.3.0] - 2026-06-10
 
 Přepracovaná strategie Master běhu — progresivní pokrytí + priorita místo
