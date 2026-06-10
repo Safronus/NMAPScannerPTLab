@@ -1,0 +1,90 @@
+"""Headless test zrušitelnosti TLS workerů (Inspektor TLS).
+
+Qualys SSL Labs API se polluje klidně i pár minut na cíl — během toho musí jít
+běh zastavit a workery se musí ukončit bez čekání na celý poll. Test ověřuje:
+  1) všechny tři workery přijmou ``cancel_event`` (kompat. signatura),
+  2) Qualys s předem nastaveným zrušením skončí stavem ``Zrušeno`` a vůbec
+     nesáhne na síť (kontrola je na začátku poll-smyčky),
+  3) ``_wait_or_cancel`` se probudí okamžitě po zrušení (ne až po N sekundách).
+"""
+import os
+import sys
+import time
+import threading
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from nmapscanner.workers.tls import SslLabsWorker, TestSslWorker, TlsAuditWorker
+
+
+class _FakeSig:
+    def __init__(self):
+        self.calls = []
+
+    def emit(self, *a):
+        self.calls.append(a)
+
+    def connect(self, *a):
+        pass
+
+
+class _FakeSignals:
+    def __init__(self):
+        self.result = _FakeSig()
+        self.finished = _FakeSig()
+
+
+def main():
+    fails = []
+
+    # 1) kompatibilní signatura — workery přijmou cancel_event i bez něj
+    ev = threading.Event()
+    for cls in (TlsAuditWorker, SslLabsWorker, TestSslWorker):
+        try:
+            cls("1.1.1.1", "443", _FakeSignals(), ev)
+            cls("1.1.1.1", "443", _FakeSignals())  # bez cancel_event (default None)
+        except TypeError as e:
+            fails.append(f"{cls.__name__} nepřijal cancel_event: {e}")
+
+    # 2) Qualys s předem nastaveným zrušením → 'Zrušeno' bez síťového dotazu.
+    #    'example.com' není IP, takže _resolve_host nesahá na DNS; kontrola
+    #    zrušení je hned na začátku smyčky, tedy před prvním requests.get.
+    ev2 = threading.Event()
+    ev2.set()
+    sig = _FakeSignals()
+    SslLabsWorker("example.com", "443", sig, ev2).run()
+    statuses = [c[2].get("status") for c in sig.result.calls if len(c) >= 3]
+    if not statuses or statuses[-1] != "Zrušeno":
+        fails.append(f"Qualys nezrušeno (stavy={statuses})")
+    if not sig.finished.calls:
+        fails.append("Qualys neemitoval finished po zrušení")
+
+    # 3) _wait_or_cancel se probudí okamžitě po zrušení
+    ev3 = threading.Event()
+    w3 = SslLabsWorker("example.com", "443", _FakeSignals(), ev3)
+    ev3.set()
+    t0 = time.monotonic()
+    woke = w3._wait_or_cancel(10)
+    dt = time.monotonic() - t0
+    if not woke or dt > 1.0:
+        fails.append(f"_wait_or_cancel nereaguje na zrušení (woke={woke}, dt={dt:.2f}s)")
+
+    # 4) _wait_or_cancel bez zrušení proběhne celou dobu (ale krátce)
+    w4 = SslLabsWorker("example.com", "443", _FakeSignals(), threading.Event())
+    t0 = time.monotonic()
+    woke = w4._wait_or_cancel(1)
+    dt = time.monotonic() - t0
+    if woke or dt < 0.9:
+        fails.append(f"_wait_or_cancel se ukončil předčasně (woke={woke}, dt={dt:.2f}s)")
+
+    if fails:
+        print("❌ SELHALO:")
+        for f in fails:
+            print("  -", f)
+        return 1
+    print("✅ test_tls_cancel: VŠE OK — workery zrušitelné, Qualys končí 'Zrušeno' bez sítě.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

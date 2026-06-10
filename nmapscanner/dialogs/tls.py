@@ -25,6 +25,8 @@ class TlsAuditDialog(QDialog):
         self.thread_pool = QThreadPool()
         self.item_map = {}            # (ip, port) -> port řádek
         self.engine_items = {}        # (ip, port, engine) -> řádek enginu pod portem
+        self._active = 0              # počet běžících workerů aktuální dávky
+        self._cancel_event = None     # threading.Event pro zrušení dávky (Qualys/TestSSL)
         self.init_ui()
         self.load_targets()
 
@@ -113,6 +115,11 @@ class TlsAuditDialog(QDialog):
         self.check_new_btn.clicked.connect(lambda: self.start_checks(True))
         btn_layout.addWidget(self.check_new_btn)
 
+        self.stop_btn = QPushButton("⏹ Zastavit")
+        self.stop_btn.clicked.connect(self.stop_checks)
+        self.stop_btn.setEnabled(False)
+        btn_layout.addWidget(self.stop_btn)
+
         self.export_pdf_btn = QPushButton("📄 Exportovat PDF")
         self.export_pdf_btn.clicked.connect(self.export_to_pdf)
         btn_layout.addWidget(self.export_pdf_btn)
@@ -127,6 +134,7 @@ class TlsAuditDialog(QDialog):
         """Spustí prověření vybraným enginem. Výsledek jde do samostatného
         řádku enginu pod portem — ostatní enginy se nepřepíšou. ``only_new``
         prověří jen cíle, které vybraným enginem ještě prověřené nebyly."""
+        import threading
         engine_idx = self.engine_combo.currentIndex()
         engine = self.ENGINES[engine_idx] if engine_idx < len(self.ENGINES) else "Nmap"
         WorkerClass = (TlsAuditWorker, SslLabsWorker, TestSslWorker)[engine_idx]
@@ -139,10 +147,11 @@ class TlsAuditDialog(QDialog):
             self.status_label.setText(f"Nic k prověření enginem {engine}.")
             return
 
-        self.check_all_btn.setEnabled(False)
-        self.check_new_btn.setEnabled(False)
-        self.engine_combo.setEnabled(False)  # zámek enginu během běhu
-        self.processing_count = len(tasks)
+        # Nová dávka = nový rušicí token. Engine combo NEzamykáme (přepnutí se
+        # projeví až u dalšího prověření) — uživatel tak není během běhu uvězněn.
+        self._cancel_event = threading.Event()
+        self._active = len(tasks)
+        self._set_running(True, engine)
         icon = {"Nmap": "🛰", "Qualys": "🌐", "TestSSL": "🔬"}.get(engine, "•")
 
         for (ip, port) in tasks:
@@ -158,16 +167,43 @@ class TlsAuditDialog(QDialog):
             signals = WorkerSignals()
             signals.result.connect(self.update_result)
             signals.finished.connect(self.on_worker_finished)
-            self.thread_pool.start(WorkerClass(ip, port, signals))
+            self.thread_pool.start(WorkerClass(ip, port, signals, self._cancel_event))
 
     def on_worker_finished(self):
-        """Uvolní zámky UI po dokončení všech vláken."""
-        self.processing_count -= 1
-        if self.processing_count <= 0:
-            self.check_all_btn.setEnabled(True)
-            self.check_new_btn.setEnabled(True)
-            self.engine_combo.setEnabled(True)
-            self.status_label.setText("Hotovo.")
+        """Uvolní zámky UI po dokončení všech vláken dávky."""
+        self._active -= 1
+        if self._active <= 0:
+            self._active = 0
+            self._set_running(False)
+            # Pokud bylo zrušeno, neprepisuj „Zastaveno…" na „Hotovo".
+            if not (self._cancel_event is not None and self._cancel_event.is_set()):
+                self.status_label.setText("Hotovo.")
+            else:
+                self.status_label.setText("Zastaveno.")
+
+    def _set_running(self, running, engine=""):
+        """Přepne UI mezi 'běží dávka' a 'klid'. Engine combo zůstává vždy
+        ovladatelné; zamykají se jen spouštěcí tlačítka a aktivuje se Zastavit."""
+        self.check_all_btn.setEnabled(not running)
+        self.check_new_btn.setEnabled(not running)
+        self.stop_btn.setEnabled(running)
+        if running:
+            self.status_label.setText(f"Prověřuji enginem {engine}… (lze Zastavit)")
+
+    def stop_checks(self):
+        """Zruší probíhající dávku. Workery se ukončí při nejbližší kontrole
+        (Qualys čeká mezi dotazy a kontroluje zrušení po 1 s), pak se UI odemkne."""
+        if self._cancel_event is not None:
+            self._cancel_event.set()
+        self.stop_btn.setEnabled(False)
+        self.status_label.setText("Zastavuji… (dokončuji probíhající dotaz)")
+
+    def done(self, result):
+        """Zavření dialogu (OK/Zavřít/křížek) zruší případnou běžící dávku,
+        aby Qualys/TestSSL zbytečně nepokračovaly na pozadí."""
+        if self._cancel_event is not None:
+            self._cancel_event.set()
+        super().done(result)
 
     def load_targets(self):
         """Načte cíle a vytvoří automatické sondy pro TLS audit."""
@@ -328,6 +364,20 @@ class TlsAuditDialog(QDialog):
         engine = data.get('engine', 'Nmap')
         key = f"{ip}:{port}"
 
+        # Zrušený pokus NEUKLÁDÁME (nepolutuje výsledky) — jen vizuálně označíme.
+        if data.get('status') == "Zrušeno":
+            eitem = self._engine_item(ip, port, engine, port_item)
+            eitem.takeChildren()
+            icon = {"Nmap": "🛰", "Qualys": "🌐", "TestSSL": "🔬"}.get(engine, "•")
+            eitem.setText(0, f"{icon} {engine} — zrušeno uživatelem")
+            eitem.setText(1, "—")
+            eitem.setForeground(1, QColor("#95A5A6"))
+            eitem.setTextAlignment(1, Qt.AlignCenter)
+            for col in range(2, 8):
+                eitem.setText(col, "")
+            self.apply_filters()
+            return
+
         # --- uložení per engine + historie (bez přepisu jiných enginů) ---
         store = self.scan_results.setdefault('tls_audit', {})
         entry = store.get(key)
@@ -369,6 +419,9 @@ class TlsAuditDialog(QDialog):
         eitem.setExpanded(True)
 
         if in_progress:
+            # Místo zavádějícího „0× prověřeno" ukaž skutečný stav (Qualys umí
+            # běžet i pár minut — uživatel pak vidí, že to žije, ne že je zaseklé).
+            eitem.setText(0, f"{icon} {engine} — {status or 'Prověřuji…'}")
             eitem.setText(1, "…")
             eitem.setForeground(1, QColor("#7f8c8d"))
             eitem.setToolTip(1, status)

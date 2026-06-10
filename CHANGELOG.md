@@ -4,6 +4,24 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.0.3] - 2026-06-10
+
+### Opraveno
+- **Inspektor TLS se „zasekl" při běhu Qualysu a nešlo přepnout engine.** Qualys
+  SSL Labs API se polluje klidně i pár minut na cíl; po celou tu dobu bylo UI
+  zamčené, řádek ukazoval zavádějící „0× prověřeno" a engine combo bylo
+  `disabled`. Nově:
+  - **Engine combo zůstává vždy ovladatelné** (přepnutí se projeví u dalšího
+    prověření) — uživatel není během běhu uvězněný.
+  - **Průběžný řádek ukazuje skutečný stav** („🌐 Qualys — probíhá hloubkový
+    audit (1–3 min)…") místo „0× prověřeno", takže je vidět, že běh žije.
+  - Přidáno tlačítko **⏹ Zastavit** — zruší probíhající dávku. Workery se ukončí
+    při nejbližší kontrole (Qualys čeká mezi dotazy a kontroluje zrušení po 1 s).
+  - **Zavření dialogu** rovněž zruší běžící dávku (Qualys/TestSSL už nepolluje
+    API na pozadí). Zrušený pokus se **neukládá** do výsledků projektu.
+- Pokryto headless testem `tests/test_tls_cancel.py` (zrušitelnost workerů,
+  Qualys končí stavem „Zrušeno" bez síťového dotazu, okamžitá reakce na stop).
+
 ## [5.0.2] - 2026-06-10
 
 ### Přidáno

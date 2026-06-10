@@ -153,6 +153,7 @@ Headless testy (bez GUI a bez nmapu) se spouští jednotlivě, např.:
 .venv/bin/python tests/test_run_history.py          # verzování + diff
 .venv/bin/python tests/test_project_versioning.py   # on-disk snapshoty verzí
 .venv/bin/python tests/test_tls_grading.py          # TLS hodnocení dle Qualys
+.venv/bin/python tests/test_tls_cancel.py           # zrušitelnost TLS workerů (stop Qualysu)
 .venv/bin/python tests/test_sudo.py                 # sudo heslo jen na stdin (ne v ps)
 .venv/bin/python tests/test_screenshot.py           # screenshot přes Selenium (skip bez Chrome)
 .venv/bin/python tests/test_signal_marshal.py       # žádný _pythonToCppCopy spam (cross-thread)

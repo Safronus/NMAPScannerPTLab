@@ -17,11 +17,15 @@ class TlsAuditWorker(QRunnable):
     Asynchronní worker pro testování TLS verzí a šifer pomocí Nmap (ssl-enum-ciphers).
     Získává detailní seznam Cipher Suites jako Qualys SSL Labs.
     """
-    def __init__(self, ip, port, signals):
+    def __init__(self, ip, port, signals, cancel_event=None):
         super().__init__()
         self.ip = ip
         self.port = str(port)
         self.signals = signals
+        self.cancel_event = cancel_event
+
+    def _is_cancelled(self):
+        return self.cancel_event is not None and self.cancel_event.is_set()
 
     def evaluate_cipher(self, name):
         """Vyhodnotí sílu šifry dle Qualys SSL Labs. Vrací (label, barva, tag)."""
@@ -54,7 +58,14 @@ class TlsAuditWorker(QRunnable):
 
         try:
             process = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
-            
+
+            if self._is_cancelled():
+                scan_data['status'] = "Zrušeno"
+                scan_data['error'] = "Prověření zrušeno uživatelem."
+                self.signals.result.emit(self.ip, self.port, scan_data)
+                self.signals.finished.emit()
+                return
+
             if process.returncode == 0 and process.stdout:
                 root = ET.fromstring(process.stdout)
                 
@@ -145,12 +156,25 @@ class SslLabsWorker(QRunnable):
     interní IP. Pokud je cíl IP, zkusí se reverzní DNS na veřejný hostname;
     interní/privátní IP se odmítne s jasnou hláškou (použij Nmap nebo TestSSL).
     """
-    def __init__(self, ip, port, signals):
+    def __init__(self, ip, port, signals, cancel_event=None):
         super().__init__()
         self.ip = ip
         self.port = str(port)
         self.signals = signals
+        self.cancel_event = cancel_event
         self.api_url = "https://api.ssllabs.com/api/v3/analyze"
+
+    def _is_cancelled(self):
+        return self.cancel_event is not None and self.cancel_event.is_set()
+
+    def _wait_or_cancel(self, seconds):
+        """Spí až ``seconds`` s, ale probudí se hned po zrušení (kontrola po 1 s)."""
+        import time
+        for _ in range(int(seconds)):
+            if self._is_cancelled():
+                return True
+            time.sleep(1)
+        return False
 
     def _resolve_host(self):
         """Vrátí (hostname, error). Pro doménu vrátí ji; pro IP zkusí reverzní DNS."""
@@ -211,14 +235,20 @@ class SslLabsWorker(QRunnable):
             deadline = time.monotonic() + 300  # max ~5 min
 
             while True:
-                response = requests.get(self.api_url, params=params, timeout=20)
+                if self._is_cancelled():
+                    scan_data['status'] = "Zrušeno"
+                    scan_data['error'] = "Prověření zrušeno uživatelem."
+                    self.signals.result.emit(self.ip, self.port, scan_data)
+                    self.signals.finished.emit()
+                    return
+                response = requests.get(self.api_url, params=params, timeout=15)
                 params = base  # po prvním požadavku už bez startNew
                 if response.status_code in (429, 503, 529):
                     scan_data['status'] = "Qualys: API přetížené, čekám…"
                     self.signals.result.emit(self.ip, self.port, scan_data)
-                    time.sleep(15)
                     if time.monotonic() > deadline:
                         raise Exception("Qualys API je přetížené (rate limit). Zkus to později.")
+                    self._wait_or_cancel(15)  # zrušení vyřeší kontrola na začátku smyčky
                     continue
                 if response.status_code in (400, 441):
                     # Qualys nepřijal cíl — typicky když je to IP bez použitelného
@@ -246,7 +276,7 @@ class SslLabsWorker(QRunnable):
 
                 if time.monotonic() > deadline:
                     raise Exception("Qualys audit překročil časový limit (5 min).")
-                time.sleep(10)
+                self._wait_or_cancel(10)  # zrušení vyřeší kontrola na začátku smyčky
 
             # Zpracování výsledků
             endpoints = data.get('endpoints', [])
@@ -321,11 +351,15 @@ class TestSslWorker(QRunnable):
     Worker využívající lokální nástroj testssl.sh.
     Skvělý pro interní IP adresy. Vyžaduje instalaci (brew install testssl).
     """
-    def __init__(self, ip, port, signals):
+    def __init__(self, ip, port, signals, cancel_event=None):
         super().__init__()
         self.ip = ip
         self.port = str(port)
         self.signals = signals
+        self.cancel_event = cancel_event
+
+    def _is_cancelled(self):
+        return self.cancel_event is not None and self.cancel_event.is_set()
 
     @Slot()
     def run(self):
@@ -361,6 +395,17 @@ class TestSslWorker(QRunnable):
             self.signals.result.emit(self.ip, self.port, scan_data)
             
             subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+
+            if self._is_cancelled():
+                try:
+                    os.path.exists(json_path) and os.remove(json_path)
+                except OSError:
+                    pass
+                scan_data['status'] = "Zrušeno"
+                scan_data['error'] = "Prověření zrušeno uživatelem."
+                self.signals.result.emit(self.ip, self.port, scan_data)
+                self.signals.finished.emit()
+                return
 
             # Čtení JSON výsledků
             if os.path.exists(json_path):
