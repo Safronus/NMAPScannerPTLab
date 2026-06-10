@@ -4,6 +4,19 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [4.7.0] - 2026-06-10
+
+Oprava spamu `_pythonToCppCopy` v terminálu.
+
+### Opraveno
+- Chyby `_pythonToCppCopy: Cannot copy-convert (int) to C++` padající do
+  terminálu během skenu. Příčina: python-nmap vrací porty jako **int klíče**
+  (`{22: {...}}`) a cross-thread (queued) signály nesoucí `dict` je PySide
+  marshaloval na QVariantMap (vyžaduje str klíče) → varování pro každý port.
+  Signály `task_outcome` a `scan_result` nově nesou `object` místo `dict`
+  (Python dict se předá referencí, bez konverze). Data dorazí beze změny.
+- Regresní test `tests/test_signal_marshal.py` (zachytává i C++ zápisy na fd 2).
+
 ## [4.6.0] - 2026-06-10
 
 Drobnosti: adaptivní layout, vuln „bez nálezů", kontextový re-scan + timeline.

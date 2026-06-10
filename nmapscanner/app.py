@@ -2535,7 +2535,7 @@ class NmapScannerApp(QWidget):
             self.auto_save_project()
 
 
-    @Slot(str, str, dict, bool)
+    @Slot(str, str, object, bool)
     def on_scan_result(self, phase, target, data, final):
         """Výsledek stupně nmap fáze. final=False = průběžný (rychlý stupeň),
         final=True = poslední stupeň (fáze pro cíl hotová)."""

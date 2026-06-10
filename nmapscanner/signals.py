@@ -13,9 +13,12 @@ class WorkerSignals(QObject):
     # --- Nmap workflow (progresivní vícestupňová detekce) ---
     task_started = Signal(str, str, str)    # (phase, target, label) — stupeň odstartoval
     # (phase, target, stage, outcome, data, used_pn) — worker -> ScanManager.
-    # outcome ∈ {"ok", "fail", "host_down"}.
-    task_outcome = Signal(str, str, int, str, dict, bool)
+    # outcome ∈ {"ok", "fail", "host_down"}. ``data`` je deklarován jako ``object``,
+    # ne ``dict`` — nmap výsledky mají INT klíče portů ({22: {...}}) a queued (cross-thread)
+    # signál by je marshaloval na QVariantMap (str klíče) → spam "_pythonToCppCopy (int)".
+    # ``object`` předá Python dict referencí bez konverze.
+    task_outcome = Signal(str, str, int, str, object, bool)
     # (phase, target, data, final) — manager -> UI. final=True = fáze pro cíl je hotová
-    # (poslední stupeň); final=False = průběžný výsledek (rychlý stupeň), jen doplnit data.
-    scan_result = Signal(str, str, dict, bool)
+    # (poslední stupeň); final=False = průběžný výsledek. ``object`` ze stejného důvodu.
+    scan_result = Signal(str, str, object, bool)
     phase_progress = Signal(str, int, int)  # (phase, completed, total) — manager -> UI

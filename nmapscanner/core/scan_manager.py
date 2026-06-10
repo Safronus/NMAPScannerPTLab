@@ -124,7 +124,7 @@ class ScanManager(QObject):
         self.workflow_finished.emit()
 
     # ---- příchozí výsledky workerů -----------------------------------
-    @Slot(str, str, int, str, dict, bool)
+    @Slot(str, str, int, str, object, bool)
     def on_task_outcome(self, phase, target, stage_idx, outcome, data, used_pn):
         if not self.is_running:
             return
