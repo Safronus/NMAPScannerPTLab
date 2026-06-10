@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QTabWidget, QHBoxLayout, QSplitter, QCheckBox, QDialog, QMessageBox, QDialogButtonBox, QComboBox, QProgressDialog,
     QRadioButton, QInputDialog, QMenu
 )
-from PySide6.QtCore import Slot, Signal, QMutex, QMutexLocker, QTimer, Qt, QThread, QSettings
+from PySide6.QtCore import Slot, Signal, QMutex, QMutexLocker, QTimer, Qt, QThread, QSettings, QThreadPool
 from PySide6.QtGui import QColor, QPixmap
 from . import VERSION
 from .utils import clean_and_parse_ips, get_color_for_ip
@@ -29,7 +29,9 @@ from .core import run_history as rh
 from .core.run_history import RunHistory, ScanRun, run_id_from_timestamp
 from .core import project_store as pstore
 from .core.vuln_classify import classify_vuln_output
+from .core.webserver_detect import detect_server
 from .workers.screenshot import ScreenshotManager
+from .workers.webserver import WebServerWorker
 from .dialogs.runs import DiffDialog, RunsManagerDialog
 from .widgets.log_console import LogConsole
 from .widgets.status_matrix import StatusMatrix
@@ -126,6 +128,7 @@ class NmapScannerApp(QWidget):
         self.worker_signals.screenshot_request.connect(self.screenshot_manager.take_screenshot)
         self.worker_signals.screenshot_taken.connect(self.on_screenshot_taken)
         self.worker_signals.screenshot_done.connect(self.on_screenshot_done)
+        self.worker_signals.webserver_result.connect(self.on_webserver_result)
         self.scan_manager.workflow_finished.connect(self.on_workflow_finished)
         
         self.scan_button.clicked.connect(self.start_new_run)
@@ -1346,8 +1349,11 @@ class NmapScannerApp(QWidget):
     @Slot(QTreeWidgetItem, int)
     def on_matrix_ip_clicked(self, item, column):
         """Zobrazí souhrn výsledků pro vybranou IP z matici."""
+        if item is None:
+            return
         ip_address = item.text(0)
-        
+        self._summary_ip = ip_address   # pro pozdější překreslení (např. po detekci web serveru)
+
         # Automaticky odkrýt sekci "Souhrn vybrané IP" POUZE pokud je PRÁZDNÁ
         is_empty = self.ip_summary_tree.topLevelItemCount() == 0 or \
                    (self.ip_summary_tree.topLevelItemCount() == 1 and 
@@ -1514,7 +1520,42 @@ class NmapScannerApp(QWidget):
             services_item = QTreeWidgetItem(self.ip_summary_tree, ["Služby", "Žádné služby nenalezeny"])
             services_item.setForeground(0, QColor("#E67E22"))
             services_item.setForeground(1, QColor("#999999"))
-        
+
+        # Webový server (IIS/Apache/nginx) — z aktivní detekce, jinak pasivně z nmap -sV.
+        ws_active = (self.scan_results.get('webserver', {}) or {}).get(ip_address, {}) or {}
+        ws_rows = []  # (port, family, detail)
+        if ws_active:
+            for port, info in sorted(ws_active.items(),
+                                     key=lambda kv: int(kv[0]) if str(kv[0]).isdigit() else 0):
+                fam = info.get('family', 'neznámý')
+                detail = (info.get('detail') or info.get('server') or '').strip()
+                if info.get('error') and fam == 'neznámý':
+                    ws_rows.append((str(port), 'nedostupný', str(info.get('error', ''))[:60]))
+                else:
+                    ws_rows.append((str(port), fam, detail))
+        else:
+            for pnum, scheme, product in self._web_ports_for(ip_address):
+                fam, detail, _src = detect_server('', '', product)
+                if fam != 'neznámý' or product:
+                    ws_rows.append((str(pnum), fam, detail or product))
+
+        if ws_rows:
+            ws_parent = QTreeWidgetItem(self.ip_summary_tree, ["Webový server", f"({len(ws_rows)})"])
+            ws_parent.setForeground(0, QColor("#2980B9"))
+            ws_parent.setForeground(1, QColor("#2980B9"))
+            ws_parent.setExpanded(True)
+            for port, fam, detail in ws_rows:
+                txt = fam if (not detail or detail.lower() == fam.lower()) else f"{fam} — {detail}"
+                row = QTreeWidgetItem(ws_parent, [f"Port {port}", txt])
+                row.setForeground(0, QColor("#34495E"))
+                row.setForeground(1, QColor("#95A5A6") if fam in ('neznámý', 'nedostupný') else QColor("#2C3E50"))
+        elif self._web_ports_for(ip_address):
+            ws_item = QTreeWidgetItem(
+                self.ip_summary_tree,
+                ["Webový server", "nezjištěn — pravý klik na cíl → Detekovat web server"])
+            ws_item.setForeground(0, QColor("#2980B9"))
+            ws_item.setForeground(1, QColor("#95A5A6"))
+
         # Zranitelnosti - shromáždit z fáze vuln - POUZE POTVRZENÉ
         # (klasifikace sjednocena do core.vuln_classify, ať souhlasí s vuln záložkou).
         vulnerabilities = []
@@ -2028,6 +2069,8 @@ class NmapScannerApp(QWidget):
         menu.addAction(f"🔁 Re-scan Vuln — {sfx}", lambda: self.rescan_target(targets, ["vuln"]))
         menu.addAction(f"🔁 Re-scan OS — {sfx}", lambda: self.rescan_target(targets, ["osscan"]))
         menu.addSeparator()
+        menu.addAction(f"🌐 Detekovat web server (IIS/Apache/nginx) — {sfx}",
+                       lambda: self.detect_webserver(targets))
         menu.addAction(f"📸 Re-scan screenshoty (HTTP/HTTPS) — {sfx}",
                        lambda: self.rescan_screenshots(targets))
         menu.addAction(f"🔁 Re-scan vše (TCP+UDP+vuln+OS) — {sfx}",
@@ -2151,6 +2194,73 @@ class NmapScannerApp(QWidget):
         self.worker_signals.log.emit(
             "info", f"📸 Re-scan screenshotů {scope}: {total_ports} portů ve frontě "
             "(probíhá sériově, sleduj průběh dole ve stavovém řádku).")
+
+    # ---- detekce web serveru (IIS/Apache/nginx) ----------------------
+    def _web_ports_for(self, target):
+        """Vrátí webové porty cíle jako [(port, scheme, nmap_product)] z TCP dat."""
+        tcp_data = (self.scan_results.get("tcp", {}) or {}).get(target, {}) or {}
+        common_web_ports = [80, 443, 8080, 8000, 8008, 8443, 8081, 8888, 9443]
+        out = []
+        for port, info in (tcp_data.get("tcp", {}) or {}).items():
+            if not isinstance(info, dict) or info.get("state") != "open":
+                continue
+            name = (info.get("name") or "").lower()
+            try:
+                pnum = int(port)
+            except (TypeError, ValueError):
+                continue
+            if pnum in common_web_ports or "http" in name:
+                scheme = "https" if ("https" in name or "ssl" in name or pnum in (443, 8443, 9443)) else "http"
+                product = " ".join(x for x in [info.get("product", ""), info.get("version", "")] if x).strip()
+                out.append((pnum, scheme, product))
+        return out
+
+    def detect_webserver(self, targets):
+        """Kontextová akce: zjistí typ web serveru (IIS/Apache/nginx/…) z HTTP
+        hlaviček (+ nmap) pro webové porty vybraných cílů. Výsledek se uloží do
+        projektu (``scan_results['webserver']``) a ukáže v souhrnu IP."""
+        if isinstance(targets, str):
+            targets = [targets]
+        targets = [t for t in dict.fromkeys(targets) if t]
+        jobs = [(t, self._web_ports_for(t)) for t in targets]
+        jobs = [(t, web) for t, web in jobs if web]
+        if not jobs:
+            self.status_label.setText("Vybrané cíle nemají otevřené webové porty (spusť nejdřív TCP sken).")
+            return
+        self._ws_pending = len(jobs)
+        nports = sum(len(w) for _, w in jobs)
+        scope = jobs[0][0] if len(jobs) == 1 else f"{len(jobs)} cílů"
+        self.status_label.setText(f"🌐 Detekuji web server: {scope} ({nports} portů)…")
+        self.worker_signals.log.emit("info", f"🌐 Detekce web serveru: {scope}, {nports} portů…")
+        pool = QThreadPool.globalInstance()
+        for t, web in jobs:
+            pool.start(WebServerWorker(t, web, self.worker_signals))
+
+    def on_webserver_result(self, ip, results):
+        """Uloží detekci web serveru pro cíl a zaloguje souhrn; persistuje do projektu."""
+        store = self.scan_results.setdefault("webserver", {})
+        store[ip] = results
+        parts = []
+        for port, info in sorted(results.items(), key=lambda kv: int(kv[0]) if kv[0].isdigit() else 0):
+            fam = info.get("family", "neznámý")
+            detail = (info.get("detail") or info.get("server") or "").strip()
+            txt = fam if (not detail or detail.lower() == fam.lower()) else f"{fam} ({detail})"
+            if info.get("error") and fam == "neznámý":
+                txt = f"port {port}: nedostupný"
+            else:
+                txt = f"port {port}: {txt}"
+            parts.append(txt)
+        self.worker_signals.log.emit("info", f"🌐 {ip} → " + "; ".join(parts))
+
+        self._ws_pending = getattr(self, "_ws_pending", 1) - 1
+        if self._ws_pending <= 0:
+            self.status_label.setText("🌐 Detekce web serveru hotová.")
+
+        # Když je tenhle cíl právě zobrazený v souhrnu IP, překreslit (ukáže web server).
+        if getattr(self, "_summary_ip", None) == ip:
+            self.on_matrix_ip_clicked(self.status_matrix.ip_items.get(ip), 0)
+        # Uložit do projektu (je-li otevřený a neběží sken).
+        self._autosave_after_audit()
 
     # ---- přepínač / ovládání běhů ------------------------------------
     def refresh_runs_combo(self):

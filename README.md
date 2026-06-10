@@ -38,6 +38,10 @@ do přehledné matice a generuje reporty.
   (`core/tls_grading.py`, pokryto testem proti ground-truth sadě 47 šifer).
 - **Bezpečnostní hlavičky** — kontrola 6 klíčových HTTP hlaviček (HSTS, CSP,
   X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy).
+- **Detekce webového serveru** — kontextová akce v matici (pravý klik → Detekovat
+  web server, i pro výběr více cílů) rozezná IIS/Apache/nginx/Tomcat/… z HTTP
+  hlaviček (`Server`, `X-Powered-By`) + nmap `-sV`. Zobrazí se v souhrnu IP a
+  uloží do projektu.
 - **Certifikáty** — detail, export, hromadný přehled.
 - **ffuf** — fuzzing adresářů/souborů s vestavěnou správou wordlistů.
 - **Screenshoty** webových služeb přes **Selenium (headless Chrome)** — jeden
@@ -180,6 +184,7 @@ Headless testy (bez GUI a bez nmapu) se spouští jednotlivě, např.:
 .venv/bin/python tests/test_project_store.py        # projektový formát v4 + migrace
 .venv/bin/python tests/test_autosave_resilience.py  # zápis selže čistě při blokovaných právech (macOS)
 .venv/bin/python tests/test_vuln_classify.py        # vuln: nález vs chyba/timeout vs čistý výstup
+.venv/bin/python tests/test_webserver_detect.py     # detekce web serveru (IIS/Apache/nginx/…)
 ```
 
 Verzování (od 2.0.0): velké zásahy → MAJOR, drobné úpravy a fixy → PATCH.

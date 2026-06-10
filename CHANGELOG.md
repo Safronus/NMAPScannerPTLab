@@ -4,6 +4,21 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.4.0] - 2026-06-10
+
+### Přidáno
+- **Detektor webového serveru (IIS / Apache / nginx / Tomcat / …).** Nová
+  kontextová akce v matici „Průběh fází" (pravý klik na cíl → **🌐 Detekovat web
+  server**, funguje i pro výběr více cílů). Aktivně stáhne HTTP hlavičky
+  (`Server`, `X-Powered-By`, `X-AspNet-Version`) webových portů a zkombinuje je s
+  nmap `-sV` detekcí. Výsledek se zobrazí v **souhrnu IP** (sekce „Webový server")
+  a **uloží do projektu** (`scan_results['webserver']`, persistuje s verzí).
+  - Klasifikace bez Qt (`core/webserver_detect.py`): rozezná IIS, Apache, nginx,
+    Tomcat (Apache-Coyote), OpenResty, LiteSpeed, Caddy, Jetty, Kestrel,
+    Cloudflare aj. (pokryto `tests/test_webserver_detect.py`).
+  - Souhrn IP nově ukazuje web server i **pasivně** (z nmap `product`), i bez
+    spuštění aktivní detekce.
+
 ## [5.3.1] - 2026-06-10
 
 ### Opraveno

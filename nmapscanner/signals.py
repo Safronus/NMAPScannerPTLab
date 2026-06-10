@@ -12,6 +12,9 @@ class WorkerSignals(QObject):
     # (ip, url, ok, info) — konec POKUSU o screenshot (úspěch i chyba) → průběh/souhrn.
     # info = cesta k souboru (ok) nebo text chyby (ne-ok).
     screenshot_done = Signal(str, str, bool, str)
+    # (ip, {port: info}) — detekce web serveru pro cíl. ``object`` (ne dict): hodnoty
+    # mají INT/různé typy a queued signál by je marshaloval na QVariantMap.
+    webserver_result = Signal(str, object)
 
     # --- Nmap workflow (progresivní vícestupňová detekce) ---
     task_started = Signal(str, str, str)    # (phase, target, label) — stupeň odstartoval
