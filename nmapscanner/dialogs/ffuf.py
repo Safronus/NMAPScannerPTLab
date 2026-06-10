@@ -8,9 +8,9 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QLineEdit, QPushButton, QVBoxLayout, QTreeWidget,
     QTreeWidgetItem, QLabel, QGroupBox, QHeaderView, QMenu, QFileDialog,
     QHBoxLayout, QSplitter, QCheckBox, QDialog, QMessageBox, QDialogButtonBox, QListWidget, QListWidgetItem, QGridLayout,
-    QProgressBar, QSizePolicy, QFrame
+    QProgressBar, QSizePolicy, QFrame, QSpinBox, QScrollArea
 )
-from PySide6.QtCore import Slot, QTimer, Qt
+from PySide6.QtCore import Slot, QTimer, Qt, QSettings
 from PySide6.QtGui import QColor, QFont
 from ..workers.ffuf import FfufWorker, BatchDownloadWorker
 from ..widgets.checkable_combo import CheckableComboBox
@@ -542,27 +542,109 @@ class ExportTargetSelectionDialog(QDialog):
 
 
 
+# Klíče pro QSettings (sdílí org/app s hlavní aplikací)
+SETTINGS_ORG = "UTB"
+SETTINGS_APP = "NmapScannerApp"
+# Horní strop paralelních skenů (ochrana cíle i lokálního stroje)
+MAX_PARALLEL = 4
+
+
+class ScanProgressRow(QWidget):
+    """
+    Jeden řádek průběhu pro jeden běžící cíl: název + progress bar (%, v/m) +
+    rychlost (req/sec) + ETA. Při paralelním skenování má každý cíl vlastní řádek.
+    """
+    def __init__(self, target_url, parent=None):
+        super().__init__(parent)
+        self.target_url = target_url
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(2, 1, 2, 1)
+        layout.setSpacing(8)
+
+        # Zkrácený název (bez schématu), plná URL v tooltipu
+        short = target_url.split("://", 1)[-1]
+        self.title = QLabel(short)
+        self.title.setToolTip(target_url)
+        self.title.setMinimumWidth(150)
+        self.title.setMaximumWidth(200)
+        self.title.setStyleSheet("font-size: 11px; font-weight: bold;")
+        layout.addWidget(self.title)
+
+        self.bar = QProgressBar()
+        self.bar.setFixedHeight(18)
+        self.bar.setTextVisible(True)
+        self.bar.setFormat("Načítám...")
+        self.bar.setRange(0, 0)  # indeterminate „busy", než přijde první progress
+        layout.addWidget(self.bar, 1)
+
+        self.rps = QLabel("-")
+        self.rps.setStyleSheet("font-size: 11px; color: #888;")
+        self.rps.setFixedWidth(95)
+        self.rps.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        layout.addWidget(self.rps)
+
+        self.eta = QLabel("Zbývá: -")
+        self.eta.setStyleSheet("font-size: 11px; color: #888;")
+        self.eta.setFixedWidth(110)
+        self.eta.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        layout.addWidget(self.eta)
+
+    def apply_progress(self, progress, total, rps):
+        if total > 0:
+            self.bar.setRange(0, total)
+            self.bar.setValue(progress)
+            percent = int((progress / total) * 100)
+            val_str = f"{progress:,}".replace(",", " ")
+            tot_str = f"{total:,}".replace(",", " ")
+            self.bar.setFormat(f"{percent}% - {val_str} / {tot_str}")
+
+        self.rps.setText(f"{rps} req/sec")
+
+        if rps > 0 and total > progress:
+            seconds_left = int((total - progress) / rps)
+            m, s = divmod(seconds_left, 60)
+            h, m = divmod(m, 60)
+            eta = f"{h}h {m}m {s}s" if h > 0 else f"{m}m {s}s"
+        elif total > 0 and progress >= total:
+            eta = "Hotovo"
+        else:
+            eta = "Výpočet..."
+        self.eta.setText(f"Zbývá: {eta}")
+
+    def mark_done(self):
+        if self.bar.maximum() > 0:
+            self.bar.setValue(self.bar.maximum())
+            self.bar.setFormat("100% - Hotovo")
+        else:
+            self.bar.setRange(0, 1)
+            self.bar.setValue(1)
+            self.bar.setFormat("Hotovo")
+        self.eta.setText("Zbývá: Hotovo")
+
+
 class FfufDialog(QDialog):
     """
-    Dialogové okno pro ffuf - FIX CRASH:
-    - Opraven odkaz na self.mc_combo v metodě process_next_target.
+    Dialogové okno pro ffuf.
+    - Paralelní skenování více cílů najednou (až MAX_PARALLEL), každý cíl má
+      vlastní progress řádek (% , v/m, req/sec, ETA).
+    - Poslední použité nastavení se pamatuje přes QSettings.
     """
     def __init__(self, scan_results, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Directory Fuzzing (ffuf)")
         self.resize(1100, 850)
         self.scan_results = scan_results
-        self.worker = None
-        self.queue = []
-        self.is_scanning = False 
+        self.queue = []            # čekající cíle (URL)
+        self.active_ctxs = []      # běžící kontexty skenů (paralelně)
+        self.is_scanning = False
         self.json_results = []
-        
-        # Flagy pro řízení
-        self.is_processing_target = False 
-        self.current_scan_has_results = False
-        self.current_target_url_str = ""
-        
-        # NOVÉ: Uložení odkazu na aktuální vizuální skupinu (Session)
+
+        # Počítadla pro celkový progress bar
+        self.total_targets = 0
+        self.completed_targets = 0
+
+        # Uložení odkazu na aktuální vizuální skupinu (Session) a její čas
         self.current_session_item = None
         self.current_scan_timestamp = ""
         
@@ -576,6 +658,7 @@ class FfufDialog(QDialog):
         
         self.init_ui()
         self.load_targets()
+        self._restore_ffuf_settings()
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -649,7 +732,22 @@ class FfufDialog(QDialog):
             self.ext_combo.add_item(ext, f"Hledat soubory {ext}", is_checked)
         config_layout.addWidget(self.ext_combo, 1, 3)
         
-        # Řádek 2
+        # Řádek 2: paralelní skeny
+        parallel_layout = QHBoxLayout()
+        parallel_layout.setContentsMargins(0, 0, 0, 0)
+        parallel_layout.addWidget(QLabel("Paralelně:"))
+        self.parallel_spin = QSpinBox()
+        self.parallel_spin.setRange(1, MAX_PARALLEL)
+        self.parallel_spin.setValue(1)
+        self.parallel_spin.setFixedWidth(50)
+        self.parallel_spin.setToolTip(
+            f"Kolik cílů skenovat současně (1–{MAX_PARALLEL}). Zrychlejší, "
+            "ale vyšší zátěž sítě i lokálního stroje."
+        )
+        parallel_layout.addWidget(self.parallel_spin)
+        parallel_layout.addStretch()
+        config_layout.addLayout(parallel_layout, 2, 0)
+
         self.redirect_check = QCheckBox("Sledovat přesměrování (-r)")
         self.redirect_check.setChecked(True)
         config_layout.addWidget(self.redirect_check, 2, 1)
@@ -741,31 +839,27 @@ class FfufDialog(QDialog):
         progress_layout = QVBoxLayout(progress_frame)
         progress_layout.setContentsMargins(5, 5, 5, 5)
         progress_layout.setSpacing(2)
-        
-        self.scan_progress_bar = QProgressBar()
-        self.scan_progress_bar.setVisible(False)
-        self.scan_progress_bar.setTextVisible(True)
-        self.scan_progress_bar.setFixedHeight(20)
-        self.scan_progress_bar.setFormat("%p% - %v / %m")
-        progress_layout.addWidget(self.scan_progress_bar)
 
-        stats_layout = QHBoxLayout()
-        self.progress_label = QLabel("Postup: -/-")
-        self.rps_label = QLabel("Rychlost: -")
-        self.eta_label = QLabel("Zbývá: -")
-        
-        stats_style = "font-size: 11px; color: #888;"
-        self.progress_label.setStyleSheet(stats_style)
-        self.rps_label.setStyleSheet(stats_style)
-        self.eta_label.setStyleSheet(stats_style)
-        
-        stats_layout.addWidget(self.progress_label)
-        stats_layout.addStretch()
-        stats_layout.addWidget(self.rps_label)
-        stats_layout.addStretch()
-        stats_layout.addWidget(self.eta_label)
-        progress_layout.addLayout(stats_layout)
-        
+        # Dynamický kontejner: jeden ScanProgressRow na běžící cíl.
+        # Ve scroll area, aby se i 4 paralelní řádky vešly bez roztažení okna.
+        self.progress_scroll = QScrollArea()
+        self.progress_scroll.setWidgetResizable(True)
+        self.progress_scroll.setFrameShape(QFrame.NoFrame)
+        self.progress_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.progress_scroll.setFixedHeight(MAX_PARALLEL * 26 + 6)
+        self.progress_scroll.setVisible(False)
+
+        progress_container = QWidget()
+        self.progress_rows_layout = QVBoxLayout(progress_container)
+        self.progress_rows_layout.setContentsMargins(0, 0, 0, 0)
+        self.progress_rows_layout.setSpacing(2)
+        self.progress_rows_layout.addStretch()
+        self.progress_scroll.setWidget(progress_container)
+        progress_layout.addWidget(self.progress_scroll)
+
+        # Mapování běžícího kontextu -> jeho progress řádek
+        self.progress_rows = {}
+
         main_layout.addWidget(progress_frame, 0)
         
         # --- 4. Spodní panel (Fixní výška) ---
@@ -1032,13 +1126,22 @@ class FfufDialog(QDialog):
             QMessageBox.warning(self, "Chyba", "Vyberte alespoň jeden cíl.")
             return
 
-        self.is_scanning = True 
+        # Zapamatovat poslední použité nastavení
+        self._save_ffuf_settings()
+
+        self.parallel_count = self.parallel_spin.value()
+        self.total_targets = len(self.queue)
+        self.completed_targets = 0
+
+        self.is_scanning = True
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
-        self.scan_progress_bar.setVisible(True)
+        self.parallel_spin.setEnabled(False)
+        self.progress_scroll.setVisible(True)
         self.total_progress_bar.setVisible(True)
-        self.total_progress_bar.setRange(0, len(self.queue))
-        
+        self.total_progress_bar.setRange(0, self.total_targets)
+        self.total_progress_bar.setValue(0)
+
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         self.current_scan_timestamp = timestamp
         
@@ -1058,8 +1161,9 @@ class FfufDialog(QDialog):
         
         self.results_tree.insertTopLevelItem(0, self.current_session_item)
         self.current_session_item.setExpanded(True)
-        
-        self.process_next_target(self.current_wordlist)
+
+        # Naplnit volné sloty (spustí až self.parallel_count cílů najednou)
+        self._fill_slots()
 
     def get_line_count(self, filepath):
         """Spočítá řádky v souboru (s jednoduchou cache)."""
@@ -1360,80 +1464,74 @@ class FfufDialog(QDialog):
         for i in range(self.targets_list.count()):
             self.targets_list.item(i).setCheckState(Qt.Checked)
 
-    def process_next_target(self, wordlist_path=None):
-        """Spustí skenování a zapamatuje si aktivní nastavení pro výsledky."""
-        # Ochrana proti souběhu
-        if self.is_processing_target:
-            print("DEBUG: [FfufDialog] process_next_target called but already processing! IGNORING.")
+    def _fill_slots(self):
+        """Spustí cíle z fronty, dokud nejsou obsazené všechny paralelní sloty."""
+        if not self.is_scanning:
             return
+        while self.queue and len(self.active_ctxs) < self.parallel_count:
+            self._start_target(self.queue.pop(0))
 
-        if not self.queue:
-            print("DEBUG: [FfufDialog] Queue empty, finishing.")
+        # Pokud nic neběží ani nečeká, sken skončil
+        if not self.active_ctxs and not self.queue:
             self.fuzzing_finished()
-            return
-            
-        self.is_processing_target = True
-        
-        if wordlist_path: 
-            self.current_wordlist = wordlist_path
-            
-        current_url = self.queue.pop(0)
-        self.current_target_url_str = current_url
-        self.current_scan_has_results = False
-        
-        print(f"DEBUG: [FfufDialog] Processing next target: {current_url}")
-        self.log_label.setText(f"Skenuji: {current_url}...")
-        
-        self.scan_progress_bar.setValue(0)
-        self.scan_progress_bar.setFormat("Načítám...")
-        self.progress_label.setText("Postup: 0/0")
-        
+
+    def _start_target(self, current_url):
+        """Spustí jeden cíl ve vlastním workeru + kontextu (paralelně bezpečné)."""
+        print(f"DEBUG: [FfufDialog] Starting target: {current_url}")
+
         wls = self.wordlist_combo.lineEdit().text()
         exts = self.ext_combo.get_checked_codes()
         mcs = self.mc_combo.get_checked_codes()
-        self.active_settings_for_current_scan = f"WL: {wls} | EXT: {exts if exts else 'žádné'} | MC: {mcs}"
+        settings_text = f"WL: {wls} | EXT: {exts if exts else 'žádné'} | MC: {mcs}"
 
         parent_for_target = self.current_session_item if self.current_session_item else self.results_tree
-        
-        header = QTreeWidgetItem(parent_for_target, [f"CÍL: {current_url}", "", "", "", self.active_settings_for_current_scan])
-        
-        # ZMĚNA: Pouze barva textu (modrá), bez barevného pozadí
+        header = QTreeWidgetItem(parent_for_target, [f"CÍL: {current_url}", "", "", "", settings_text])
         header.setForeground(0, QColor("#3498DB"))
         header.setForeground(4, QColor("#95A5A6"))
         header.setFont(0, QFont("Arial", 10, QFont.Bold))
-        
         header.setExpanded(True)
-        self.current_parent_item = header
-        
+
         options = {
-            "matcher": mcs, 
+            "matcher": mcs,
             "extensions": exts,
-            "follow_redirects": self.redirect_check.isChecked()
+            "follow_redirects": self.redirect_check.isChecked(),
         }
-        
-        if self.worker:
-            try:
-                self.worker.result_found.disconnect()
-                self.worker.progress_update.disconnect()
-                self.worker.finished.disconnect()
-            except: pass
-        
-        self.worker = FfufWorker(current_url, self.current_wordlist, options)
-        self.worker.result_found.connect(self.add_result)
-        self.worker.progress_update.connect(self.on_progress_update)
-        self.worker.finished.connect(self.on_worker_finished, Qt.SingleShotConnection)
-        self.worker.start()
-        
-    def add_result(self, data):
+
+        # Progress řádek pro tento cíl (vložit nad strech na konci layoutu)
+        row = ScanProgressRow(current_url)
+        self.progress_rows_layout.insertWidget(self.progress_rows_layout.count() - 1, row)
+
+        worker = FfufWorker(current_url, self.current_wordlist, options)
+
+        ctx = {
+            "url": current_url,
+            "tree_item": header,
+            "settings": settings_text,
+            "has_results": False,
+            "worker": worker,
+            "row": row,
+        }
+        self.active_ctxs.append(ctx)
+
+        # Signály vážeme přes uzávěr s konkrétním kontextem (paralelně bezpečné)
+        worker.result_found.connect(lambda data, c=ctx: self.add_result(data, c))
+        worker.progress_update.connect(lambda data, c=ctx: self.on_progress_update(data, c))
+        worker.finished.connect(lambda c=ctx: self.on_worker_finished(c), Qt.SingleShotConnection)
+        worker.start()
+
+        running = len(self.active_ctxs)
+        self.log_label.setText(f"Skenuji {running} cíl(ů) paralelně…")
+
+    def add_result(self, data, ctx):
         """
-        Zpracuje jeden nález.
+        Zpracuje jeden nález pro daný kontext (cíl).
         """
         if data.get('_meta') != 'empty_scan':
-            self.current_scan_has_results = True
-            
-        if "_settings" not in data and hasattr(self, "active_settings_for_current_scan"):
-            data["_settings"] = self.active_settings_for_current_scan
-        
+            ctx["has_results"] = True
+
+        if "_settings" not in data:
+            data["_settings"] = ctx["settings"]
+
         # NOVÉ: Uložení timestampu skenu do výsledků pro budoucí seskupení
         if "_scan_timestamp" not in data and hasattr(self, "current_scan_timestamp"):
             data["_scan_timestamp"] = self.current_scan_timestamp
@@ -1446,14 +1544,14 @@ class FfufDialog(QDialog):
             
         full_url = data.get("url", "")
         if not full_url and data.get('_meta') == 'empty_scan':
-             full_url = self.current_target_url_str
-        
-        # Logika pro vytvoření stromu (pokud se generuje z historie nebo real-time)
-        # Zde už předpokládáme, že self.current_parent_item (Cíl) existuje (vytvořen v process_next_target)
-        
+             full_url = ctx["url"]
+
+        # Cílová hlavička pro tento kontext (vytvořená v _start_target)
+        parent_item = ctx["tree_item"]
+
         if data.get('_meta') == 'empty_scan':
-            if self.current_parent_item:
-                info_item = QTreeWidgetItem(self.current_parent_item, ["Sken dokončen - žádné nálezy", "", "", "", ""])
+            if parent_item:
+                info_item = QTreeWidgetItem(parent_item, ["Sken dokončen - žádné nálezy", "", "", "", ""])
                 info_item.setForeground(0, QColor("#95A5A6"))
                 info_item.setFirstColumnSpanned(True)
             return
@@ -1477,18 +1575,18 @@ class FfufDialog(QDialog):
         length = data.get('length', 0)
         words = data.get('words', 0)
         
-        if self.current_parent_item:
+        if parent_item:
             status_group_item = None
             group_label = f"Status: {status}"
-            
-            for i in range(self.current_parent_item.childCount()):
-                child = self.current_parent_item.child(i)
+
+            for i in range(parent_item.childCount()):
+                child = parent_item.child(i)
                 if child.text(0) == group_label:
                     status_group_item = child
                     break
-                    
+
             if not status_group_item:
-                status_group_item = QTreeWidgetItem(self.current_parent_item, [group_label, "", "", "", ""])
+                status_group_item = QTreeWidgetItem(parent_item, [group_label, "", "", "", ""])
                 status_group_item.setExpanded(True)
                 group_color = QColor("#95A5A6")
                 if 200 <= status < 300: group_color = QColor("#2ECC71")
@@ -1496,7 +1594,7 @@ class FfufDialog(QDialog):
                 elif status == 401 or status == 403: group_color = QColor("#E74C3C")
                 status_group_item.setForeground(0, group_color)
                 status_group_item.setFont(0, QFont("Arial", 10, QFont.Bold))
-                self.current_parent_item.sortChildren(0, Qt.AscendingOrder)
+                parent_item.sortChildren(0, Qt.AscendingOrder)
 
             item = QTreeWidgetItem(status_group_item, [str(path_display), str(status), str(length), str(words), full_url])
             item.setData(0, Qt.UserRole, full_url)
@@ -1532,102 +1630,83 @@ class FfufDialog(QDialog):
             except Exception as e:
                 QMessageBox.critical(self, "Chyba", f"Nepodařilo se uložit soubor: {e}")
 
-    @Slot(dict)
-    def on_progress_update(self, data):
-        total = data.get('total', 0)
-        progress = data.get('progress', 0)
-        rps = data.get('rps', 0)
-        
-        if total > 0:
-            self.scan_progress_bar.setRange(0, total)
-            self.scan_progress_bar.setValue(progress)
-            
-            val_str = f"{progress:,}".replace(",", " ")
-            tot_str = f"{total:,}".replace(",", " ")
-            percent = int((progress / total) * 100) if total > 0 else 0
-            self.scan_progress_bar.setFormat(f"{percent}% - {val_str} / {tot_str}")
-        
-        eta_text = "Výpočet..."
-        if rps > 0 and total > progress:
-            remaining_items = total - progress
-            seconds_left = int(remaining_items / rps)
-            
-            m, s = divmod(seconds_left, 60)
-            h, m = divmod(m, 60)
-            if h > 0:
-                eta_text = f"{h}h {m}m {s}s"
-            else:
-                eta_text = f"{m}m {s}s"
-        elif progress >= total:
-            eta_text = "Hotovo"
-        
-        self.progress_label.setText(f"Postup: {progress}/{total}")
-        self.rps_label.setText(f"Rychlost: {rps} req/sec")
-        self.eta_label.setText(f"Zbývá: {eta_text}")
-        
-        self.scan_progress_bar.update()
+    @Slot(dict, dict)
+    def on_progress_update(self, data, ctx):
+        row = ctx.get("row")
+        if row is None:
+            return
+        row.apply_progress(
+            data.get('progress', 0),
+            data.get('total', 0),
+            data.get('rps', 0),
+        )
 
-    def on_worker_finished(self):
-        print("DEBUG: [FfufDialog] Worker finished signal received")
-        
-        # --- NOVÉ: Pokud nebyly žádné nálezy, vytvoříme placeholder záznam ---
-        if not self.current_scan_has_results:
-            print("DEBUG: [FfufDialog] No results found, creating placeholder record.")
+    def on_worker_finished(self, ctx):
+        print(f"DEBUG: [FfufDialog] Worker finished: {ctx['url']}")
+
+        # Pokud nebyly žádné nálezy, vytvoříme placeholder záznam
+        if not ctx["has_results"]:
             empty_record = {
-                "url": self.current_target_url_str,
+                "url": ctx["url"],
                 "status": 0,
-                "_settings": self.active_settings_for_current_scan,
-                "_meta": "empty_scan" # Značka
+                "_settings": ctx["settings"],
+                "_meta": "empty_scan",
             }
-            # Zavoláme add_result, aby se to zobrazilo v GUI a uložilo do JSONu
-            self.add_result(empty_record)
-        # ---------------------------------------------------------------------
+            self.add_result(empty_record, ctx)
 
-        self.total_progress_bar.setValue(self.total_progress_bar.value() + 1)
-        
-        if self.scan_progress_bar.maximum() > 0:
-            self.scan_progress_bar.setValue(self.scan_progress_bar.maximum())
-            self.scan_progress_bar.setFormat("100% - Hotovo")
+        # Celkový postup
+        self.completed_targets += 1
+        self.total_progress_bar.setValue(self.completed_targets)
 
-        # Bezpečný úklid starého workeru
-        if self.worker:
-            # Důkladné odpojení
+        # Označit a odstranit progress řádek tohoto cíle
+        row = ctx.get("row")
+        if row is not None:
+            row.mark_done()
+            self.progress_rows_layout.removeWidget(row)
+            row.deleteLater()
+
+        # Úklid workeru (finished je SingleShotConnection → už odpojen, neodpojovat znovu)
+        worker = ctx.get("worker")
+        if worker:
             try:
-                self.worker.result_found.disconnect()
-                self.worker.progress_update.disconnect()
-                self.worker.finished.disconnect()
-            except:
+                worker.result_found.disconnect()
+                worker.progress_update.disconnect()
+            except Exception:
                 pass
-            
-            self.worker.deleteLater()
-            self.worker = None
+            worker.deleteLater()
+        ctx["worker"] = None
 
-        # Uvolnit zámek těsně před plánováním dalšího
-        QTimer.singleShot(500, self._schedule_next)
+        if ctx in self.active_ctxs:
+            self.active_ctxs.remove(ctx)
 
-    def _schedule_next(self):
-        """Pomocná metoda volaná časovačem."""
-        self.is_processing_target = False  # ODEMKNOUT
-        self.process_next_target()
+        # Naplnit uvolněný slot dalším cílem (nebo dokončit)
+        self._fill_slots()
 
     def stop_fuzzing(self):
-        if self.worker: 
-            # Odpojit signály aby nedošlo k volání finished
-            try:
-                self.worker.finished.disconnect()
-            except:
-                pass
-            self.worker.stop()
-            
-        self.queue = [] 
-        self.is_processing_target = False # Reset
+        # Zastavit všechny běžící workery
+        for ctx in list(self.active_ctxs):
+            worker = ctx.get("worker")
+            if worker:
+                try:
+                    worker.finished.disconnect()
+                except Exception:
+                    pass
+                worker.stop()
+                worker.deleteLater()
+            row = ctx.get("row")
+            if row is not None:
+                self.progress_rows_layout.removeWidget(row)
+                row.deleteLater()
+
+        self.active_ctxs = []
+        self.queue = []
         self.log_label.setText("Zastaveno.")
         self.fuzzing_finished()
 
     def fuzzing_finished(self):
         if not getattr(self, 'is_scanning', False): return
         self.is_scanning = False
-        
+
         # Odstranit dočasný sjednocený slovník
         merged_path = os.path.join(os.getcwd(), "wordlists", "merged_wordlist.tmp")
         if os.path.exists(merged_path):
@@ -1636,16 +1715,80 @@ class FfufDialog(QDialog):
 
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
+        self.parallel_spin.setEnabled(True)
         self.targets_list.setEnabled(True)
         self.manager_btn.setEnabled(True)
-        self.scan_progress_bar.setVisible(False)
+        self.progress_scroll.setVisible(False)
         self.total_progress_bar.setVisible(False)
-        self.progress_label.setText("Postup: -/-")
-        self.rps_label.setText("Rychlost: -")
-        self.eta_label.setText("Zbývá: -")
         if self.log_label.text() != "Zastaveno.":
             self.log_label.setText("Hotovo.")
             QMessageBox.information(self, "Hotovo", "Fuzzing dokončen.")
+
+    # --- Uložení / obnova posledního nastavení skenu ---
+    def _save_ffuf_settings(self):
+        s = QSettings(SETTINGS_ORG, SETTINGS_APP)
+        # Slovníky ukládáme podle názvu souboru (cesta se může lišit)
+        wl_names = []
+        model = self.wordlist_combo.model
+        for i in range(model.rowCount()):
+            item = model.item(i)
+            if item.checkState() == Qt.Checked:
+                path = item.data(Qt.UserRole)
+                if path:
+                    wl_names.append(os.path.basename(path))
+        s.setValue("ffuf/wordlists", ",".join(wl_names))
+        s.setValue("ffuf/match_codes", self.mc_combo.get_checked_codes())
+        s.setValue("ffuf/extensions", self.ext_combo.get_checked_codes())
+        s.setValue("ffuf/follow_redirects", self.redirect_check.isChecked())
+        s.setValue("ffuf/parallel", self.parallel_spin.value())
+
+    def _restore_ffuf_settings(self):
+        s = QSettings(SETTINGS_ORG, SETTINGS_APP)
+
+        try:
+            self.parallel_spin.setValue(int(s.value("ffuf/parallel", 1)))
+        except (TypeError, ValueError):
+            pass
+
+        wl_names = [x for x in str(s.value("ffuf/wordlists", "")).split(",") if x]
+        if wl_names:
+            model = self.wordlist_combo.model
+            for i in range(model.rowCount()):
+                item = model.item(i)
+                path = item.data(Qt.UserRole)
+                base = os.path.basename(path) if path else ""
+                item.setCheckState(Qt.Checked if base in wl_names else Qt.Unchecked)
+            self.wordlist_combo.update_text()
+
+        mcs = s.value("ffuf/match_codes", None)
+        if mcs is not None:
+            codes = [c for c in str(mcs).split(",") if c]
+            for i in range(self.mc_combo.model.rowCount()):
+                item = self.mc_combo.model.item(i)
+                item.setCheckState(Qt.Checked if item.text() in codes else Qt.Unchecked)
+            self.mc_combo.update_text()
+
+        exts = s.value("ffuf/extensions", None)
+        if exts is not None:
+            ext_list = [e for e in str(exts).split(",") if e]
+            for i in range(self.ext_combo.model.rowCount()):
+                item = self.ext_combo.model.item(i)
+                item.setCheckState(Qt.Checked if item.text() in ext_list else Qt.Unchecked)
+            self.ext_combo.update_text()
+
+        r = s.value("ffuf/follow_redirects", True)
+        self.redirect_check.setChecked(r in (True, "true", "True", 1, "1"))
+
+        if hasattr(self, "update_stats"):
+            self.update_stats()
+
+    def closeEvent(self, event):
+        # Při zavření okna zapamatovat aktuální nastavení
+        try:
+            self._save_ffuf_settings()
+        except Exception:
+            pass
+        super().closeEvent(event)
             
     def export_results_txt(self):
         """

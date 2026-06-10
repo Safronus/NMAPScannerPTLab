@@ -4,6 +4,19 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.5.0] - 2026-06-10
+
+### Přidáno
+- **Paralelní directory fuzzing (ffuf).** Okno „Directory Fuzzing" umí skenovat
+  více cílů najednou — nový přepínač **Paralelně (1–4)**. Každý běžící cíl má
+  **vlastní progress řádek** (procenta, hotovo/celkem, req/sec, ETA) ve scroll
+  panelu; jakmile cíl doběhne, uvolněný slot automaticky zabere další z fronty.
+  Celkový postup hlídá spodní lišta „Cíle: x/y".
+- **Pamatování posledního nastavení skenu (ffuf).** Vybrané slovníky, match
+  codes, přípony, „sledovat přesměrování" i počet paralelních skenů se ukládají
+  přes `QSettings("UTB","NmapScannerApp")` a obnoví při dalším otevření okna
+  (uloží se při spuštění skenu i při zavření okna).
+
 ## [5.4.2] - 2026-06-10
 
 ### Opraveno
