@@ -4,6 +4,20 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.1.4] - 2026-06-10
+
+### Přidáno
+- **Startup banner s verzí a cestou.** Launcher po startu vypíše
+  `=== NMAP Scanner PT Lab vX.Y.Z ===` + absolutní cestu balíku a python. Snadno
+  se tak pozná, **která kopie/verze** běží (časté zmatení: spuštění staré kopie
+  mimo git repozitář → „opravy se neprojevily").
+- **Ochrana proti ztrátě dat u nezapisovatelné složky.** Po načtení projektu se
+  ověří zápis do jeho složky; když nejde (typicky projekt na **Ploše/iCloudu**
+  blokované macOS TCC), aplikace **hned varuje** a nabídne **Uložit projekt
+  jinam…** (přenese data z paměti do zapisovatelné složky). Stejnou nabídku dá i
+  při selhání autosave. Dřív autosave jen tiše selhával a výsledky po zavření
+  mizely. „Exportovat projekt" navíc zvládne i selhání cílového místa bez pádu.
+
 ## [5.1.3] - 2026-06-10
 
 ### Přidáno

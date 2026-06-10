@@ -35,8 +35,19 @@ def _startup_checks():
         print("Nmap binárka CHYBA: 'nmap' nenalezen v PATH")
 
 
+def _print_banner():
+    """Vypíše verzi a ABSOLUTNÍ cestu běžícího kódu — ať je jednoznačné, která
+    kopie/verze běží (časté zmatení: spuštění staré kopie mimo git repozitář)."""
+    import nmapscanner
+    pkg = os.path.dirname(os.path.abspath(nmapscanner.__file__))
+    print(f"=== NMAP Scanner PT Lab v{nmapscanner.VERSION} ===")
+    print(f"  balík:  {pkg}")
+    print(f"  python: {sys.executable}")
+
+
 def main():
     _startup_checks()
+    _print_banner()
     # Pořadí importů je důležité: QtWebEngine (uvnitř nmapscanner.app) se musí
     # naimportovat PŘED vytvořením QApplication.
     from nmapscanner.app import NmapScannerApp

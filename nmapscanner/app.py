@@ -2392,13 +2392,15 @@ class NmapScannerApp(QWidget):
             return
 
         # Uložit aktivní snapshot do STÁVAJÍCÍ složky, ať je co kopírovat.
+        # (Když je stará složka jen pro čtení, snapshot je v paměti / pending.)
         self._persist_active_snapshot()
 
-        paths = ProjectPaths.create(parent, self.project_name_edit.text())
-        # Zapamatovat zvolenou základní složku pro příště (konfigurovatelný default).
-        self.settings.setValue("default_projects_dir", parent)
-
         try:
+            # Vytvořit cílovou složku (může selhat, když je i nové místo jen pro čtení).
+            paths = ProjectPaths.create(parent, self.project_name_edit.text())
+            # Zapamatovat zvolenou základní složku pro příště (konfigurovatelný default).
+            self.settings.setValue("default_projects_dir", parent)
+
             # Zkopírovat data všech verzí (běhů) do nové složky (v4 data.json).
             for run in self.run_history.runs:
                 snap = self._load_snapshot(run)
@@ -2413,13 +2415,18 @@ class NmapScannerApp(QWidget):
                                      self.run_history,
                                      datetime.now().isoformat(timespec="seconds"))
 
+            self._autosave_blocked = None  # nové místo je zapisovatelné → autosave zase OK
             self.add_to_recent_projects(self.current_project_path)
             self.settings.setValue("last_project_path", self.current_project_path)
             self._update_project_path_label()
             self.status_label.setText(f"Projekt uložen do {paths.root}")
             self.worker_signals.log.emit("export", f"Projekt úspěšně uložen do složky {paths.root}.")
         except Exception as e:
-            QMessageBox.critical(self, "Chyba uložení", f"Nelze uložit projekt: {e}")
+            QMessageBox.critical(
+                self, "Chyba uložení",
+                f"Nelze uložit projekt do vybraného místa:\n{e}\n\n"
+                "Vyber prosím složku, kam lze zapisovat (ne Plocha/iCloud) — "
+                "např. ~/NmapScannerProjects nebo ~/Documents.")
 
     def import_project_dialog(self):
         """Import projektu ze souboru JSON (.nmapproj). Povoleno jen, když neběží testování."""
@@ -2502,10 +2509,14 @@ class NmapScannerApp(QWidget):
             self.add_to_recent_projects(path)
             self.status_label.setText(f"Projekt načten z {path}")
             self.worker_signals.log.emit("info", f"Projekt úspěšně načten z {path}.")
-            
+
             progress.setValue(total_steps)
             progress.close()
-            
+
+            # Hned ověřit, že do složky projektu lze zapisovat — když ne (Plocha/
+            # iCloud blokované macOS TCC), varovat DŘÍV, než uživatel přijde o data.
+            self._maybe_warn_unwritable()
+
         except Exception as e:
             if 'progress' in locals():
                 progress.close()
@@ -4165,29 +4176,80 @@ class NmapScannerApp(QWidget):
         except Exception as e:
             self._handle_autosave_failure(e)
 
+    def _project_writable(self):
+        """Rychlý test zápisu do složky projektu (macOS TCC / read-only FS).
+        Bez otevřeného projektu vrací True (zatím není kam zapisovat)."""
+        if not self.current_project_path:
+            return True
+        try:
+            root = ProjectPaths.from_project_file(self.current_project_path).root
+            root.mkdir(parents=True, exist_ok=True)
+            probe = root / ".nmapscanner_write_test"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink()
+            return True
+        except OSError:
+            return False
+
+    def _maybe_warn_unwritable(self):
+        """Po načtení projektu: když do jeho složky nejde zapisovat, varovat hned
+        a nabídnout uložení jinam — ať uživatel nepřijde o výsledky (autosave by
+        jinak jen tiše selhával a data by po zavření zmizela)."""
+        if self._project_writable():
+            self._autosave_blocked = None
+            return
+        self._autosave_blocked = self.current_project_path
+        self.worker_signals.log.emit(
+            "error", "⛔ Do složky projektu nelze zapisovat (Plocha/iCloud blokované "
+            "macOS). Výsledky se sem NEULOŽÍ — ulož projekt jinam.")
+        self.status_label.setText("⛔ Složka projektu je jen pro čtení — ulož projekt jinam!")
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Do složky projektu nelze zapisovat")
+        box.setText("Tento projekt je ve složce, kam aplikace nemůže zapisovat "
+                    "(typicky Plocha nebo iCloud — Ochrana soukromí macOS).")
+        box.setInformativeText(
+            f"{self.current_project_path}\n\n"
+            "⚠️ Výsledky skenů, TLS audity a screenshoty se sem NEULOŽÍ a po zavření "
+            "aplikace zmizí. Ulož projekt do zapisovatelné složky (např. "
+            "~/NmapScannerProjects) — data z paměti se přenesou.")
+        relocate = box.addButton("Uložit projekt jinam…", QMessageBox.AcceptRole)
+        box.addButton("Pokračovat (neukládat)", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is relocate:
+            self.export_project_dialog()
+
     def _handle_autosave_failure(self, e):
         """Selhání autosave. Práva (EPERM/EACCES) = typicky projekt na Ploše/iCloudu,
-        kam macOS nedovolí zapisovat → autosave pro tu cestu vypnout a poradit jednou."""
+        kam macOS nedovolí zapisovat → autosave pro tu cestu vypnout a nabídnout přesun."""
         import errno
         is_perm = (isinstance(e, PermissionError)
                    or getattr(e, "errno", None) in (errno.EPERM, errno.EACCES))
         if is_perm:
+            already = (self._autosave_blocked == self.current_project_path)
             self._autosave_blocked = self.current_project_path
             self.worker_signals.log.emit(
                 "error", "⛔ Autosave vypnut — macOS blokuje zápis do složky projektu "
-                f"({self.current_project_path}).")
-            self.status_label.setText("⛔ Autosave vypnut — macOS blokuje zápis do složky projektu.")
-            QMessageBox.warning(
-                self, "Autosave zablokován (práva macOS)",
-                "Nelze automaticky ukládat do složky projektu:\n"
+                f"({self.current_project_path}). Výsledky se neukládají — ulož projekt jinam.")
+            self.status_label.setText("⛔ Autosave vypnut — složka projektu je jen pro čtení.")
+            if already:
+                return  # varování už padlo (neotravovat opakovaně)
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Warning)
+            box.setWindowTitle("Autosave zablokován (práva macOS)")
+            box.setText("Nelze ukládat do složky projektu — výsledky se NEUKLÁDAJÍ "
+                        "a po zavření aplikace zmizí.")
+            box.setInformativeText(
                 f"{self.current_project_path}\n\n"
-                "Složka je nejspíš na Ploše nebo v iCloudu, kam aplikace nemá právo "
-                "zapisovat (Ochrana soukromí macOS). Data v aplikaci zůstávají, jen se "
-                "zatím neukládají na disk.\n\n"
-                "Řešení (stačí jedno):\n"
-                "• Ulož projekt mimo Plochu/iCloud přes „Exportovat projekt…“.\n"
-                "• Povol aplikaci přístup v Nastavení → Soukromí a zabezpečení → "
-                "Soubory a složky (případně Plný přístup k disku) a restartuj aplikaci.")
+                "Složka je nejspíš na Ploše nebo v iCloudu (Ochrana soukromí macOS). "
+                "Ulož projekt do zapisovatelné složky (např. ~/NmapScannerProjects) — "
+                "data z paměti se přenesou. Alternativně povol aplikaci přístup v "
+                "Nastavení → Soukromí a zabezpečení → Soubory a složky a restartuj ji.")
+            relocate = box.addButton("Uložit projekt jinam…", QMessageBox.AcceptRole)
+            box.addButton("Teď ne", QMessageBox.RejectRole)
+            box.exec()
+            if box.clickedButton() is relocate:
+                self.export_project_dialog()
         else:
             self.worker_signals.log.emit(
                 "error", f"⚠️ Autosave: Chyba při automatickém ukládání: {e}")
