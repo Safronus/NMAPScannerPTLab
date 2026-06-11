@@ -586,6 +586,90 @@ def section_title(key, lang="cs"):
 SECTION_TITLES = {k: v[0] for k, v in CATEGORY.items()}
 
 
+def _filter_scan_results_for_ip(scan_results, ip):
+    """Vyřízne ze scan_results jen data pro jednu IP (pro klasifikaci jednoho cíle)."""
+    out = {}
+    for phase in ("tcp", "udp", "vuln", "osscan", "online"):
+        d = scan_results.get(phase, {}) or {}
+        if ip in d:
+            out[phase] = {ip: d[ip]}
+    # klíčované "ip:port"
+    for phase in ("tls_audit", "security_headers", "certificates"):
+        d = scan_results.get(phase, {}) or {}
+        sub = {k: v for k, v in d.items() if str(k).split(":")[0] == ip}
+        if sub:
+            out[phase] = sub
+    # webserver: klíč ip
+    ws = scan_results.get("webserver", {}) or {}
+    if ip in ws:
+        out["webserver"] = {ip: ws[ip]}
+    # ffuf: list, url obsahuje ip
+    ffuf = scan_results.get("ffuf", []) or []
+    fsub = [x for x in ffuf if isinstance(x, dict) and ip in (x.get("url", "") or "")]
+    if fsub:
+        out["ffuf"] = fsub
+    # zap: klíčováno target url obsahující ip
+    zap = scan_results.get("zap", {}) or {}
+    if isinstance(zap, dict):
+        zsub = {k: v for k, v in zap.items() if ip in str(k)}
+        if zsub:
+            out["zap"] = zsub
+    return out
+
+
+def override_key(f):
+    """Stabilní klíč nálezu pro per-případ úpravy (nezávislý na pořadovém id)."""
+    return f"{f.get('target','')}|{f.get('section','')}|{f.get('owasp','')}|{f.get('title','')}"
+
+
+def apply_overrides(result, overrides, lang="cs"):
+    """Aplikuje per-případ úpravy (severity/owasp/recommendation/impact/title/
+    description/comment) na nálezy a přepočítá souhrny. ``overrides`` keyed dle
+    ``override_key``. Vrací ten samý dict (upravený na místě)."""
+    if not overrides:
+        return result
+    for f in result.get("findings", []):
+        ov = overrides.get(override_key(f))
+        if not ov:
+            continue
+        for fld in ("severity", "owasp", "recommendation", "impact", "title", "description"):
+            if ov.get(fld):
+                f[fld] = ov[fld]
+        if ov.get("comment"):
+            f["comment"] = ov["comment"]
+        if f.get("owasp"):
+            f["owasp_name"] = OWASP_2025.get(f["owasp"], "")
+
+    findings = result["findings"]
+    findings.sort(key=lambda f: (SEVERITY_RANK[f["severity"]], f["category"], f["target"]))
+    summary = {s: 0 for s in SEVERITIES}
+    for f in findings:
+        summary[f["severity"]] += 1
+    owasp = {}
+    for f in findings:
+        a = f.get("owasp")
+        if not a:
+            continue
+        owasp.setdefault(a, {"name": OWASP_2025.get(a, ""), "count": 0, "severities": []})
+        owasp[a]["count"] += 1
+        owasp[a]["severities"].append(f["severity"])
+    for a in owasp:
+        owasp[a]["worst"] = worst(owasp[a]["severities"])
+    result["summary"] = summary
+    result["owasp"] = owasp
+    return result
+
+
+def findings_for_ip(scan_results, ip, sections=None, min_severity="INFO", lang="cs",
+                    overrides=None):
+    """Klasifikované nálezy pro jeden cíl (IP) — pro náhled v panelu Souhrn IP."""
+    res = build_findings(_filter_scan_results_for_ip(scan_results, ip),
+                         sections=sections, min_severity=min_severity, lang=lang)
+    if overrides:
+        apply_overrides(res, overrides, lang)
+    return res
+
+
 def build_findings(scan_results, sections=None, min_severity="INFO", lang="cs"):
     """Vyrobí nálezy ze ``scan_results`` pro zvolené sekce a jazyk (cs/en).
 

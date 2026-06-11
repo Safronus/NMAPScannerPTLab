@@ -302,6 +302,11 @@ class ReportDialog(QDialog):
         comments_by_key = self._collect_comments()
         result = build_findings(self.scan_results, sections=sections,
                                 min_severity=self.sev_combo.currentData(), lang=lang)
+        # Aplikovat per-případ úpravy klasifikace (z panelu Souhrn IP i odsud)
+        from ..core.report_classify import apply_overrides
+        overrides = (self.scan_results.get("report_config", {}) or {}).get("overrides", {})
+        if overrides:
+            apply_overrides(result, overrides, lang)
         # přemapovat komentáře na id nálezů aktuálního buildu
         comments_by_id = {}
         for f in result["findings"]:

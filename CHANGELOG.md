@@ -4,6 +4,24 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.12.0] - 2026-06-11
+
+### Přidáno
+- **Klasifikované nálezy přímo v panelu „Souhrn vybrané IP".** Po kliknutí na cíl
+  v matici se automaticky z referenční knihovny vyhodnotí nálezy přiřazené k tomu
+  cíli (porty, služby, TLS, hlavičky, ffuf, zranitelnosti, ZAP) — sekce
+  **„🔎 Nálezy (klasifikace)"** se severitou, OWASP a CVSS pásmem; v tooltipu dopad
+  a doporučení.
+- **Editace nálezu pro daný případ + proklik na správce.** Dvojklik na nález
+  otevře dialog, kde lze pro tento případ upravit závažnost, OWASP, název,
+  **dopad, doporučení a komentář** (uloží se do projektu jako override a promítne
+  se i do PDF reportu), nebo otevřít **globální správce knihovny**.
+- **Správce knihovny klasifikací** (`dialogs/classification.py`) — prohlížení a
+  editace pravidel (porty / TLS známky / hlavičky / certifikáty / CVE): severita,
+  OWASP, doporučení a dopad (CZ/EN). Změny se ukládají do uživatelské knihovny
+  (`~/.nmapscanner/classification_library.json`), reset na výchozí.
+- Per-případ úpravy (`report_config.overrides`) se aplikují v panelu IP i v reportu.
+
 ## [5.11.1] - 2026-06-11
 
 ### Přidáno

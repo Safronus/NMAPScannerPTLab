@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QRadioButton, QInputDialog, QMenu
 )
 from PySide6.QtCore import Slot, Signal, QMutex, QMutexLocker, QTimer, Qt, QThread, QSettings, QThreadPool
-from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtGui import QColor, QPixmap, QFont
 from . import VERSION
 from .utils import clean_and_parse_ips, get_color_for_ip
 from .signals import WorkerSignals
@@ -760,6 +760,8 @@ class NmapScannerApp(QWidget):
         self.ip_summary_tree = QTreeWidget()
         self.ip_summary_tree.setHeaderLabels(["Atribut", "Hodnota"])
         self.ip_summary_tree.setMinimumWidth(280)
+        # Dvojklik na klasifikovaný nález → editace pro tento případ / správce knihovny
+        self.ip_summary_tree.itemDoubleClicked.connect(self._on_ip_summary_double_click)
         
         header_ip = self.ip_summary_tree.header()
         header_ip.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -1477,6 +1479,71 @@ class NmapScannerApp(QWidget):
             self.show_current_screenshot()
 
     @Slot(QTreeWidgetItem, int)
+    def _report_overrides(self):
+        return (self.scan_results.get("report_config", {}) or {}).get("overrides", {}) or {}
+
+    def _populate_classified_findings(self, ip_address):
+        """Do panelu Souhrn IP přidá sekci klasifikovaných nálezů z knihovny."""
+        from .core.report_classify import findings_for_ip, CVSS_BAND, SEVERITY_COLOR
+        try:
+            res = findings_for_ip(self.scan_results, ip_address,
+                                  overrides=self._report_overrides())
+        except Exception as e:
+            print(f"DEBUG: klasifikace IP selhala: {e}")
+            return
+        findings = res.get("findings", [])
+        parent = QTreeWidgetItem(self.ip_summary_tree,
+                                 ["🔎 Nálezy (klasifikace)", f"({len(findings)})"])
+        parent.setForeground(0, QColor("#C0392B"))
+        parent.setFont(0, QFont("Arial", 9, QFont.Bold))
+        parent.setExpanded(True)
+        if not findings:
+            child = QTreeWidgetItem(parent, ["Žádné klasifikované nálezy", ""])
+            child.setForeground(0, QColor("#95A5A6"))
+            return
+        sev_label = {"CRITICAL": "C", "HIGH": "H", "MEDIUM": "M", "LOW": "L", "INFO": "I"}
+        for f in findings:
+            sev = f["severity"]
+            label = f"[{sev_label.get(sev, '?')}] {f['title']}"
+            meta = f"{f.get('owasp','')} · CVSS {CVSS_BAND.get(sev,'')}"
+            child = QTreeWidgetItem(parent, [label, meta])
+            child.setForeground(0, QColor(SEVERITY_COLOR.get(sev, "#333")))
+            child.setToolTip(0, (f.get("impact", "") or "") + "\n\n"
+                             + (f.get("recommendation", "") or ""))
+            child.setData(0, Qt.UserRole, {"finding": f, "ip": ip_address})
+
+    def _on_ip_summary_double_click(self, item, column):
+        """Dvojklik na klasifikovaný nález → editace pro tento případ / správce."""
+        data = item.data(0, Qt.UserRole)
+        if not isinstance(data, dict) or "finding" not in data:
+            return
+        from .dialogs.classification import FindingEditDialog, ClassificationManagerDialog
+        from .core.report_classify import override_key
+        dlg = FindingEditDialog(data["finding"], self)
+        if dlg.exec() == QDialog.Accepted:
+            ov = dlg.get_override()
+            cfg = self.scan_results.setdefault("report_config", {})
+            overrides = cfg.setdefault("overrides", {})
+            overrides[override_key(data["finding"])] = ov
+            try:
+                self.auto_save_project()
+            except Exception:
+                pass
+            if getattr(dlg, "open_manager_requested", False):
+                ClassificationManagerDialog(self).exec()
+            # obnovit panel
+            self.on_matrix_ip_clicked_refresh(data["ip"])
+
+    def on_matrix_ip_clicked_refresh(self, ip_address):
+        """Znovu naplní panel Souhrn IP pro daný cíl (po editaci klasifikace)."""
+        try:
+            self.ip_summary_tree.clear()
+            # znovu vyvolat plnění přes uloženou logiku — jednoduše zopakovat klik
+            fake = QTreeWidgetItem([ip_address])
+            self.on_matrix_ip_clicked(fake, 0)
+        except Exception as e:
+            print(f"DEBUG: refresh IP panelu selhal: {e}")
+
     def on_matrix_ip_clicked(self, item, column):
         """Zobrazí souhrn výsledků pro vybranou IP z matici."""
         if item is None:
@@ -1511,7 +1578,11 @@ class NmapScannerApp(QWidget):
         
         hostname_item = QTreeWidgetItem(self.ip_summary_tree, ["Hostname", hostname])
         hostname_item.setForeground(0, QColor("#2980B9"))
-        
+
+        # === Klasifikované nálezy (z referenční knihovny, přiřazené k tomuto cíli) ===
+        self._ip_summary_current_ip = ip_address
+        self._populate_classified_findings(ip_address)
+
         # Souhrn portů podle stavů
         port_stats = {
             'tcp': {'open': 0, 'filtered': 0, 'closed': 0, 'open|filtered': 0},
