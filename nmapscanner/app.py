@@ -2303,7 +2303,42 @@ class NmapScannerApp(QWidget):
                        lambda: self.rescan_screenshots(targets))
         menu.addAction(f"🔁 Re-scan vše (TCP+UDP+vuln+OS) — {sfx}",
                        lambda: self.rescan_target(targets, ["tcp", "udp", "osscan", "vuln"]))
+        menu.addSeparator()
+        menu.addAction(f"🔎 Reklasifikovat nálezy (z knihovny) — {sfx}",
+                       lambda: self.reclassify_targets(targets))
         menu.exec(self.status_matrix.viewport().mapToGlobal(pos))
+
+    def reclassify_targets(self, targets):
+        """Znovu klasifikuje nálezy vybraných cílů dle aktuální knihovny (bez nového
+        skenu) — užitečné po editaci knihovny nebo při prohlížení staršího běhu.
+        Klasifikace je odvozená z dat běhu, takže funguje i pro již dokončené běhy."""
+        from .core import classification_library as clib
+        from .core.report_classify import findings_for_ip
+        if isinstance(targets, str):
+            targets = [targets]
+        targets = [t for t in dict.fromkeys(targets) if t]
+        if not targets:
+            return
+        clib.reload()  # načíst aktuální knihovnu (po případné editaci ve správci)
+        total = 0
+        per_target = []
+        for t in targets:
+            try:
+                res = findings_for_ip(self.scan_results, t, overrides=self._report_overrides())
+                total += res["total"]
+                per_target.append((t, res["summary"]))
+            except Exception as e:
+                print(f"DEBUG: reklasifikace {t} selhala: {e}")
+        # překreslit panel Souhrn IP pro první cíl
+        try:
+            self.on_matrix_ip_clicked_refresh(targets[0])
+        except Exception:
+            pass
+        crit = sum(s.get("CRITICAL", 0) for _, s in per_target)
+        high = sum(s.get("HIGH", 0) for _, s in per_target)
+        self.status_label.setText(
+            f"🔎 Reklasifikováno {len(targets)} cíl(ů): {total} nálezů "
+            f"(CRITICAL {crit}, HIGH {high}). Knihovna načtena znovu.")
 
     def rescan_target(self, targets, phases):
         """Znovu proskenuje vybrané fáze daných cílů a výsledky vmerguje do AKTUÁLNÍ

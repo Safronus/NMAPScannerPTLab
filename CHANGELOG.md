@@ -4,6 +4,15 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.12.5] - 2026-06-11
+
+### Přidáno
+- **Kontextová akce „🔎 Reklasifikovat nálezy" nad cíli v matici.** Bez nového
+  skenu znovu klasifikuje vybrané cíle dle aktuální knihovny (po její editaci ve
+  správci) a překreslí panel Souhrn IP. Funguje i pro **již dokončené běhy**
+  (klasifikace je odvozená z dat běhu), takže lze reklasifikovat i staré výsledky.
+  Hláška ukáže počty nálezů (CRITICAL/HIGH).
+
 ## [5.12.4] - 2026-06-11
 
 ### Přidáno
