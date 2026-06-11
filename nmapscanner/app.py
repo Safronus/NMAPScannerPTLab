@@ -595,6 +595,17 @@ class NmapScannerApp(QWidget):
         self.report_mgr_btn.clicked.connect(self.open_report_manager)
         actions_layout.addWidget(self.report_mgr_btn)
 
+        # Akce: Správce knihovny klasifikací
+        self.classlib_btn = QPushButton("📚")
+        self.classlib_btn.setToolTip("Správce knihovny klasifikací — pravidla severity/OWASP/doporučení/dopad")
+        self.classlib_btn.setFixedSize(35, 35)
+        self.classlib_btn.setStyleSheet("""
+            QPushButton { font-size: 18px; border: 1px solid #CCCCCC; border-radius: 5px; background-color: #F9F9F9; color: #16233f; }
+            QPushButton:hover { background-color: #E8E8E8; }
+        """)
+        self.classlib_btn.clicked.connect(self.open_classification_manager)
+        actions_layout.addWidget(self.classlib_btn)
+
         # Přidat stretch aby akce byly vlevo
         actions_layout.addStretch()
         
@@ -960,6 +971,18 @@ class NmapScannerApp(QWidget):
             report_store.register_report(self._reports_dir(), path, source, type_, language)
         except Exception as e:
             print(f"DEBUG: register_export selhalo: {e}")
+
+    def open_classification_manager(self):
+        """Otevře správce referenční knihovny klasifikací (globální editace pravidel)."""
+        from .dialogs.classification import ClassificationManagerDialog
+        ClassificationManagerDialog(self).exec()
+        # po editaci překreslit panel IP (klasifikace se mohla změnit)
+        ip = getattr(self, "_summary_ip", None)
+        if ip:
+            try:
+                self.on_matrix_ip_clicked_refresh(ip)
+            except Exception:
+                pass
 
     def open_report_manager(self):
         """Otevře manažer reportů (přehled všech reportů v projektu)."""

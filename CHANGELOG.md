@@ -4,6 +4,14 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.12.2] - 2026-06-11
+
+### Přidáno
+- **Tlačítko „📚 Správce knihovny klasifikací" v hlavní liště.** Penetrační testeři
+  mají přímý přístup k prohlížení a editaci pravidel knihovny (severity / OWASP /
+  doporučení / dopad pro porty, TLS, hlavičky, certifikáty, CVE). Po editaci se
+  překreslí klasifikace v panelu Souhrn IP.
+
 ## [5.12.1] - 2026-06-11
 
 ### Přidáno
