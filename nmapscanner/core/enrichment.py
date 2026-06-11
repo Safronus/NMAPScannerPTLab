@@ -23,41 +23,43 @@ _EOL_TTL = 14 * 24 * 3600  # 14 dní
 NVD_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0?cveId={id}"
 EOL_URL = "https://endoflife.date/api/{slug}.json"
 
-# nmap product (lowercase substring) -> endoflife.date slug
+# nmap product (lowercase substring) -> endoflife.date slug.
+# Pořadí ZÁLEŽÍ — specifičtější klíče dřív (Tomcat/Coyote před Apache httpd; MariaDB
+# před MySQL). Jen slugy ověřené na endoflife.date.
 PRODUCT_SLUGS = {
-    "nginx": "nginx",
-    "apache httpd": "apache",
-    "apache http": "apache",
-    "apache-coyote": "tomcat",
-    "tomcat": "tomcat",
-    "openssh": "openssh",
-    "mysql": "mysql",
-    "mariadb": "mariadb",
-    "postgresql": "postgresql",
-    "php": "php",
-    "exchange": "exchange",
-    "node.js": "nodejs",
-    "nodejs": "nodejs",
-    "python": "python",
-    "openssl": "openssl",
-    "lighttpd": "lighttpd",
-    "haproxy": "haproxy",
-    "redis": "redis",
-    "mongodb": "mongodb",
-    "elasticsearch": "elasticsearch",
-    "rabbitmq": "rabbitmq",
-    "kibana": "kibana",
-    "jenkins": "jenkins",
-    "gitlab": "gitlab",
-    "wordpress": "wordpress",
-    "drupal": "drupal",
-    "joomla": "joomla",
-    "django": "django",
-    "jira": "jira",
-    "confluence": "confluence",
-    "grafana": "grafana",
-    "proftpd": "proftpd",
-    "samba": "samba",
+    # web servery / aplikační
+    "apache-coyote": "tomcat", "apache tomcat": "tomcat", "coyote": "tomcat", "tomcat": "tomcat",
+    "apache httpd": "apache-http-server", "apache http": "apache-http-server",
+    "nginx": "nginx", "caddy": "caddy", "traefik": "traefik", "envoy": "envoy",
+    "haproxy": "haproxy", "squid": "squid",
+    # databáze / cache / queue
+    "mariadb": "mariadb", "mysql": "mysql", "postgresql": "postgresql", "postgres": "postgresql",
+    "mongodb": "mongodb", "redis": "redis", "memcached": "memcached",
+    "elasticsearch": "elasticsearch", "kibana": "kibana", "rabbitmq": "rabbitmq",
+    "apache activemq": "apache-activemq", "activemq": "apache-activemq",
+    "apache kafka": "apache-kafka", "kafka": "apache-kafka", "zookeeper": "zookeeper",
+    "influxdb": "influxdb", "prometheus": "prometheus", "etcd": "etcd", "apache solr": "solr", "solr": "solr",
+    "microsoft sql server": "mssqlserver", "ms sql": "mssqlserver", "mssql": "mssqlserver",
+    # jazyky / runtime / knihovny
+    "php": "php", "node.js": "nodejs", "nodejs": "nodejs", "python": "python",
+    "openssl": "openssl", "log4j": "log4j", "spring boot": "spring-boot",
+    "spring framework": "spring-framework",
+    # CMS / web aplikace
+    "wordpress": "wordpress", "drupal": "drupal", "joomla": "joomla", "typo3": "typo3",
+    "magento": "magento", "moodle": "moodle", "roundcube": "roundcube",
+    "nextcloud": "nextcloud", "phpmyadmin": "phpmyadmin", "django": "django",
+    "grafana": "grafana", "keycloak": "keycloak", "jenkins": "jenkins",
+    "gitlab": "gitlab", "confluence": "confluence", "jira": "jira-software",
+    "coldfusion": "coldfusion", "apache airflow": "apache-airflow",
+    # síťové / appliance / infrastruktura
+    "big-ip": "big-ip", "bigip": "big-ip", "f5": "big-ip",
+    "pan-os": "panos", "palo alto": "panos", "fortios": "fortios", "fortigate": "fortios",
+    # OS / kontejnery
+    "windows server": "windows-server", "ubuntu": "ubuntu", "debian": "debian",
+    "centos": "centos", "red hat": "rhel", "rhel": "rhel",
+    "docker": "docker-engine", "kubernetes": "kubernetes", "consul": "consul",
+    "proftpd": "proftpd", "postfix": "postfix", "dovecot": "dovecot",
+    "ruby": "ruby", "perl": "perl",
 }
 
 
@@ -101,9 +103,10 @@ def cvss_to_severity(score):
 
 def product_slug(product_text):
     low = (product_text or "").lower()
-    for kw, slug in PRODUCT_SLUGS.items():
+    # delší (specifičtější) klíče napřed — „phpmyadmin" před „php", „mariadb" před …
+    for kw in sorted(PRODUCT_SLUGS, key=len, reverse=True):
         if kw in low:
-            return slug
+            return PRODUCT_SLUGS[kw]
     return None
 
 

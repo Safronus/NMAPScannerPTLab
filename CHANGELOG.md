@@ -4,6 +4,19 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.13.3] - 2026-06-11
+
+### Změněno
+- **Rozšířené EOL mapování (82 produktů).** Detekce konce podpory pokrývá nově
+  výrazně víc produktů: Apache HTTP Server, Tomcat, Caddy, Traefik, HAProxy,
+  Squid, MariaDB/MySQL/PostgreSQL/MongoDB/Redis/Memcached, Elasticsearch/Kibana,
+  RabbitMQ/Kafka/ActiveMQ/ZooKeeper, MSSQL, PHP/Node.js/Python/Ruby/Perl,
+  WordPress/Drupal/Joomla/TYPO3/Magento/Moodle/Nextcloud/phpMyAdmin, Grafana,
+  Keycloak, Jenkins, GitLab, Confluence/Jira, ColdFusion, F5 BIG-IP, PAN-OS,
+  FortiOS, Windows Server, Ubuntu/Debian/CentOS/RHEL, Docker, Kubernetes ad.
+  Mapování bere nejspecifičtější shodu (phpMyAdmin ≠ PHP). Jen slugy ověřené na
+  endoflife.date.
+
 ## [5.13.2] - 2026-06-11
 
 ### Změněno

@@ -20,8 +20,10 @@ def test_cvss_to_severity():
 
 def test_product_slug():
     assert enr.product_slug("nginx") == "nginx"
-    assert enr.product_slug("Apache httpd 2.4.41") == "apache"
-    assert enr.product_slug("OpenSSH") == "openssh"
+    assert enr.product_slug("Apache httpd 2.4.41") == "apache-http-server"
+    assert enr.product_slug("Apache Tomcat 8.5") == "tomcat"
+    assert enr.product_slug("MariaDB 10.3") == "mariadb"
+    assert enr.product_slug("phpMyAdmin 4.9") == "phpmyadmin"  # delší klíč napřed
     assert enr.product_slug("Něco neznámého") is None
 
 
