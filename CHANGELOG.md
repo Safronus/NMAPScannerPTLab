@@ -4,6 +4,29 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.11.0] - 2026-06-11
+
+### Přidáno
+- **Referenční knihovna klasifikací.** Severity, OWASP kategorie a hlavně
+  **doporučení** pro nálezy nově pocházejí z editovatelné knihovny pravidel:
+  `nmapscanner/data/classification_library.json` (výchozí, verzovaná v repu) +
+  uživatelské override `~/.nmapscanner/classification_library.json`
+  (deep-merge, uživatel vyhrává). Loader `core/classification_library.py`.
+  - Pokrývá: **otevřené porty** (Telnet/SMB/DB/RDP/VNC/Redis/Mongo/… s konkrétními
+    doporučeními a vazbou na VPN/expozici), **identifikaci služeb**, **TLS známky
+    A/B/C/F** (vč. odkazu na Mozilla SSL config a doporučených cipher suites),
+    **certifikáty**, **bezpečnostní hlavičky** (doporučené hodnoty dle OWASP
+    Secure Headers — HSTS/CSP/X-Frame-Options/…), **ffuf cesty/kódy** (.git/.env/
+    zálohy/default loginy/admin/RDWeb/actuator/…), **CVE mapu** (Log4Shell,
+    EternalBlue, BlueKeep, Heartbleed) + klikací odkazy na NVD/MITRE.
+  - Zdroje: OWASP Top 10:2025, OWASP Secure Headers, Mozilla Server Side TLS,
+    NVD/CVSS v4.0. Pokryto v `tests/test_classification_library.py`.
+- Klasifikátor `report_classify` nově čerpá severity/OWASP/doporučení z knihovny;
+  z nmap/ZAP výstupů se vytahuje CVE ID a podle něj klasifikuje + přidá odkaz NVD.
+
+> Navazuje: správce knihovny v appce, per-nález override v dialogu, organizace
+> nálezů dle typu testu (v dalších verzích).
+
 ## [5.10.2] - 2026-06-11
 
 ### Opraveno

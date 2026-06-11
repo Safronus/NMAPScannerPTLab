@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 
 from .tls_grading import calculate_grade
 from .vuln_classify import classify_vuln_output
+from . import classification_library as lib
 
 # --- Stupnice závažnosti (pořadí = priorita) -------------------------------
 SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
@@ -85,188 +86,9 @@ CATEGORY = {
     "zap": ("OWASP ZAP", "OWASP ZAP"),
 }
 
-# Společná doporučení (CZ/EN)
-REC_PORT = ("Ověřit nutnost služby; nepotřebné porty zavřít nebo omezit firewallem "
-            "na management síť.",
-            "Verify the service is needed; close unnecessary ports or restrict them "
-            "to a management network via firewall.")
-REC_VERSION = ("Skrýt/upravit bannery a hlavičky verzí; udržovat software aktualizovaný.",
-               "Hide/adjust version banners and headers; keep software up to date.")
-REC_VULN = ("Aktualizovat/patchovat dotčenou komponentu; ověřit exploitovatelnost a dopad.",
-            "Update/patch the affected component; verify exploitability and impact.")
-REC_TLS = ("Vypnout SSLv2/SSLv3/TLS 1.0/1.1, povolit jen TLS 1.2/1.3 s AEAD šiframi "
-           "a forward secrecy.",
-           "Disable SSLv2/SSLv3/TLS 1.0/1.1; allow only TLS 1.2/1.3 with AEAD ciphers "
-           "and forward secrecy.")
-REC_CERT = ("Obnovit certifikát a nasadit automatickou obnovu.",
-            "Renew the certificate and set up automatic renewal.")
-REC_HEADERS = ("Doplnit hlavičky na webovém serveru / reverzní proxy (HSTS, CSP, "
-               "X-Frame-Options, X-Content-Type-Options, …).",
-               "Add the headers on the web server / reverse proxy (HSTS, CSP, "
-               "X-Frame-Options, X-Content-Type-Options, …).")
-REC_FFUF_SENS = ("Odstranit/zabezpečit přístup k citlivé cestě; omezit oprávnění a "
-                 "přístup ze sítě.",
-                 "Remove/secure access to the sensitive path; restrict permissions "
-                 "and network access.")
-REC_FFUF_GEN = ("Projít nalezené cesty, odstranit nepotřebné, citlivé chránit "
-                "autentizací/autorizací.",
-                "Review discovered paths, remove unnecessary ones, protect sensitive "
-                "ones with authentication/authorization.")
-REC_WEBSERVER = ("Skrýt/zobecnit hlavičku Server a X-Powered-By; udržovat server "
-                 "aktualizovaný.",
-                 "Hide/generalize the Server and X-Powered-By headers; keep the server "
-                 "up to date.")
-
-
-# ===========================================================================
-#  Tabulky rizik (popisy dvojjazyčné)
-# ===========================================================================
-PORT_RISK = {
-    21: ("MEDIUM", "A04", ("FTP — přenos přihlašovacích údajů i dat v otevřené podobě",
-                           "FTP — credentials and data transferred in cleartext")),
-    23: ("HIGH", "A04", ("Telnet — vzdálená správa bez šifrování (hesla v plaintextu)",
-                         "Telnet — remote management without encryption (cleartext passwords)")),
-    25: ("INFO", "A02", ("SMTP — poštovní přenos", "SMTP — mail transport")),
-    69: ("MEDIUM", "A02", ("TFTP — přenos souborů bez autentizace",
-                           "TFTP — file transfer without authentication")),
-    110: ("LOW", "A04", ("POP3 — pošta v otevřené podobě", "POP3 — mail in cleartext")),
-    111: ("LOW", "A02", ("rpcbind/portmapper — mapování RPC služeb",
-                         "rpcbind/portmapper — RPC service mapping")),
-    135: ("MEDIUM", "A02", ("MSRPC — endpoint mapper Windows", "MSRPC — Windows endpoint mapper")),
-    137: ("MEDIUM", "A02", ("NetBIOS Name Service", "NetBIOS Name Service")),
-    139: ("MEDIUM", "A01", ("NetBIOS/SMB — sdílení souborů", "NetBIOS/SMB — file sharing")),
-    143: ("LOW", "A04", ("IMAP — pošta v otevřené podobě", "IMAP — mail in cleartext")),
-    161: ("MEDIUM", "A02", ("SNMP — často výchozí community string (public/private)",
-                            "SNMP — often default community string (public/private)")),
-    389: ("LOW", "A02", ("LDAP — adresářová služba", "LDAP — directory service")),
-    445: ("HIGH", "A01", ("SMB — sdílení souborů (EternalBlue, ransomware vektor)",
-                          "SMB — file sharing (EternalBlue, ransomware vector)")),
-    512: ("HIGH", "A04", ("rexec — vzdálené spuštění bez šifrování",
-                          "rexec — remote execution without encryption")),
-    513: ("HIGH", "A04", ("rlogin — vzdálené přihlášení bez šifrování",
-                          "rlogin — remote login without encryption")),
-    514: ("HIGH", "A04", ("rsh — vzdálený shell bez šifrování",
-                          "rsh — remote shell without encryption")),
-    873: ("MEDIUM", "A01", ("rsync — synchronizace souborů (často bez autentizace)",
-                            "rsync — file sync (often without authentication)")),
-    1433: ("HIGH", "A01", ("MSSQL — databáze přístupná ze sítě",
-                           "MSSQL — database reachable from the network")),
-    1521: ("HIGH", "A01", ("Oracle DB — databáze přístupná ze sítě",
-                           "Oracle DB — database reachable from the network")),
-    2049: ("MEDIUM", "A01", ("NFS — síťový souborový systém", "NFS — network file system")),
-    2375: ("CRITICAL", "A02", ("Docker API bez TLS — plná kontrola nad hostitelem",
-                               "Docker API without TLS — full control over the host")),
-    3306: ("HIGH", "A01", ("MySQL/MariaDB — databáze přístupná ze sítě",
-                           "MySQL/MariaDB — database reachable from the network")),
-    3389: ("MEDIUM", "A07", ("RDP — vzdálená plocha (brute-force, BlueKeep)",
-                             "RDP — remote desktop (brute-force, BlueKeep)")),
-    5432: ("HIGH", "A01", ("PostgreSQL — databáze přístupná ze sítě",
-                           "PostgreSQL — database reachable from the network")),
-    5900: ("HIGH", "A07", ("VNC — vzdálená plocha (často slabá/žádná autentizace)",
-                           "VNC — remote desktop (often weak/no authentication)")),
-    5985: ("MEDIUM", "A02", ("WinRM (HTTP) — vzdálená správa Windows",
-                             "WinRM (HTTP) — Windows remote management")),
-    6379: ("HIGH", "A01", ("Redis — ve výchozím stavu bez autentizace",
-                           "Redis — unauthenticated by default")),
-    9200: ("HIGH", "A01", ("Elasticsearch — často bez autentizace",
-                           "Elasticsearch — often without authentication")),
-    11211: ("HIGH", "A01", ("Memcached — bez autentizace, riziko DDoS amplifikace",
-                            "Memcached — no authentication, DDoS amplification risk")),
-    27017: ("HIGH", "A01", ("MongoDB — často bez autentizace",
-                            "MongoDB — often without authentication")),
-    22: ("LOW", "A02", ("SSH — vzdálená správa (omezit na management síť)",
-                        "SSH — remote management (restrict to a management network)")),
-    80: ("INFO", "A02", ("HTTP — webová služba", "HTTP — web service")),
-    443: ("INFO", "A02", ("HTTPS — webová služba", "HTTPS — web service")),
-    8080: ("INFO", "A02", ("HTTP (alt) — webová služba", "HTTP (alt) — web service")),
-    8443: ("INFO", "A02", ("HTTPS (alt) — webová služba", "HTTPS (alt) — web service")),
-    8000: ("INFO", "A02", ("HTTP (alt) — webová služba", "HTTP (alt) — web service")),
-    8888: ("INFO", "A02", ("HTTP (alt) — webová služba", "HTTP (alt) — web service")),
-}
-_PORT_DEFAULT = ("INFO", "A02", ("Otevřený port — součást útočné plochy",
-                                 "Open port — part of the attack surface"))
-
-SERVICE_KEYWORD_RISK = [
-    ("telnet", ("HIGH", "A04", ("Telnet — vzdálená správa bez šifrování",
-                                "Telnet — remote management without encryption"))),
-    ("ftp", ("MEDIUM", "A04", ("FTP — přenos v otevřené podobě", "FTP — cleartext transfer"))),
-    ("vnc", ("HIGH", "A07", ("VNC — vzdálená plocha (slabá autentizace)",
-                             "VNC — remote desktop (weak authentication)"))),
-    ("rdp", ("MEDIUM", "A07", ("RDP — vzdálená plocha", "RDP — remote desktop"))),
-    ("ms-wbt", ("MEDIUM", "A07", ("RDP — vzdálená plocha", "RDP — remote desktop"))),
-    ("mysql", ("HIGH", "A01", ("MySQL — databáze přístupná ze sítě",
-                               "MySQL — database reachable from the network"))),
-    ("postgres", ("HIGH", "A01", ("PostgreSQL — databáze přístupná ze sítě",
-                                  "PostgreSQL — database reachable from the network"))),
-    ("mongodb", ("HIGH", "A01", ("MongoDB — databáze přístupná ze sítě",
-                                 "MongoDB — database reachable from the network"))),
-    ("redis", ("HIGH", "A01", ("Redis — často bez autentizace",
-                               "Redis — often without authentication"))),
-    ("microsoft-ds", ("HIGH", "A01", ("SMB — sdílení souborů", "SMB — file sharing"))),
-    ("netbios", ("MEDIUM", "A02", ("NetBIOS", "NetBIOS"))),
-    ("snmp", ("MEDIUM", "A02", ("SNMP — často výchozí community string",
-                                "SNMP — often default community string"))),
-    ("ldap", ("LOW", "A02", ("LDAP — adresářová služba", "LDAP — directory service"))),
-    ("rlogin", ("HIGH", "A04", ("rlogin — bez šifrování", "rlogin — without encryption"))),
-    ("rsh", ("HIGH", "A04", ("rsh — bez šifrování", "rsh — without encryption"))),
-]
-
-FFUF_SENSITIVE = [
-    (".git", ("CRITICAL", "A02", ("Expozice gitového repozitáře — zdrojový kód, historie, tajemství",
-                                  "Exposed git repository — source code, history, secrets"))),
-    (".env", ("CRITICAL", "A02", ("Expozice .env — přístupové údaje a klíče v otevřené podobě",
-                                  "Exposed .env — credentials and keys in cleartext"))),
-    (".svn", ("HIGH", "A02", ("Expozice SVN metadat — únik zdrojového kódu",
-                              "Exposed SVN metadata — source code leak"))),
-    ("phpmyadmin", ("HIGH", "A01", ("phpMyAdmin — administrace databáze přístupná",
-                                    "phpMyAdmin — database administration exposed"))),
-    ("/backup", ("HIGH", "A02", ("Zálohy přístupné přes web", "Backups accessible over the web"))),
-    ("actuator", ("HIGH", "A02", ("Spring Boot Actuator — citlivé interní endpointy",
-                                  "Spring Boot Actuator — sensitive internal endpoints"))),
-    ("server-status", ("MEDIUM", "A02", ("Apache server-status — interní informace o serveru",
-                                         "Apache server-status — internal server information"))),
-    ("server-info", ("MEDIUM", "A02", ("Apache server-info — konfigurace serveru",
-                                       "Apache server-info — server configuration"))),
-    (".htaccess", ("MEDIUM", "A02", ("Konfigurační soubor .htaccess přístupný",
-                                     "Configuration file .htaccess accessible"))),
-    (".sql", ("HIGH", "A02", ("SQL dump přístupný přes web", "SQL dump accessible over the web"))),
-    (".bak", ("MEDIUM", "A02", ("Záložní soubor přístupný", "Backup file accessible"))),
-    (".old", ("MEDIUM", "A02", ("Záložní soubor (.old) přístupný", "Backup file (.old) accessible"))),
-    (".zip", ("MEDIUM", "A02", ("Archiv přístupný přes web", "Archive accessible over the web"))),
-    (".tar.gz", ("MEDIUM", "A02", ("Archiv přístupný přes web", "Archive accessible over the web"))),
-    ("wp-admin", ("MEDIUM", "A01", ("WordPress administrace", "WordPress administration"))),
-    ("wp-login", ("MEDIUM", "A07", ("WordPress přihlášení — brute-force vektor",
-                                    "WordPress login — brute-force vector"))),
-    ("/admin", ("MEDIUM", "A01", ("Administrační rozhraní", "Administration interface"))),
-    ("/login", ("LOW", "A07", ("Přihlašovací stránka", "Login page"))),
-    ("/config", ("MEDIUM", "A02", ("Konfigurační adresář/soubor", "Configuration directory/file"))),
-    (".ds_store", ("LOW", "A02", (".DS_Store — odhalení struktury adresářů",
-                                  ".DS_Store — reveals directory structure"))),
-    ("robots.txt", ("INFO", "A02", ("robots.txt — naznačuje skryté cesty",
-                                    "robots.txt — hints at hidden paths"))),
-    (".well-known", ("INFO", "A02", (".well-known", ".well-known"))),
-]
-
-HEADER_RISK = {
-    "Strict-Transport-Security": ("MEDIUM", "A04",
-        ("Chybí HSTS — riziko downgrade na HTTP / SSL stripping",
-         "Missing HSTS — risk of downgrade to HTTP / SSL stripping")),
-    "Content-Security-Policy": ("MEDIUM", "A02",
-        ("Chybí CSP — slabší ochrana proti XSS a injektáži obsahu",
-         "Missing CSP — weaker protection against XSS and content injection")),
-    "X-Frame-Options": ("MEDIUM", "A02",
-        ("Chybí X-Frame-Options — riziko clickjackingu",
-         "Missing X-Frame-Options — clickjacking risk")),
-    "X-Content-Type-Options": ("LOW", "A02",
-        ("Chybí X-Content-Type-Options — MIME sniffing",
-         "Missing X-Content-Type-Options — MIME sniffing")),
-    "Referrer-Policy": ("LOW", "A02",
-        ("Chybí Referrer-Policy — únik referreru", "Missing Referrer-Policy — referrer leakage")),
-    "Permissions-Policy": ("LOW", "A02",
-        ("Chybí Permissions-Policy — bez omezení API prohlížeče",
-         "Missing Permissions-Policy — no browser API restrictions")),
-}
-
+# Pozn.: severity + OWASP + doporučení nově pocházejí z referenční knihovny
+# (core/classification_library.py + data/classification_library.json), která je
+# editovatelná. Níže zůstaly jen popisné/odvozené konstanty, pokud jsou potřeba.
 
 # ===========================================================================
 #  Stavitelé nálezů
@@ -285,6 +107,15 @@ def _mk(idx, title, severity, owasp, category, target, description,
         "evidence": evidence,
         "recommendation": _t(recommendation, lang),
     }
+
+
+import re as _re
+_CVE_RE = _re.compile(r"CVE-\d{4}-\d{4,7}", _re.IGNORECASE)
+
+
+def _first_cve(text):
+    m = _CVE_RE.search(text or "")
+    return m.group(0).upper() if m else ""
 
 
 def _iter_open_ports(scan_results, proto):
@@ -309,14 +140,11 @@ def build_ports(scan_results, start_idx=1, lang="cs"):
     for proto in ("tcp", "udp"):
         for ip, pnum, info in _iter_open_ports(scan_results, proto):
             name = (info.get("name") or "").lower()
-            risk = PORT_RISK.get(pnum)
-            if risk is None:
-                risk = _PORT_DEFAULT
-                for kw, kw_risk in SERVICE_KEYWORD_RISK:
-                    if kw in name:
-                        risk = kw_risk
-                        break
-            sev, owasp, desc = risk
+            # Klasifikace z referenční knihovny: port → služba (klíč) → default
+            rule = lib.port_rule(pnum, lang) or lib.service_keyword_rule(name, lang) \
+                or lib.port_default(lang)
+            sev, owasp, rec = rule["severity"], rule["owasp"], rule["recommendation"]
+            label = rule.get("name") or name
             product = " ".join(x for x in [info.get("product", ""), info.get("version", "")] if x).strip()
             ev = f"{proto.upper()} {pnum} ({name or '?'})"
             if product:
@@ -325,9 +153,9 @@ def build_ports(scan_results, start_idx=1, lang="cs"):
                 ev += f" [{info['extrainfo']}]"
             title = (f"Otevřený port {pnum}/{proto} — {name or 'neznámá služba'}",
                      f"Open port {pnum}/{proto} — {name or 'unknown service'}")
-            full_desc = (_t(desc, "cs") + ".", _t(desc, "en") + ".")
+            full_desc = (f"Otevřená služba: {label}.", f"Open service: {label}.")
             out.append(_mk(idx, title, sev, owasp, CATEGORY["ports"], f"{ip}:{pnum}",
-                           full_desc, lang, evidence=ev, recommendation=REC_PORT))
+                           full_desc, lang, evidence=ev, recommendation=rec))
             idx += 1
     return out, idx
 
@@ -342,7 +170,7 @@ def build_services(scan_results, start_idx=1, lang="cs"):
             if not product and not version:
                 continue
             banner = " ".join(x for x in [product, version] if x).strip()
-            sev = "LOW" if version else "INFO"
+            rule = lib.service_version_rule(bool(version), lang)
             title = (f"Zveřejnění verze služby — {banner}",
                      f"Service version disclosure — {banner}")
             desc = ("Služba prozrazuje produkt a verzi, což usnadňuje útočníkovi "
@@ -351,8 +179,9 @@ def build_services(scan_results, start_idx=1, lang="cs"):
                     "look up known vulnerabilities.")
             ev = (f"{proto.upper()} {pnum}: {banner}"
                   + (f" {info.get('extrainfo')}" if info.get("extrainfo") else ""))
-            out.append(_mk(idx, title, sev, "A02", CATEGORY["services"], f"{ip}:{pnum}",
-                           desc, lang, evidence=ev, recommendation=REC_VERSION))
+            out.append(_mk(idx, title, rule["severity"], rule["owasp"], CATEGORY["services"],
+                           f"{ip}:{pnum}", desc, lang, evidence=ev,
+                           recommendation=rule["recommendation"]))
             idx += 1
     return out, idx
 
@@ -372,11 +201,16 @@ def build_vulns(scan_results, start_idx=1, lang="cs"):
                     if classify_vuln_output(output) != "finding":
                         continue
                     up = (output or "").upper()
-                    sev = "HIGH"
-                    if any(k in up for k in ("REMOTE CODE EXECUTION", " RCE", "CRITICAL", "UNAUTHENTICATED")):
-                        sev = "CRITICAL"
                     has_cve = "CVE" in up
-                    owasp = "A03" if has_cve else "A06"
+                    cve_id = _first_cve(output)
+                    # Klasifikace z knihovny (vuln rule), případně konkrétní CVE
+                    rule = lib.vuln_rule(has_cve, lang)
+                    sev, owasp, rec = rule["severity"], rule["owasp"], rule["recommendation"]
+                    cve_rule = lib.cve_rule(cve_id, lang) if cve_id else None
+                    if cve_rule:
+                        sev, owasp, rec = cve_rule["severity"], cve_rule["owasp"], cve_rule["recommendation"]
+                    elif any(k in up for k in ("REMOTE CODE EXECUTION", " RCE", "CRITICAL", "UNAUTHENTICATED")):
+                        sev = "CRITICAL"
                     snippet = (output or "").strip()
                     if len(snippet) > 600:
                         snippet = snippet[:600] + " …"
@@ -391,9 +225,11 @@ def build_vulns(scan_results, start_idx=1, lang="cs"):
                                 "ověření a opravu.",
                                 "An nmap vuln script confirmed a service vulnerability. Requires "
                                 "manual verification and remediation.")
+                    ev = f"{sname}\n{snippet}"
+                    if cve_id:
+                        ev += f"\nNVD: {lib.cve_link('nvd', cve_id)}"
                     out.append(_mk(idx, title, sev, owasp, CATEGORY["vulns"], f"{ip}:{port}",
-                                   desc, lang, evidence=f"{sname}\n{snippet}",
-                                   recommendation=REC_VULN))
+                                   desc, lang, evidence=ev, recommendation=rec))
                     idx += 1
     return out, idx
 
@@ -420,7 +256,6 @@ def _best_tls_grade(engines_dict):
 def build_tls(scan_results, start_idx=1, lang="cs"):
     out = []
     idx = start_idx
-    grade_sev = {"F": "HIGH", "C": "MEDIUM", "B": "LOW", "A": "INFO"}
     grade_desc = {
         "F": ("Kriticky slabé TLS — SSLv2/SSLv3, nebezpečné šifry nebo chybí TLS 1.2/1.3.",
               "Critically weak TLS — SSLv2/SSLv3, insecure ciphers, or missing TLS 1.2/1.3."),
@@ -440,16 +275,17 @@ def build_tls(scan_results, start_idx=1, lang="cs"):
         grade, color, detail = _best_tls_grade(engines)
         if grade is None:
             continue
-        sev = grade_sev.get(grade, "INFO")
+        rule = lib.tls_grade_rule(grade, lang) or {"severity": "INFO", "owasp": "A04",
+                                                    "recommendation": ""}
         protos = detail.get("protocols", {})
         enabled = [p for p, v in protos.items() if v]
         title = (f"TLS hodnocení {grade} — {key}", f"TLS grade {grade} — {key}")
         ev = (f"Engine: {detail.get('engine', '?')}; "
               + ("protokoly: " if lang != "en" else "protocols: ")
               + (", ".join(enabled) if enabled else "—"))
-        out.append(_mk(idx, title, sev, "A04", CATEGORY["tls"], key,
+        out.append(_mk(idx, title, rule["severity"], rule["owasp"], CATEGORY["tls"], key,
                        grade_desc.get(grade, ("TLS audit.", "TLS audit.")), lang,
-                       evidence=ev, recommendation=REC_TLS))
+                       evidence=ev, recommendation=rule["recommendation"]))
         idx += 1
 
     certs = scan_results.get("certificates", {}) or {}
@@ -458,22 +294,25 @@ def build_tls(scan_results, start_idx=1, lang="cs"):
             continue
         status = (data.get("status") or "").lower()
         days = data.get("days")
-        sev = None
+        kind = None
         why = None
         if "expir" in status or (isinstance(days, int) and days < 0):
-            sev = "MEDIUM"
+            kind = "expired"
             why = ("Certifikát je prošlý.", "The certificate has expired.")
         elif isinstance(days, int) and days <= 15:
-            sev = "LOW"
+            kind = "expiring"
             why = (f"Certifikát brzy vyprší (za {days} dní).",
                    f"The certificate expires soon (in {days} days).")
-        if sev:
+        if kind:
+            rule = lib.certificate_rule(kind, lang) or {"severity": "MEDIUM", "owasp": "A04",
+                                                        "recommendation": ""}
             title = (f"Stav certifikátu — {key}", f"Certificate status — {key}")
-            out.append(_mk(idx, title, sev, "A04", CATEGORY["tls"], key, why, lang,
+            out.append(_mk(idx, title, rule["severity"], rule["owasp"], CATEGORY["tls"], key,
+                           why, lang,
                            evidence=f"CN={data.get('cn', '?')}, "
                                     + ("vyprší " if lang != "en" else "expires ")
                                     + str(data.get("expiry", "?")),
-                           recommendation=REC_CERT))
+                           recommendation=rule["recommendation"]))
             idx += 1
     return out, idx
 
@@ -489,12 +328,19 @@ def build_headers(scan_results, start_idx=1, lang="cs"):
         missing = [h for h, v in hdrs.items() if str(v).upper() in ("CHYBÍ", "MISSING", "")]
         if not missing:
             continue
-        severities = [HEADER_RISK[h][0] for h in missing if h in HEADER_RISK]
+        # Pravidla z knihovny pro každou chybějící hlavičku
+        rules = {h: lib.header_rule(h, lang) for h in missing}
+        severities = [r["severity"] for r in rules.values() if r]
         sev = worst(severities) if severities else "LOW"
+        # Agregovaný nález chybějících hlaviček = Security Misconfiguration (A02)
+        owasp = "A02"
         details = []
+        recs = []
         for h in missing:
-            if h in HEADER_RISK:
-                details.append("• " + _t(HEADER_RISK[h][2], lang))
+            r = rules.get(h)
+            if r:
+                details.append(f"• {h}: " + (r.get("recommendation") or ""))
+                recs.append(r.get("recommendation") or "")
         title = (f"Chybějící bezpečnostní hlavičky ({len(missing)}) — {key}",
                  f"Missing security headers ({len(missing)}) — {key}")
         desc = ("Web nevrací část doporučených bezpečnostních HTTP hlaviček, což snižuje "
@@ -502,9 +348,11 @@ def build_headers(scan_results, start_idx=1, lang="cs"):
                 "The site is missing some recommended security HTTP headers, reducing the "
                 "browser's defenses against common attacks.")
         ev_lead = "Chybí: " if lang != "en" else "Missing: "
-        out.append(_mk(idx, title, sev, "A02", CATEGORY["headers"], key, desc, lang,
+        recommendation = "\n".join(r for r in recs if r) or _t(
+            ("Doplnit chybějící bezpečnostní hlavičky.", "Add the missing security headers."), lang)
+        out.append(_mk(idx, title, sev, owasp, CATEGORY["headers"], key, desc, lang,
                        evidence=ev_lead + ", ".join(missing) + "\n" + "\n".join(details),
-                       recommendation=REC_HEADERS))
+                       recommendation=recommendation))
         idx += 1
     return out, idx
 
@@ -537,26 +385,22 @@ def build_ffuf(scan_results, start_idx=1, lang="cs"):
             base, path = url, url
         plow = (path or "").lower()
 
-        match = None
-        matched_kw = None
-        for kw, risk in FFUF_SENSITIVE:
-            if kw in plow:
-                match = risk
-                matched_kw = kw
-                break
-
-        if match:
-            sev, owasp, desc = match
-            if status in (401, 403) and matched_kw not in (".git", ".env"):
-                i = min(SEVERITY_RANK[sev] + 1, len(SEVERITIES) - 1)
+        rule, matched_kw = lib.ffuf_rule(path, lang)
+        if rule:
+            sev, owasp = rule["severity"], rule["owasp"]
+            # downgrade dle status kódu (401/403 = existuje, ale chráněno) — kromě .git/.env
+            dg = lib.ffuf_status_downgrade(status)
+            if dg and matched_kw not in (".git", ".env"):
+                i = min(SEVERITY_RANK[sev] + dg, len(SEVERITIES) - 1)
                 sev = SEVERITIES[i]
+            label = rule.get("name") or path
             title = (f"Citlivá cesta: {path} (HTTP {status})",
                      f"Sensitive path: {path} (HTTP {status})")
-            full_desc = (_t(desc, "cs") + ".", _t(desc, "en") + ".")
+            full_desc = (f"{label}.", f"{label}.")
             ev = (f"{url} → HTTP {status}, "
                   + ("délka " if lang != "en" else "length ") + str(data.get("length", "?")))
             out.append(_mk(idx, title, sev, owasp, CATEGORY["ffuf"], base, full_desc, lang,
-                           evidence=ev, recommendation=REC_FFUF_SENS))
+                           evidence=ev, recommendation=rule["recommendation"]))
             idx += 1
         else:
             per_target_generic[base] = per_target_generic.get(base, 0) + 1
@@ -570,8 +414,12 @@ def build_ffuf(scan_results, start_idx=1, lang="cs"):
                 "themselves, but they expand the attack surface (forced browsing).")
         ev = (f"{count} " + ("cest s odpovědí 2xx/3xx/40x" if lang != "en"
                              else "paths responding 2xx/3xx/40x"))
+        rec_gen = ("Projít nalezené cesty, odstranit nepotřebné, citlivé chránit "
+                   "autentizací/autorizací.",
+                   "Review discovered paths, remove unnecessary ones, protect sensitive "
+                   "ones with authentication/authorization.")
         out.append(_mk(idx, title, "INFO", "A01", CATEGORY["ffuf"], base, desc, lang,
-                       evidence=ev, recommendation=REC_FFUF_GEN))
+                       evidence=ev, recommendation=rec_gen))
         idx += 1
     return out, idx
 
@@ -691,7 +539,7 @@ def build_webserver(scan_results, start_idx=1, lang="cs"):
             if family == "neznámý" and not detail:
                 continue
             has_version = any(ch.isdigit() for ch in detail)
-            sev = "LOW" if has_version else "INFO"
+            rule = lib.webserver_rule(has_version, lang)
             title = (f"Webserver: {family}" + (f" ({detail})" if detail else ""),
                      f"Web server: {family}" + (f" ({detail})" if detail else ""))
             if has_version:
@@ -700,11 +548,12 @@ def build_webserver(scan_results, start_idx=1, lang="cs"):
             else:
                 desc = ("Webový server prozrazuje svůj typ, což usnadňuje cílení útoků.",
                         "The web server discloses its type, which helps targeting attacks.")
-            out.append(_mk(idx, title, sev, "A02", CATEGORY["webserver"], target, desc, lang,
+            out.append(_mk(idx, title, rule["severity"], rule["owasp"], CATEGORY["webserver"],
+                           target, desc, lang,
                            evidence=f"{family} | {detail or '—'} "
                                     + (f"(zdroj: {rec.get('source', '?')})" if lang != "en"
                                        else f"(source: {rec.get('source', '?')})"),
-                           recommendation=REC_WEBSERVER))
+                           recommendation=rule["recommendation"]))
             idx += 1
     return out, idx
 

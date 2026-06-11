@@ -24,6 +24,8 @@ nmap_scan_results_*/
 *.csv
 # ffuf_raw_results_*.json, projektova data
 *.json
+# vyjimka: referencni knihovna klasifikaci (zdrojovy data soubor v repu)
+!nmapscanner/data/classification_library.json
 # nmap / testssl XML vystupy
 *.xml
 # pripadne HTML reporty
@@ -88,3 +90,6 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# nahled reportu (lokalni, neverzovat)
+.preview/

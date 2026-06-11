@@ -240,7 +240,8 @@ def test_english_titles_and_descriptions():
     telnet = [f for f in r["findings"] if "23/tcp" in f["title"]]
     assert telnet
     assert "Open port" in telnet[0]["title"]
-    assert "without encryption" in telnet[0]["description"]
+    # doporučení nově z knihovny — Telnet → nahradit SSH
+    assert "SSH" in telnet[0]["recommendation"]
     assert telnet[0]["severity"] == "HIGH"  # severita jazykově nezávislá
 
 
