@@ -134,10 +134,20 @@ def port_default(lang="cs"):
                          defaults={"severity": "INFO", "owasp": "A02"})
 
 
+def _iter_keyed(coll):
+    """Yielduje (match, entry) z dict (klíč=match) i ze staršího list formátu."""
+    if isinstance(coll, dict):
+        for k, v in coll.items():
+            yield k, v
+    elif isinstance(coll, list):
+        for e in coll:
+            yield e.get("match", ""), e
+
+
 def service_keyword_rule(service_name, lang="cs"):
     name = (service_name or "").lower()
-    for entry in library().get("service_keywords", []) or []:
-        if entry.get("match", "") in name:
+    for match, entry in _iter_keyed(library().get("service_keywords", {})):
+        if match and match in name:
             return _resolve_rule(entry, lang)
     return None
 
@@ -175,9 +185,9 @@ def header_keys():
 def ffuf_rule(path, lang="cs"):
     """Najde citlivé pravidlo pro cestu; vrací (resolved_rule, matched_key) nebo (None, None)."""
     plow = (path or "").lower()
-    for entry in library().get("ffuf", []) or []:
-        if entry.get("match", "") in plow:
-            return _resolve_rule(entry, lang), entry.get("match", "")
+    for match, entry in _iter_keyed(library().get("ffuf", {})):
+        if match and match in plow:
+            return _resolve_rule(entry, lang), match
     return None, None
 
 

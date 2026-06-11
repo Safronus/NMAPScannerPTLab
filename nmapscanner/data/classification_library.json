@@ -492,9 +492,8 @@
       "en": "Verify the service is needed; close unnecessary ports or restrict them to a management network/VPN. Keep publicly reachable services (outside VPN) only when intended."
     }
   },
-  "service_keywords": [
-    {
-      "match": "telnet",
+  "service_keywords": {
+    "telnet": {
       "severity": "HIGH",
       "owasp": "A04",
       "name": {
@@ -506,8 +505,7 @@
         "en": "Disable Telnet, replace with SSH."
       }
     },
-    {
-      "match": "ftp",
+    "ftp": {
       "severity": "MEDIUM",
       "owasp": "A04",
       "name": {
@@ -519,8 +517,7 @@
         "en": "Replace with SFTP/FTPS, disable anonymous access."
       }
     },
-    {
-      "match": "vnc",
+    "vnc": {
       "severity": "HIGH",
       "owasp": "A07",
       "name": {
@@ -532,8 +529,7 @@
         "en": "Only via VPN/SSH tunnel, strong password."
       }
     },
-    {
-      "match": "ms-wbt",
+    "ms-wbt": {
       "severity": "MEDIUM",
       "owasp": "A07",
       "name": {
@@ -545,8 +541,7 @@
         "en": "Only via VPN, NLA + MFA."
       }
     },
-    {
-      "match": "rdp",
+    "rdp": {
       "severity": "MEDIUM",
       "owasp": "A07",
       "name": {
@@ -558,8 +553,7 @@
         "en": "Only via VPN, NLA + MFA."
       }
     },
-    {
-      "match": "mysql",
+    "mysql": {
       "severity": "HIGH",
       "owasp": "A01",
       "name": {
@@ -571,8 +565,7 @@
         "en": "Do not expose the database, restrict to app tier/VPN."
       }
     },
-    {
-      "match": "postgres",
+    "postgres": {
       "severity": "HIGH",
       "owasp": "A01",
       "name": {
@@ -584,8 +577,7 @@
         "en": "Do not expose the database, restrict pg_hba.conf."
       }
     },
-    {
-      "match": "mongodb",
+    "mongodb": {
       "severity": "HIGH",
       "owasp": "A01",
       "name": {
@@ -597,8 +589,7 @@
         "en": "Enable authorization, do not expose."
       }
     },
-    {
-      "match": "redis",
+    "redis": {
       "severity": "HIGH",
       "owasp": "A01",
       "name": {
@@ -610,8 +601,7 @@
         "en": "Set password/ACL, bind to localhost."
       }
     },
-    {
-      "match": "microsoft-ds",
+    "microsoft-ds": {
       "severity": "HIGH",
       "owasp": "A01",
       "name": {
@@ -623,8 +613,7 @@
         "en": "Do not expose SMB, disable SMBv1."
       }
     },
-    {
-      "match": "snmp",
+    "snmp": {
       "severity": "MEDIUM",
       "owasp": "A02",
       "name": {
@@ -636,8 +625,7 @@
         "en": "SNMPv3, change community, restrict to management network."
       }
     },
-    {
-      "match": "ldap",
+    "ldap": {
       "severity": "LOW",
       "owasp": "A02",
       "name": {
@@ -649,7 +637,7 @@
         "en": "LDAPS, disable anonymous bind."
       }
     }
-  ],
+  },
   "tls_grade": {
     "F": {
       "severity": "HIGH",
@@ -799,9 +787,8 @@
       }
     }
   },
-  "ffuf": [
-    {
-      "match": ".git",
+  "ffuf": {
+    ".git": {
       "severity": "CRITICAL",
       "owasp": "A02",
       "name": {
@@ -817,8 +804,7 @@
         "en": "Pulling /.git allows reconstructing the full source code, history and exposing secrets (passwords, keys)."
       }
     },
-    {
-      "match": ".env",
+    ".env": {
       "severity": "CRITICAL",
       "owasp": "A02",
       "name": {
@@ -834,8 +820,7 @@
         "en": "Leaking .env exposes DB credentials, API keys and tokens — a direct path to taking over systems."
       }
     },
-    {
-      "match": ".svn",
+    ".svn": {
       "severity": "HIGH",
       "owasp": "A02",
       "name": {
@@ -847,8 +832,7 @@
         "en": "The /.svn metadata allows source reconstruction. Block access and remove from the webroot."
       }
     },
-    {
-      "match": "wp-config",
+    "wp-config": {
       "severity": "CRITICAL",
       "owasp": "A02",
       "name": {
@@ -860,8 +844,7 @@
         "en": "WordPress configuration with DB credentials is accessible. Block, ROTATE the DB password and salts."
       }
     },
-    {
-      "match": "phpmyadmin",
+    "phpmyadmin": {
       "severity": "HIGH",
       "owasp": "A01",
       "name": {
@@ -873,8 +856,7 @@
         "en": "Database administration is exposed. Do not expose publicly (VPN/IP allowlist only), strong passwords + MFA, current version, consider renaming the path."
       }
     },
-    {
-      "match": "adminer",
+    "adminer": {
       "severity": "HIGH",
       "owasp": "A01",
       "name": {
@@ -886,8 +868,7 @@
         "en": "A DB management tool is exposed. Remove from production or restrict to VPN/IP allowlist."
       }
     },
-    {
-      "match": "/backup",
+    "/backup": {
       "severity": "HIGH",
       "owasp": "A02",
       "name": {
@@ -899,8 +880,7 @@
         "en": "Backups are publicly accessible — may contain source code, DB dumps, passwords. Remove from the webroot, block access."
       }
     },
-    {
-      "match": ".sql",
+    ".sql": {
       "severity": "HIGH",
       "owasp": "A02",
       "name": {
@@ -912,8 +892,7 @@
         "en": "An SQL dump is publicly accessible — data leak. Remove from the webroot, investigate the leak, rotate credentials."
       }
     },
-    {
-      "match": ".bak",
+    ".bak": {
       "severity": "MEDIUM",
       "owasp": "A02",
       "name": {
@@ -925,8 +904,7 @@
         "en": "A backup file (.bak) may reveal source/config. Remove from the webroot and block such extensions."
       }
     },
-    {
-      "match": ".old",
+    ".old": {
       "severity": "MEDIUM",
       "owasp": "A02",
       "name": {
@@ -938,8 +916,7 @@
         "en": "An old file version may reveal code/config. Remove, block such extensions."
       }
     },
-    {
-      "match": ".zip",
+    ".zip": {
       "severity": "MEDIUM",
       "owasp": "A02",
       "name": {
@@ -951,8 +928,7 @@
         "en": "An archive in the webroot may contain sensitive data. Remove, block listing and download of archives."
       }
     },
-    {
-      "match": ".tar.gz",
+    ".tar.gz": {
       "severity": "MEDIUM",
       "owasp": "A02",
       "name": {
@@ -964,8 +940,7 @@
         "en": "An archive in the webroot may contain sensitive data. Remove it."
       }
     },
-    {
-      "match": "actuator",
+    "actuator": {
       "severity": "HIGH",
       "owasp": "A02",
       "name": {
@@ -977,8 +952,7 @@
         "en": "Actuator endpoints may reveal config, env variables and even allow app control. Secure (authentication), expose only what is necessary (e.g. /health), do not expose publicly."
       }
     },
-    {
-      "match": "server-status",
+    "server-status": {
       "severity": "MEDIUM",
       "owasp": "A02",
       "name": {
@@ -990,8 +964,7 @@
         "en": "mod_status reveals internal server and request info. Restrict access to localhost/management."
       }
     },
-    {
-      "match": "server-info",
+    "server-info": {
       "severity": "MEDIUM",
       "owasp": "A02",
       "name": {
@@ -1003,8 +976,7 @@
         "en": "mod_info reveals server configuration. Disable or restrict to localhost."
       }
     },
-    {
-      "match": ".htaccess",
+    ".htaccess": {
       "severity": "MEDIUM",
       "owasp": "A02",
       "name": {
@@ -1016,8 +988,7 @@
         "en": "The .htaccess config file is readable. Block access to dotfiles."
       }
     },
-    {
-      "match": "/admin",
+    "/admin": {
       "severity": "MEDIUM",
       "owasp": "A01",
       "name": {
@@ -1029,8 +1000,7 @@
         "en": "An administration interface is reachable. Restrict access (VPN/IP allowlist), strong authentication + MFA, brute-force protection."
       }
     },
-    {
-      "match": "wp-admin",
+    "wp-admin": {
       "severity": "MEDIUM",
       "owasp": "A01",
       "name": {
@@ -1042,8 +1012,7 @@
         "en": "WP admin reachable — restrict access (IP/VPN), MFA, brute-force protection (wp-login)."
       }
     },
-    {
-      "match": "wp-login",
+    "wp-login": {
       "severity": "MEDIUM",
       "owasp": "A07",
       "name": {
@@ -1055,8 +1024,7 @@
         "en": "The login page is a brute-force vector. Rate-limiting, MFA, strong passwords, optionally restrict to VPN/IP."
       }
     },
-    {
-      "match": "rdweb",
+    "rdweb": {
       "severity": "MEDIUM",
       "owasp": "A07",
       "name": {
@@ -1068,8 +1036,7 @@
         "en": "RD Web Access on the public internet enables login guessing and reveals domain/OS. Only via VPN, MFA, brute-force protection."
       }
     },
-    {
-      "match": "/rpc",
+    "/rpc": {
       "severity": "MEDIUM",
       "owasp": "A07",
       "name": {
@@ -1081,8 +1048,7 @@
         "en": "RPC services exposed on the internet with login. Do not expose publicly without VPN."
       }
     },
-    {
-      "match": "aspnet_client",
+    "aspnet_client": {
       "severity": "LOW",
       "owasp": "A02",
       "name": {
@@ -1094,8 +1060,7 @@
         "en": "An existing folder reveals the technology (ASP.NET). Configure the server to return 404 instead of 403 and not reveal structure."
       }
     },
-    {
-      "match": "trace.axd",
+    "trace.axd": {
       "severity": "MEDIUM",
       "owasp": "A02",
       "name": {
@@ -1107,8 +1072,7 @@
         "en": "Trace.axd may reveal sensitive application/request info. Disable tracing in production (web.config: trace enabled=\"false\")."
       }
     },
-    {
-      "match": "phpinfo",
+    "phpinfo": {
       "severity": "MEDIUM",
       "owasp": "A02",
       "name": {
@@ -1120,8 +1084,7 @@
         "en": "phpinfo() reveals server config, paths and modules. Remove from production."
       }
     },
-    {
-      "match": "/config",
+    "/config": {
       "severity": "MEDIUM",
       "owasp": "A02",
       "name": {
@@ -1133,8 +1096,7 @@
         "en": "A configuration path is accessible. Verify it does not reveal secrets; block access."
       }
     },
-    {
-      "match": ".ds_store",
+    ".ds_store": {
       "severity": "LOW",
       "owasp": "A02",
       "name": {
@@ -1146,8 +1108,7 @@
         "en": ".DS_Store reveals the directory structure. Remove and block dotfiles."
       }
     },
-    {
-      "match": "robots.txt",
+    "robots.txt": {
       "severity": "INFO",
       "owasp": "A02",
       "name": {
@@ -1159,7 +1120,7 @@
         "en": "robots.txt may hint at hidden paths — do not rely on it to hide sensitive paths (security by obscurity does not work)."
       }
     }
-  ],
+  },
   "ffuf_status": {
     "200": {
       "note": {

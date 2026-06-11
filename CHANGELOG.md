@@ -4,6 +4,23 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.12.6] - 2026-06-11
+
+### Opraveno
+- **Nečitelné názvy kategorií ve správci knihovny v tmavém režimu** (tmavá na tmavém).
+  Nadpisy kategorií jsou nově v akcentní červené se zvýrazněným pozadím — čitelné
+  v tmavém i světlém režimu.
+
+### Přidáno
+- **Správce knihovny ukazuje VŠECHNA pravidla (91).** Dříve chyběly kategorie
+  **Služby (klíčová slova)** a **Cesty/soubory (ffuf)** — byly interně seznamy a
+  nešly editovat. Převedeny na editovatelné záznamy; nyní je v manažeru 7 kategorií
+  (Porty 35, Služby 12, TLS známky 4, Hlavičky 6, Certifikáty 3, ffuf 27, CVE 4).
+  Záhlaví ukazuje celkový počet.
+- **Přidávání vlastních pravidel** ve správci (tlačítko **➕ Přidat pravidlo**) —
+  výběr kategorie + klíč (port/služba/hlavička/cesta/CVE/…) a editace severity,
+  OWASP, doporučení a dopadu (CZ/EN). Ukládá se do uživatelské knihovny.
+
 ## [5.12.5] - 2026-06-11
 
 ### Přidáno

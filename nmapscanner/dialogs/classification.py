@@ -175,9 +175,20 @@ class ClassificationManagerDialog(QDialog):
 
     # editovatelné dict-kategorie (klíč → pravidlo)
     DICT_CATEGORIES = [
-        ("ports", "Porty"), ("tls_grade", "TLS známky"), ("headers", "Bezpečnostní hlavičky"),
-        ("certificate", "Certifikáty"), ("cve", "CVE"),
+        ("ports", "Porty"), ("service_keywords", "Služby (klíčová slova)"),
+        ("tls_grade", "TLS známky"), ("headers", "Bezpečnostní hlavičky"),
+        ("certificate", "Certifikáty"), ("ffuf", "Cesty/soubory (ffuf)"), ("cve", "CVE"),
     ]
+    # nápověda ke klíči pro nové pravidlo dle kategorie
+    KEY_HINT = {
+        "ports": "číslo portu (např. 3306)",
+        "service_keywords": "klíčové slovo služby (např. redis)",
+        "tls_grade": "známka A/B/C/F",
+        "headers": "název hlavičky (např. X-Frame-Options)",
+        "certificate": "typ (expired / expiring / self_signed)",
+        "ffuf": "cesta/soubor (např. .git, /admin, .env)",
+        "cve": "CVE id (např. CVE-2021-44228)",
+    }
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -199,6 +210,9 @@ class ClassificationManagerDialog(QDialog):
         v.addWidget(self.tree, 1)
 
         row = QHBoxLayout()
+        add = QPushButton("➕ Přidat pravidlo")
+        add.clicked.connect(self._add_rule)
+        row.addWidget(add)
         reset = QPushButton("↺ Reset na výchozí (smazat moje změny)")
         reset.clicked.connect(self._reset)
         row.addWidget(reset)
@@ -208,19 +222,30 @@ class ClassificationManagerDialog(QDialog):
         row.addWidget(close)
         v.addLayout(row)
 
+        self._info = info
         self._reload()
 
     def _reload(self):
         self.tree.clear()
         data = lib.library(force_reload=True)
+        total = sum(len(data.get(cat, {}) or {}) for cat, _ in self.DICT_CATEGORIES)
+        if getattr(self, "_info", None):
+            self._info.setText(f"Pravidla referenční knihovny — celkem {total}. "
+                               "Severity + OWASP + doporučení + dopad. Změny se ukládají do "
+                               "uživatelské knihovny a překrývají výchozí. Dvojklik = editace, "
+                               "➕ přidá vlastní pravidlo.")
         for cat, label in self.DICT_CATEGORIES:
             rules = data.get(cat, {}) or {}
             if not rules:
                 continue
             head = QTreeWidgetItem(self.tree, [f"{label}  ({len(rules)})"])
-            head.setFont(0, QFont("Arial", 10, QFont.Bold))
-            head.setForeground(0, QColor("#16233f"))
-            head.setExpanded(cat in ("tls_grade", "certificate"))
+            f = QFont("Arial", 10, QFont.Bold)
+            head.setFont(0, f)
+            # čitelné v tmavém i světlém režimu (PT Lab akcent + zvýrazněné pozadí)
+            head.setForeground(0, QColor("#E2231A"))
+            for c in range(4):
+                head.setBackground(c, QColor(226, 35, 26, 28))
+            head.setExpanded(True)
             head.setFirstColumnSpanned(True)
             for key in sorted(rules.keys(), key=lambda k: (len(k), k)):
                 rule = rules[key]
@@ -249,6 +274,36 @@ class ClassificationManagerDialog(QDialog):
         merged = dict(rule)
         merged.update(new_rule)
         user[cat][key] = merged
+        lib.save_user_library(user)
+        self._reload()
+
+    def _add_rule(self):
+        """Přidá vlastní pravidlo do uživatelské knihovny."""
+        from PySide6.QtWidgets import QInputDialog
+        cats = self.DICT_CATEGORIES
+        labels = [l for _, l in cats]
+        label, ok = QInputDialog.getItem(self, "Nové pravidlo", "Kategorie:", labels, 0, False)
+        if not ok:
+            return
+        cat = next(c for c, l in cats if l == label)
+        hint = self.KEY_HINT.get(cat, "klíč")
+        key, ok = QInputDialog.getText(self, "Nové pravidlo", f"Klíč ({hint}):")
+        key = (key or "").strip()
+        if not ok or not key:
+            return
+        existing = (lib.library().get(cat, {}) or {})
+        if key in existing:
+            if QMessageBox.question(self, "Pravidlo existuje",
+                                    f"Pravidlo '{key}' v kategorii už existuje. Přepsat?",
+                                    QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+                return
+        rule = {"severity": "MEDIUM", "owasp": "A02",
+                "recommendation": {"cs": "", "en": ""}, "impact": {"cs": "", "en": ""}}
+        dlg = RuleEditDialog(f"{cat} / {key}", rule, self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        user = lib.user_library()
+        user.setdefault(cat, {})[key] = dlg.get_rule()
         lib.save_user_library(user)
         self._reload()
 
