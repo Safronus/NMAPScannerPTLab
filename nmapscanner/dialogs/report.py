@@ -72,7 +72,11 @@ class ReportDialog(QDialog):
 
         self.tabs.addTab(self._tab_general(), "Report")
         self.tabs.addTab(self._tab_texts(), "Texty")
-        self.tabs.addTab(self._tab_comments(), "Komentáře")
+        self._comments_tab_index = self.tabs.addTab(self._tab_comments(), "Komentáře")
+        # Při přepnutí na záložku Komentáře vždy načti aktuální nálezy (zachová edity)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+        # Uložit konfiguraci (texty + komentáře) do projektu při ZAVŘENÍ dialogu
+        self.finished.connect(lambda *_: self._persist_on_close())
 
         # stav + tlačítka
         self.status_label = QLabel("")
@@ -213,10 +217,25 @@ class ReportDialog(QDialog):
         return [s for s in ALL_SECTIONS
                 if self.section_checks[s].isEnabled() and self.section_checks[s].isChecked()]
 
+    def _on_tab_changed(self, idx):
+        if idx == getattr(self, "_comments_tab_index", -1):
+            self._refresh_comments_table()
+
+    def _persist_on_close(self):
+        """Uloží konfiguraci (typ, jazyk, texty, metadata, komentáře) do projektu
+        i bez vygenerování PDF — vše se má pamatovat."""
+        try:
+            self._save_cfg(self._collect_comments())
+        except Exception:
+            pass
+
     def _refresh_comments_table(self):
+        # Zachovat dosud napsané (neuložené) komentáře — přepnutí záložky je nesmí smazat
+        saved = dict(self._cfg.get("comments", {}))
+        saved.update(self._collect_comments())
+
         result = build_findings(self.scan_results, sections=self._selected_sections(),
                                 min_severity=self.sev_combo.currentData(), lang=self._lang())
-        saved = dict(self._cfg.get("comments", {}))
         self._comment_keys = []
         findings = result["findings"]
         self.comments_table.setRowCount(len(findings))
@@ -232,8 +251,8 @@ class ReportDialog(QDialog):
 
     @staticmethod
     def _comment_key(f):
-        # jazykově co nejstabilnější klíč
-        return f"{f.get('target','')}|{f.get('section','')}|{f.get('owasp','')}|{f.get('id','')}"
+        # Stabilní klíč nezávislý na pořadovém id nálezu (přežije re-scan i přerovnání)
+        return f"{f.get('target','')}|{f.get('section','')}|{f.get('owasp','')}|{f.get('title','')}"
 
     def _collect_comments(self):
         out = {}

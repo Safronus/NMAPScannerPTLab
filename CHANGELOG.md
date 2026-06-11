@@ -4,6 +4,20 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.10.2] - 2026-06-11
+
+### Opraveno
+- **Komentáře a texty v dialogu reportu se nepamatovaly.** Konfigurace (typ,
+  jazyk, sekce, volby, metadata, **volné texty i komentáře k nálezům**) se
+  ukládala jen při generování/náhledu PDF — když uživatel napsal komentáře a
+  zavřel dialog bez generování, ztratily se. Nově se **ukládá do projektu i při
+  zavření dialogu** (signál `finished`).
+- **Komentáře přežijí re-scan.** Klíč komentáře už nezávisí na pořadovém `id`
+  nálezu (F-001…), ale na obsahu (cíl + oblast + OWASP + název), takže se
+  po opětovném skenu znovu napárují na správný nález.
+- **Přepnutí záložky nezahodí rozepsané komentáře** a záložka „Komentáře" se při
+  přepnutí vždy naplní aktuálními nálezy.
+
 ## [5.10.1] - 2026-06-11
 
 ### Změněno
