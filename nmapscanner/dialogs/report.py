@@ -387,12 +387,42 @@ class ReportDialog(QDialog):
 
         self.generate_btn.setEnabled(False)
         self.status_label.setText(f"Generuji PDF ({result['total']} nálezů)…")
-        self._pdf_meta = (path, rtype, lang)
+        # Render do dočasného PDF, pak razítko hlavičky/patičky/čísel stran do finálního.
+        # Okraje MUSÍ být přes QPageLayout — QtWebEngine ignoruje CSS @page margin.
+        from PySide6.QtGui import QPageLayout, QPageSize
+        from PySide6.QtCore import QMarginsF
+        layout = QPageLayout(QPageSize(QPageSize.A4), QPageLayout.Portrait,
+                             QMarginsF(16, 30, 16, 18), QPageLayout.Millimeter)
+        raw_path = path + ".raw.pdf"
+        self._pdf_meta = (path, raw_path, rtype, lang)
         self._pdf_page = QWebEnginePage(self)
         self._pdf_page.loadFinished.connect(
-            lambda ok: self._pdf_page.printToPdf(path) if ok else self._finish_pdf(False, path))
-        self._pdf_page.pdfPrintingFinished.connect(lambda p, ok: self._finish_pdf(ok, p))
+            lambda ok: self._pdf_page.printToPdf(raw_path, layout) if ok else self._finish_pdf(False, path))
+        self._pdf_page.pdfPrintingFinished.connect(lambda p, ok: self._on_raw_pdf(ok))
         self._pdf_page.setHtml(html)
+
+    def _on_raw_pdf(self, ok):
+        path, raw_path, rtype, lang = self._pdf_meta
+        if not ok:
+            self._finish_pdf(False, path)
+            return
+        # Dokreslit hlavičku/patičku/čísla stran (post-processing)
+        try:
+            from ..core.report_pdf import stamp_report
+            stamp_report(raw_path, path, lang)
+            try:
+                os.remove(raw_path)
+            except OSError:
+                pass
+        except Exception as e:
+            # Razítkování selhalo → použít aspoň nerazítkovaný render
+            print(f"DEBUG: stamp_report selhalo: {e}")
+            try:
+                os.replace(raw_path, path)
+            except OSError:
+                self._finish_pdf(False, path)
+                return
+        self._finish_pdf(True, path)
 
     def _finish_pdf(self, ok, path):
         self.generate_btn.setEnabled(True)
@@ -402,7 +432,7 @@ class ReportDialog(QDialog):
             return
         # Registrovat do manažeru reportů
         try:
-            _p, rtype, lang = getattr(self, "_pdf_meta", (path, "technical", "cs"))
+            _p, _raw, rtype, lang = getattr(self, "_pdf_meta", (path, "", "technical", "cs"))
             title = f"{self.title_edit.text().strip() or 'Pentest Report'} " \
                     f"({'manažerský' if rtype == 'management' else 'technický'}, {lang.upper()})"
             report_store.register_report(self.reports_dir, path, "report_full", rtype, lang, title)

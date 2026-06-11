@@ -4,6 +4,23 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.9.3] - 2026-06-11
+
+### Opraveno
+- **Rozbitá hlavička/patička v PDF reportu.** Opakující se hlavička (logo +
+  adresa) se přes `position: fixed` v QtWebEngine renderovala nespolehlivě —
+  na titulce chyběla, na dalších stranách **překrývala text**; navíc `printToPdf`
+  ignoroval CSS okraje a sázel obsah až ke kraji. Nově:
+  - okraje se nastavují přes **QPageLayout** (QtWebEngine ignoruje CSS `@page
+    margin`), takže obsah respektuje okraje;
+  - hlavička (**logo PT Lab + adresa laboratoře + „N stran"**) a patička
+    (**„CITLIVÁ DATA / SENSITIVE DATA" + čísla stran „i / N"**) se dokreslují
+    **post-processingem** (`core/report_pdf.py`, reportlab + pypdf) identicky na
+    každou stranu — včetně titulky a se správnou diakritikou (registrace serif
+    TTF fontu, macOS i Linux).
+- Nové závislosti `reportlab` a `pypdf` v `requirements.txt` (auto-instalace při
+  aktualizaci).
+
 ## [5.9.2] - 2026-06-11
 
 ### Přidáno

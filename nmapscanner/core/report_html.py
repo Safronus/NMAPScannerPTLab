@@ -14,7 +14,6 @@ import html as _html
 from .report_classify import (
     SEVERITIES, SEVERITY_COLOR, CVSS_BAND, OWASP_2025, section_title,
 )
-from .report_assets import ptlab_logo_uri
 
 # Barvy PT Lab tématu
 RED = "#E2231A"
@@ -187,7 +186,10 @@ def _css():
         f".risk-{s.lower()}{{background:{SEVERITY_COLOR[s]};color:#fff;}}" for s in SEVERITIES
     )
     return f"""
-    @page {{ size: A4; margin: 34mm 16mm 22mm 16mm; }}
+    /* Okraje řídí QPageLayout v printToPdf (QtWebEngine ignoruje CSS @page margin),
+       tady tedy 0. Místo pro hlavičku/patičku rezervují okraje QPageLayout a
+       dokresluje je post-processing (core/report_pdf.py). */
+    @page {{ size: A4; margin: 0; }}
     * {{ box-sizing: border-box; }}
     body {{ font-family: 'Times New Roman', Georgia, serif; color: {INK};
             font-size: 12.5px; line-height: 1.5; margin: 0; }}
@@ -195,18 +197,6 @@ def _css():
     p {{ text-align: justify; margin: 6px 0; }}
     a {{ color: {BLUE_DARK}; text-decoration: none; }}
     ul {{ margin: 6px 0; padding-left: 22px; }}
-
-    /* Opakující se hlavička — QtWebEngine kotví fixed prvky obráceně, proto
-       logo+adresa přes 'bottom' (vykreslí se NAHOŘE v horním okraji strany). */
-    .run-header {{ position: fixed; bottom: -20mm; left: 0; right: 0; height: 20mm;
-                   display: flex; align-items: center; gap: 10px; }}
-    .run-header img {{ height: 17mm; }}
-    .run-header .addr {{ font-style: italic; font-weight: bold; font-size: 11px;
-                         line-height: 1.25; }}
-    /* Opakující se patička — přes 'top' (vykreslí se DOLE ve spodním okraji). */
-    .run-footer {{ position: fixed; top: -14mm; left: 0; right: 0; height: 12mm;
-                   text-align: center; }}
-    .run-footer .sens {{ color: {RED}; font-weight: bold; font-size: 11px; }}
 
     .section {{ margin: 16px 0; }}
     h1.title {{ text-align: center; font-size: 30px; margin-top: 70mm; }}
@@ -245,15 +235,9 @@ def _css():
     """
 
 
-def _running_frame(lang):
-    logo = ptlab_logo_uri()
-    img = f'<img src="{logo}">' if logo else ""
-    addr = (f'<div class="addr">{_esc(T("lab_line1", lang))}<br>'
-            f'{_esc(T("lab_line2", lang))}<br>{_esc(T("lab_line3", lang))}</div>')
-    header = f'<div class="run-header">{img}{addr}</div>'
-    footer = (f'<div class="run-footer"><span class="sens">'
-              f'{_esc(T("sensitive", lang))}</span></div>')
-    return header + footer
+# Pozn.: opakující se hlavička (logo + adresa) a patička (SENSITIVE + čísla stran)
+# se NEkreslí v HTML — QtWebEngine je napříč stranami renderuje nespolehlivě.
+# Dokresluje je post-processing v ``core/report_pdf.py`` na každou stranu.
 
 
 # ===========================================================================
@@ -537,7 +521,6 @@ def build_report(meta, result, options=None):
     return f"""<!DOCTYPE html><html lang="{lang}"><head><meta charset="utf-8">
     <title>{_esc(meta.get('title', T('report', lang)))}</title><style>{_css()}</style></head>
     <body>
-      {_running_frame(lang)}
       {_cover(meta, options, lang)}
       <div class="pb"></div>
       {body}
