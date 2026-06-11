@@ -4,6 +4,16 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.12.3] - 2026-06-11
+
+### Změněno
+- **Organizace nálezů v technickém reportu dle typu testu → cíl → závažnost.**
+  Hlavní část „5. Výsledky testů" je nově členěná na podsekce dle druhu testu
+  (5.1 Otevřené porty, 5.2 Identifikace služeb, 5.3 Zranitelnosti, 5.4 TLS audit,
+  5.5 Hlavičky, 5.6 ffuf, 5.7 Webserver, ZAP), uvnitř dle cíle (IP) a seřazené
+  dle závažnosti; u každého typu testu jsou detailní karty HIGH/CRITICAL nálezů.
+  Obsah (TOC) tyto podsekce automaticky zahrnuje.
+
 ## [5.12.2] - 2026-06-11
 
 ### Přidáno

@@ -14,7 +14,8 @@ renderuje nespolehlivě. Okraje řídí QPageLayout v ``printToPdf``.
 import html as _html
 
 from .report_classify import (
-    SEVERITIES, SEVERITY_COLOR, CVSS_BAND, OWASP_2025, section_title,
+    SEVERITIES, SEVERITY_RANK, SEVERITY_COLOR, CVSS_BAND, OWASP_2025, section_title,
+    ALL_SECTIONS,
 )
 
 # Paleta PT Lab (moderní)
@@ -445,6 +446,35 @@ def _finding_card(f, lang, options, comments):
     return "".join(parts)
 
 
+def results_subsections(result, lang):
+    """Podsekce výsledků dle typu testu (jen ty, co mají nález) — pořadí + nadpisy
+    „5.N <Oblast>". Sdílené reportem i obsahem (TOC)."""
+    by_section = {}
+    for f in result.get("findings", []):
+        by_section.setdefault(f.get("section", ""), []).append(f)
+    out = []
+    n = 0
+    for sec in ALL_SECTIONS:
+        if by_section.get(sec):
+            n += 1
+            out.append((sec, f"5.{n}. {section_title(sec, lang)}", by_section[sec]))
+    return out
+
+
+def _section_ip_table(items, lang):
+    """Kompaktní tabulka nálezů pro jeden cíl v rámci typu testu: Port | Nález | Riziko."""
+    rows = ""
+    for f in sorted(items, key=lambda x: SEVERITY_RANK[x["severity"]]):
+        sev = f["severity"]
+        owasp_html = f'<span class="owasp">{_esc(f["owasp"])}</span> ' if f.get("owasp") else ""
+        rows += (f'<tr><td>{_esc(_port_of(f["target"]) or "—")}</td>'
+                 f'<td>{owasp_html}{_esc(f["title"])}</td>'
+                 f'<td class="risk-cell sev-{sev.lower()}">{SEV_LABEL[sev]}</td></tr>')
+    return (f'<table><tr><th style="width:60px">{_esc(T("col_ports", lang))}</th>'
+            f'<th>{_esc(T("col_vuln", lang))}</th>'
+            f'<th style="width:42px">{_esc(T("col_risk", lang))}</th></tr>{rows}</table>')
+
+
 def _technical_results(result, lang, options):
     findings = result.get("findings", [])
     comments = options.get("comments", {}) or {}
@@ -452,25 +482,26 @@ def _technical_results(result, lang, options):
         return (f'<div class="section pb"><h2>{_esc(T("h_results", lang))}</h2>'
                 f'<p class="lead">{_esc(T("no_findings", lang))}</p></div>')
 
-    # 5.1 souhrnná tabulka per IP
-    by_ip = {}
-    for f in findings:
-        by_ip.setdefault(_ip_of(f["target"]), []).append(f)
-    tbl = ""
-    for ip in sorted(by_ip.keys()):
-        tbl += f'<h3>{_esc(ip)}</h3>{_findings_summary_table(by_ip[ip], lang)}'
-
-    # 5.2 detailní karty jen pro HIGH/CRITICAL
-    detail_cards = [_finding_card(f, lang, options, comments)
-                    for f in findings if f["severity"] in ("CRITICAL", "HIGH")]
-    detail = ""
-    if detail_cards:
-        detail = (f'<h3>{_esc(T("h_results_detail", lang))}</h3>'
-                  f'<p class="lead">{_esc(T("detail_note", lang))}</p>' + "".join(detail_cards))
+    blocks = ""
+    for sec, heading, secf in results_subsections(result, lang):
+        blocks += f'<h3>{_esc(heading)}</h3>'
+        # uvnitř typu testu: dle cíle (IP), seřazené dle závažnosti
+        by_ip = {}
+        for f in secf:
+            by_ip.setdefault(_ip_of(f["target"]), []).append(f)
+        for ip in sorted(by_ip.keys()):
+            blocks += (f'<h4 style="color:{NAVY};font-size:12px;margin:8px 0 2px;">{_esc(ip)}</h4>'
+                       f'{_section_ip_table(by_ip[ip], lang)}')
+        # detailní karty pro HIGH/CRITICAL v tomto typu testu
+        cards = [_finding_card(f, lang, options, comments)
+                 for f in sorted(secf, key=lambda x: SEVERITY_RANK[x["severity"]])
+                 if f["severity"] in ("CRITICAL", "HIGH")]
+        if cards:
+            blocks += "".join(cards)
 
     return (f'<div class="section pb"><h2>{_esc(T("h_results", lang))}</h2>'
-            f'<p class="lead">{_esc(T("results_intro", lang))}</p>'
-            f'<h3>{_esc(T("h_results_table", lang))}</h3>{tbl}{detail}</div>')
+            f'<p class="lead">{_esc(T("results_intro", lang))} {_esc(T("detail_note", lang))}</p>'
+            f'{blocks}</div>')
 
 
 def _counts_list(findings, lang):
@@ -605,9 +636,8 @@ def toc_headings(result, options, lang):
         if options.get("tools"):
             h.append((T("h_tools", lang), 1))
         h.append((T("h_results", lang), 0))
-        h.append((T("h_results_table", lang), 1))
-        if has_detail:
-            h.append((T("h_results_detail", lang), 1))
+        for _sec, heading, _items in results_subsections(result, lang):
+            h.append((heading, 1))
         h.append((T("h_findings_table", lang), 0))
         h.append((T("h_summary", lang), 0))
         h.append((T("h_conclusion", lang), 0))
