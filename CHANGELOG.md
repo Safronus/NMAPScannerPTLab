@@ -4,6 +4,13 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.12.4] - 2026-06-11
+
+### Přidáno
+- **Klikací CVE odkazy (NVD + MITRE).** Nálezy obsahující CVE (z nmap vuln skriptů
+  i ZAP) mají v PDF reportu i v editačním dialogu nálezu klikací odkazy na
+  detail NVD (`nvd.nist.gov/vuln/detail/…`) a MITRE (`cve.org/CVERecord`).
+
 ## [5.12.3] - 2026-06-11
 
 ### Změněno

@@ -37,6 +37,20 @@ class FindingEditDialog(QDialog):
         head.setWordWrap(True)
         v.addWidget(head)
 
+        # Klikací CVE odkazy (NVD / MITRE), pokud nález CVE obsahuje
+        import re as _re
+        blob = " ".join([finding.get("title", ""), finding.get("evidence", ""),
+                         finding.get("recommendation", "")])
+        cves = sorted(set(_re.findall(r"CVE-\d{4}-\d{4,7}", blob, _re.IGNORECASE)))
+        if cves:
+            links = " &nbsp; ".join(
+                f'<a href="{lib.cve_link("nvd", c.upper())}">{c.upper()} (NVD)</a> · '
+                f'<a href="{lib.cve_link("mitre", c.upper())}">MITRE</a>' for c in cves)
+            cve_lbl = QLabel(f"<b>CVE:</b> {links}")
+            cve_lbl.setOpenExternalLinks(True)
+            cve_lbl.setWordWrap(True)
+            v.addWidget(cve_lbl)
+
         g = QGridLayout()
         g.addWidget(QLabel("Závažnost:"), 0, 0)
         self.sev = QComboBox()

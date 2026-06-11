@@ -12,7 +12,9 @@ renderuje nespolehlivě. Okraje řídí QPageLayout v ``printToPdf``.
 """
 
 import html as _html
+import re as _re
 
+from . import classification_library as _clib
 from .report_classify import (
     SEVERITIES, SEVERITY_RANK, SEVERITY_COLOR, CVSS_BAND, OWASP_2025, section_title,
     ALL_SECTIONS,
@@ -430,6 +432,16 @@ def _finding_card(f, lang, options, comments):
         f'&nbsp;·&nbsp; <b>{_esc(f["target"])}</b></div>',
         f'<div>{_esc(f["description"])}</div>',
     ]
+    # Klikací CVE odkazy (NVD / MITRE), pokud nález CVE obsahuje
+    cves = sorted(set(_re.findall(r"CVE-\d{4}-\d{4,7}",
+                                  f.get("title", "") + " " + ev + " " + f.get("recommendation", ""),
+                                  _re.IGNORECASE)))
+    if cves:
+        links = " &nbsp; ".join(
+            f'<a href="{_clib.cve_link("nvd", c.upper())}">{_esc(c.upper())}</a> '
+            f'(<a href="{_clib.cve_link("nvd", c.upper())}">NVD</a> · '
+            f'<a href="{_clib.cve_link("mitre", c.upper())}">MITRE</a>)' for c in cves)
+        parts.append(f'<div class="meta"><span class="lbl">CVE:</span> {links}</div>')
     if f.get("impact"):
         parts.append(f'<div class="meta"><span class="lbl">{_esc(T("impact", lang))}:</span> '
                      f'{_esc(f["impact"])}</div>')
