@@ -25,11 +25,11 @@ SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
 SEVERITY_RANK = {s: i for i, s in enumerate(SEVERITIES)}  # 0 = nejvyšší
 
 SEVERITY_COLOR = {
-    "CRITICAL": "#C00000",
-    "HIGH": "#ED7D31",
-    "MEDIUM": "#FFC000",
-    "LOW": "#00B050",
-    "INFO": "#2E75B6",
+    "CRITICAL": "#7030A0",   # fialová
+    "HIGH": "#C00000",       # červená
+    "MEDIUM": "#BF9000",     # tmavě žlutá
+    "LOW": "#1F9E4F",        # zelená
+    "INFO": "#2E75B6",       # modrá
 }
 
 # Orientační pásma CVSS v4.0 pro každou úroveň (text do metodiky)

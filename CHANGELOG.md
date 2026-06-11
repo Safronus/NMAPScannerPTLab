@@ -4,6 +4,13 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.12.7] - 2026-06-11
+
+### Změněno
+- **Barvy závažnosti dle zadání:** CRITICAL = fialová, HIGH = červená,
+  MEDIUM = tmavě žlutá, LOW = zelená, INFO = modrá. Promítá se do PDF reportu,
+  panelu Souhrn IP i správce knihovny (centrální `SEVERITY_COLOR`).
+
 ## [5.12.6] - 2026-06-11
 
 ### Opraveno
