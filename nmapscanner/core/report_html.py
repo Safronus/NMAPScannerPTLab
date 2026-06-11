@@ -1,12 +1,14 @@
-"""Generování HTML reportu ve stylu **PT Lab** (Penetration Testing Laboratory).
+"""Generování HTML reportu — moderní vzhled s akcenty PT Lab.
 
-Vychází ze vzhledu oficiálních PT Lab reportů: bílé pozadí, patkové (serif) písmo,
-opakující se hlavička s logem a adresou laboratoře, červená patička
-„SENSITIVE DATA", modré hlavičky tabulek a barevně kódované buňky rizika.
+Bezpatkové písmo, výrazná titulní strana (červený akcent + „Confidential"),
+Executive summary box, OWASP/CVSS metodika, nálezy jako kombinace souhrnné
+tabulky per IP + karet pro HIGH/CRITICAL. Dva typy (technical/management) a dva
+jazyky (cs/en). Bez Qt → testovatelné.
 
-Dva typy reportu — **technical** (podrobný technický) a **management**
-(manažerský bez technikálií) — a dva jazyky (**cs/en**). Bez Qt → testovatelné;
-tisk do PDF zajišťuje QtWebEngine ve volajícím dialogu.
+Opakující se hlavička (logo + adresa + „N stran"), patička („SENSITIVE DATA" +
+čísla stran) a volitelný obsah (TOC) se dokreslují post-processingem
+(``core/report_pdf.py``) — QtWebEngine je v HTML přes ``position: fixed``
+renderuje nespolehlivě. Okraje řídí QPageLayout v ``printToPdf``.
 """
 
 import html as _html
@@ -15,13 +17,14 @@ from .report_classify import (
     SEVERITIES, SEVERITY_COLOR, CVSS_BAND, OWASP_2025, section_title,
 )
 
-# Barvy PT Lab tématu
+# Paleta PT Lab (moderní)
 RED = "#E2231A"
-BLUE = "#4472C4"      # hlavičky tabulek
-BLUE_DARK = "#2E5496"
-HEAD_MAROON = "#8B2E2E"
-INK = "#1a1a1a"
-MUTED = "#666666"
+RED_DARK = "#B3160F"
+NAVY = "#16233f"
+INK = "#222831"
+MUTED = "#6b7280"
+LINE = "#e5e7eb"
+BG_SOFT = "#f7f8fa"
 
 
 def _esc(s):
@@ -41,19 +44,28 @@ _L = {
     "report": ("Pentest Report", "Pentest Report"),
     "technical_sub": ("Technická zpráva", "Technical report"),
     "management_sub": ("Manažerská zpráva", "Management report"),
-    "lab_line1": ("Penetration Testing Laboratory", "Penetration Testing Laboratory"),
-    "lab_line2": ("Univerzita Tomáše Bati ve Zlíně, Fakulta aplikované informatiky",
-                  "Tomas Bata University in Zlin, Faculty of Applied Informatics"),
-    "lab_line3": ("Nad Stráněmi 4511, 760 05 Zlín, Czech Republic",
-                  "Nad Stranemi 4511, 760 05 Zlin, Czech Republic"),
-    "sensitive": ("! CITLIVÁ DATA – POUZE PRO AUTORIZOVANÉ POUŽITÍ !",
-                  "! SENSITIVE DATA – FOR AUTHORIZED USE ONLY !"),
-    "engagement": ("Penetrační test: infrastruktura", "Penetration testing: infrastructure"),
+    "confidential": ("DŮVĚRNÉ", "CONFIDENTIAL"),
+    "engagement": ("Penetrační test infrastruktury", "Penetration testing of infrastructure"),
     "prepared_by": ("Zpracoval", "Prepared by"),
     "client": ("Klient / rozsah", "Client / scope"),
     "date": ("Datum", "Date"),
     "project": ("Projekt", "Project"),
-    "tool": ("Nástroj", "Tool"),
+    "version": ("Verze dat", "Data version"),
+
+    "h_exec": ("Shrnutí pro vedení", "Executive summary"),
+    "exec_intro": ("Stručný přehled výsledků testu a celkového rizika.",
+                   "A brief overview of the test results and overall risk."),
+    "verdict_crit": ("Byly zjištěny kritické nálezy vyžadující okamžitou nápravu.",
+                     "Critical findings requiring immediate remediation were identified."),
+    "verdict_high": ("Byly zjištěny nálezy vysoké závažnosti k prioritní nápravě.",
+                     "High-severity findings requiring priority remediation were identified."),
+    "verdict_med": ("Byly zjištěny nálezy střední závažnosti k nápravě.",
+                    "Medium-severity findings to remediate were identified."),
+    "verdict_low": ("Byly zjištěny pouze drobné / informativní nálezy.",
+                    "Only minor / informational findings were identified."),
+    "verdict_none": ("Nebyly zjištěny žádné nálezy odpovídající filtrům.",
+                     "No findings matching the filters were identified."),
+    "found_total": ("Celkem nálezů", "Total findings"),
 
     "h_limitation": ("1. Omezení reportu", "1. Report limitation"),
     "limitation_default": (
@@ -63,65 +75,60 @@ _L = {
         "This report does not cover all existing vulnerabilities of the IT infrastructure, "
         "but focuses only on the tests agreed with the client. The report also does not "
         "guarantee the security of systems against vulnerabilities discovered after the tests."),
-    "h_owasp": ("1.1. Testované zranitelnosti (OWASP Top 10:2025)",
-                "1.1. Vulnerabilities tested (OWASP Top 10:2025)"),
+    "h_owasp": ("2. Testované zranitelnosti (OWASP Top 10:2025)",
+                "2. Vulnerabilities tested (OWASP Top 10:2025)"),
     "owasp_intro": (
         "Následující kategorie odpovídají metodice OWASP Top 10:2025, podle které byla "
-        "infrastruktura testována.",
+        "infrastruktura testována (✓ = kategorie s nálezem).",
         "The following categories follow the OWASP Top 10:2025 methodology used to test "
-        "the infrastructure."),
-    "h_scale": ("1.2. Použitá klasifikační stupnice", "1.2. Vulnerability classification scale used"),
-    "scale_intro": (
-        "Závažnost nálezů je zarovnaná na kvalitativní pásma CVSS v4.0.",
-        "Finding severity is aligned with the CVSS v4.0 qualitative bands."),
-    "col_risk": ("Riziko", "Risk"),
-    "col_name": ("Název", "Name"),
-    "col_desc": ("Popis", "Description"),
-    "col_score": ("CVSS skóre", "CVSS score"),
-    "col_cat": ("Kategorie", "Category"),
-    "col_ip": ("IP", "IP"),
-    "col_ports": ("Porty", "Ports"),
-    "col_service": ("Služba", "Service"),
-    "col_vuln": ("Zranitelnost", "Vulnerability"),
-    "col_count": ("Počet", "Count"),
-    "col_tool": ("Nástroj", "Tool"),
-    "col_version": ("Verze", "Version"),
-    "col_purpose": ("Účel", "Purpose"),
+        "the infrastructure (✓ = category with a finding)."),
+    "h_scale": ("3. Klasifikační stupnice (CVSS v4.0)", "3. Classification scale (CVSS v4.0)"),
+    "scale_intro": ("Závažnost nálezů je zarovnaná na kvalitativní pásma CVSS v4.0.",
+                    "Finding severity is aligned with the CVSS v4.0 qualitative bands."),
+    "col_risk": ("Riziko", "Risk"), "col_name": ("Název", "Name"),
+    "col_desc": ("Popis", "Description"), "col_score": ("CVSS", "CVSS"),
+    "col_cat": ("Kat.", "Cat."), "col_ip": ("IP", "IP"), "col_ports": ("Port", "Port"),
+    "col_service": ("Oblast", "Area"), "col_vuln": ("Nález", "Finding"),
+    "col_count": ("Počet", "Count"), "col_tool": ("Nástroj", "Tool"),
+    "col_version": ("Verze", "Version"), "col_purpose": ("Účel", "Purpose"),
 
-    "h_objectives": ("2. Specifikace cílů", "2. Specification of objectives"),
+    "h_objectives": ("4. Specifikace cílů", "4. Specification of objectives"),
     "scope_default": (
         "Náplní testu bylo ověřit odolnost poskytnuté infrastruktury a detekovat "
         "zranitelná místa na serverech.",
         "The purpose of the test was to verify the resilience of the provided "
         "infrastructure and to detect vulnerable spots on the servers."),
-    "h_targets": ("2.1. Testované IP adresy", "2.1. Tested IP addresses"),
+    "h_targets": ("4.1. Testované IP adresy", "4.1. Tested IP addresses"),
     "targets_intro": ("K testování byly poskytnuty následující cílové IP adresy:",
                       "The following destination IP addresses were provided for testing:"),
-    "h_tools": ("2.2. Použité nástroje", "2.2. Tools used"),
+    "h_tools": ("4.2. Použité nástroje", "4.2. Tools used"),
     "tools_intro": ("Při testování byly použity následující nástroje:",
                     "The following tools were used during the testing:"),
-    "h_results": ("3. Výsledky testů – nalezené zranitelnosti",
-                  "3. Test results – discovered vulnerabilities"),
-    "results_intro": ("Tato sekce obsahuje výstupy a doporučení pro nálezy zjištěné při testech.",
-                      "This section contains outputs and recommendations for findings detected in the tests."),
-    "h_overview": ("Souhrn nálezů", "Findings summary"),
-    "overview_intro": ("Celkový počet nálezů dle závažnosti a oblasti:",
-                       "Total number of findings by severity and area:"),
-    "h_findings_table": ("Seznam nálezů (dle IP / portů / služeb / zranitelností)",
-                         "List of findings (by IP / ports / services / vulnerabilities)"),
-    "h_summary": ("Shrnutí", "Summary"),
+    "h_results": ("5. Výsledky testů – nalezené zranitelnosti",
+                  "5. Test results – discovered vulnerabilities"),
+    "results_intro": ("Tato sekce obsahuje souhrn nálezů a detail nálezů vysoké závažnosti.",
+                      "This section contains a summary of findings and detail of high-severity findings."),
+    "h_results_table": ("5.1. Souhrn nálezů dle cílů", "5.1. Findings summary by target"),
+    "h_results_detail": ("5.2. Detail nálezů (HIGH / CRITICAL)",
+                         "5.2. Finding detail (HIGH / CRITICAL)"),
+    "detail_note": ("Detailně jsou rozepsány nálezy vysoké a kritické závažnosti; "
+                    "ostatní nálezy jsou v souhrnné tabulce výše.",
+                    "High and critical findings are detailed below; other findings are in "
+                    "the summary table above."),
+    "h_findings_table": ("Seznam nálezů (IP / port / oblast / nález)",
+                         "List of findings (IP / port / area / finding)"),
+    "h_summary": ("6. Shrnutí", "6. Summary"),
     "summary_default": (
         "Cílem testu bylo zjistit odolnost infrastruktury zadavatele a detekovat zranitelná "
         "místa na serverech. Infrastruktura byla testována dle metodiky OWASP a aktuálního "
-        "seznamu TOP 10:2025. Pro stanovení závažnosti byl použit systém CVSS se stupnicí 0–10.",
+        "seznamu TOP 10:2025. Pro stanovení závažnosti byl použit systém CVSS v4.0.",
         "The aim of the test was to determine the resilience of the client's infrastructure "
         "and to detect vulnerable spots on the servers. The infrastructure was tested per the "
-        "OWASP methodology and the current TOP 10:2025 list. The CVSS system with a 0–10 scale "
-        "was used to determine severity."),
-    "h_conclusion": ("Závěr", "Conclusion"),
+        "OWASP methodology and the current TOP 10:2025 list. CVSS v4.0 was used for severity."),
+    "h_conclusion": ("7. Závěr", "7. Conclusion"),
     "conclusion_default": (
         "Je zásadní zaměřit se především na nálezy s vysokou závažností. Po nápravě "
-        "doporučujeme provést opětovné ověření.",
+        "doporučujeme provést opětovné ověření (re-test).",
         "It is essential to focus primarily on high-severity findings. After remediation we "
         "recommend a re-test for verification."),
     "h_recommendation": ("Souhrnné doporučení", "Overall recommendation"),
@@ -133,13 +140,11 @@ _L = {
     "sev_counts": ("Počty dle závažnosti", "Counts by severity"),
     "no_findings": ("Žádné nálezy odpovídající zvoleným filtrům.",
                     "No findings matching the selected filters."),
-    "comment": ("Komentář", "Comment"),
-    "recommendation": ("Doporučení", "Recommendation"),
-    "evidence": ("Důkaz", "Evidence"),
-    "generated_by": ("Vygenerováno nástrojem", "Generated by"),
+    "comment": ("Komentář", "Comment"), "recommendation": ("Doporučení", "Recommendation"),
+    "evidence": ("Důkaz", "Evidence"), "generated_by": ("Vygenerováno nástrojem", "Generated by"),
+    "by_area": ("Nálezy podle oblasti", "Findings by area"),
 }
 
-# Rozepsané OWASP kategorie (krátký popis CZ/EN)
 OWASP_DESC = {
     "A01": ("Nedostatečné řízení přístupu — uživatelé se dostanou k datům/funkcím nad rámec oprávnění.",
             "Broken Access Control — users reach data/functions beyond their permissions."),
@@ -173,169 +178,96 @@ CVSS_NOTE = {
              "Informational — no direct impact (context, attack surface)."),
 }
 
-SEV_LABEL = {  # zkratka v tabulce stupnice
-    "CRITICAL": "C.", "HIGH": "H.", "MEDIUM": "M.", "LOW": "L.", "INFO": "I.",
-}
+SEV_LABEL = {"CRITICAL": "C", "HIGH": "H", "MEDIUM": "M", "LOW": "L", "INFO": "I"}
 
 
 # ===========================================================================
-#  CSS + opakující se hlavička/patička
+#  CSS (moderní, bezpatkové)
 # ===========================================================================
 def _css():
     sev_bg = "\n".join(
-        f".risk-{s.lower()}{{background:{SEVERITY_COLOR[s]};color:#fff;}}" for s in SEVERITIES
+        f".sev-{s.lower()}{{background:{SEVERITY_COLOR[s]};color:#fff;}}" for s in SEVERITIES
     )
     return f"""
-    /* Okraje řídí QPageLayout v printToPdf (QtWebEngine ignoruje CSS @page margin),
-       tady tedy 0. Místo pro hlavičku/patičku rezervují okraje QPageLayout a
-       dokresluje je post-processing (core/report_pdf.py). */
     @page {{ size: A4; margin: 0; }}
     * {{ box-sizing: border-box; }}
-    body {{ font-family: 'Times New Roman', Georgia, serif; color: {INK};
-            font-size: 12.5px; line-height: 1.5; margin: 0; }}
-    h1,h2,h3 {{ margin: 0 0 6px 0; }}
-    p {{ text-align: justify; margin: 6px 0; }}
-    a {{ color: {BLUE_DARK}; text-decoration: none; }}
-    ul {{ margin: 6px 0; padding-left: 22px; }}
+    body {{ font-family: 'Helvetica Neue', Arial, 'Segoe UI', system-ui, sans-serif;
+            color: {INK}; font-size: 11.5px; line-height: 1.55; margin: 0; }}
+    h1,h2,h3,h4 {{ margin: 0 0 6px 0; }}
+    p {{ margin: 6px 0; }}
+    ul {{ margin: 6px 0; padding-left: 20px; }}
+    a {{ color: {RED_DARK}; text-decoration: none; }}
+
+    /* Titulní strana */
+    .cover {{ position: relative; }}
+    .cover .band {{ height: 10px; background: {RED}; margin-bottom: 60mm; }}
+    .cover .kicker {{ color: {RED}; font-weight: 700; letter-spacing: 3px;
+                      text-transform: uppercase; font-size: 12px; }}
+    .cover h1 {{ font-size: 40px; font-weight: 800; color: {NAVY}; margin: 6px 0 2px; }}
+    .cover .rule {{ width: 70px; height: 4px; background: {RED}; margin: 14px 0 22px; }}
+    .cover .info {{ font-size: 13px; }}
+    .cover .info .k {{ color: {MUTED}; width: 130px; display: inline-block; vertical-align: top; }}
+    .cover .info .v {{ color: {INK}; font-weight: 600; }}
+    .cover .info div {{ margin: 5px 0; }}
+    .cover .conf {{ display: inline-block; margin-top: 28px; border: 2px solid {RED};
+                    color: {RED}; font-weight: 800; letter-spacing: 2px; padding: 6px 14px;
+                    border-radius: 4px; transform: rotate(-3deg); }}
 
     .section {{ margin: 16px 0; }}
-    h1.title {{ text-align: center; font-size: 30px; margin-top: 70mm; }}
-    .subtitle {{ text-align: center; font-size: 16px; color: {INK}; margin-bottom: 40mm; }}
-    .authors {{ text-align: center; font-size: 15px; line-height: 1.8; }}
-    .cover-foot {{ margin-top: 50mm; border-top: 1px solid #000; padding-top: 6px;
-                   display: flex; justify-content: space-between; font-size: 12px; }}
-
-    h2 {{ color: {INK}; font-size: 16px; font-weight: bold; margin-top: 14px; }}
-    h3 {{ color: {BLUE_DARK}; font-size: 13.5px; margin-top: 12px; }}
+    h2 {{ color: {NAVY}; font-size: 16px; font-weight: 800; border-left: 5px solid {RED};
+          padding-left: 9px; margin-top: 18px; }}
+    h3 {{ color: {NAVY}; font-size: 13px; font-weight: 700; margin-top: 12px; }}
     .lead {{ color: {MUTED}; }}
 
-    table {{ border-collapse: collapse; width: 100%; font-size: 11.5px; margin: 8px 0; }}
-    th, td {{ border: 1px solid #b9c2d0; padding: 5px 7px; text-align: left; vertical-align: top; }}
-    th {{ background: {BLUE}; color: #fff; font-weight: bold; }}
-    .scale th {{ background: {HEAD_MAROON}; }}
+    table {{ border-collapse: collapse; width: 100%; font-size: 11px; margin: 8px 0; }}
+    th, td {{ border: 1px solid {LINE}; padding: 5px 8px; text-align: left; vertical-align: top; }}
+    th {{ background: {NAVY}; color: #fff; font-weight: 600; }}
+    tr:nth-child(even) td {{ background: {BG_SOFT}; }}
+    .scale th {{ background: {RED_DARK}; }}
 
-    .risk-cell {{ text-align: center; font-weight: bold; width: 64px; }}
+    .risk-cell {{ text-align: center; font-weight: 800; width: 42px; }}
     {sev_bg}
-    .chip {{ display: inline-block; color:#fff; font-weight:bold; font-size:10px;
-             padding:1px 7px; border-radius:9px; }}
-    .owasp {{ display:inline-block; background:{BLUE_DARK}; color:#fff; font-size:10px;
-              padding:1px 6px; border-radius:3px; font-weight:bold; }}
+    .chip {{ display:inline-block; color:#fff; font-weight:700; font-size:9.5px;
+             padding:1px 8px; border-radius:10px; letter-spacing:.3px; }}
+    .owasp {{ display:inline-block; background:{NAVY}; color:#fff; font-size:9.5px;
+              padding:1px 6px; border-radius:3px; font-weight:700; }}
+    .cwe {{ display:inline-block; background:#eef1f6; color:{NAVY}; font-size:9.5px;
+            padding:1px 6px; border-radius:3px; font-weight:700; }}
+
+    /* Executive summary */
+    .exec {{ border: 1px solid {LINE}; border-top: 4px solid {RED}; border-radius: 8px;
+             padding: 14px 16px; background: #fff; margin: 10px 0 4px; }}
+    .exec h2 {{ border: none; padding: 0; margin: 0 0 6px; }}
+    .exec .verdict {{ font-size: 13px; font-weight: 600; color: {INK}; margin: 8px 0 12px; }}
 
     .cards {{ display:flex; gap:8px; margin:10px 0; }}
-    .card {{ flex:1; color:#fff; border-radius:6px; padding:8px; text-align:center; }}
-    .card .n {{ font-size:22px; font-weight:bold; }}
-    .card .l {{ font-size:10px; text-transform:uppercase; }}
+    .scard {{ flex:1; color:#fff; border-radius:8px; padding:10px 8px; text-align:center; }}
+    .scard .n {{ font-size:24px; font-weight:800; line-height:1; }}
+    .scard .l {{ font-size:9.5px; text-transform:uppercase; letter-spacing:.6px; margin-top:4px; }}
 
-    .rec {{ background:#fff7f0; border:1px solid #ffd9bf; border-radius:5px; padding:5px 8px; margin:4px 0; }}
-    .cmt {{ background:#eef4ff; border:1px solid #bcd0f0; border-radius:5px; padding:5px 8px; margin:4px 0; }}
-    pre {{ background:#f4f5f7; border:1px solid #e0e3e8; padding:6px 8px; border-radius:4px;
-           font-size:10.5px; white-space:pre-wrap; word-break:break-word; overflow-wrap:anywhere; }}
+    /* Karta nálezu */
+    .fcard {{ border:1px solid {LINE}; border-left:6px solid {MUTED}; border-radius:8px;
+              padding:11px 13px; margin:10px 0; page-break-inside:avoid; }}
+    .fcard .top {{ display:flex; justify-content:space-between; align-items:center; gap:8px; }}
+    .fcard .ttl {{ font-weight:800; color:{NAVY}; font-size:12.5px; }}
+    .fcard .meta {{ margin:5px 0; }}
+    .fcard .lbl {{ color:{MUTED}; font-size:10px; text-transform:uppercase; letter-spacing:.5px; }}
+    pre {{ background:#0f172a; color:#dbe5f5; padding:8px 10px; border-radius:6px;
+           font-size:10px; white-space:pre-wrap; word-break:break-word; overflow-wrap:anywhere;
+           margin:5px 0 0; font-family:'SF Mono',Menlo,Consolas,monospace; }}
+    .rec {{ background:#fff5f3; border:1px solid #ffd6cc; border-radius:6px; padding:6px 9px; margin-top:6px; }}
+    .cmt {{ background:#eef4ff; border:1px solid #cfe0fb; border-radius:6px; padding:6px 9px; margin-top:6px; }}
+
+    .heat {{ display:grid; grid-template-columns:repeat(5,1fr); gap:6px; margin:8px 0; }}
     .pb {{ page-break-before: always; }}
     .avoid {{ page-break-inside: avoid; }}
     """
 
 
-# Pozn.: opakující se hlavička (logo + adresa) a patička (SENSITIVE + čísla stran)
-# se NEkreslí v HTML — QtWebEngine je napříč stranami renderuje nespolehlivě.
-# Dokresluje je post-processing v ``core/report_pdf.py`` na každou stranu.
-
-
 # ===========================================================================
-#  Sekce
+#  Pomocné
 # ===========================================================================
-def _cover(meta, options, lang):
-    sub = T("management_sub" if options.get("report_type") == "management" else "technical_sub", lang)
-    authors = _esc(meta.get("author", "")) or "&nbsp;"
-    return f"""
-    <div class="section avoid">
-      <h1 class="title">{_esc(T('report', lang))}</h1>
-      <div class="subtitle">{_esc(sub)}</div>
-      <div class="authors">{authors}</div>
-      <div class="cover-foot">
-        <div>{_esc(meta.get('date', ''))}</div>
-        <div>{_esc(meta.get('engagement') or T('engagement', lang))}</div>
-      </div>
-    </div>"""
-
-
-def _scale_table(lang):
-    rows = ""
-    for s in SEVERITIES:
-        rows += (
-            f'<tr><td class="risk-cell risk-{s.lower()}">{SEV_LABEL[s]} {_esc(s)}</td>'
-            f'<td><b>{_esc(s)}</b></td>'
-            f'<td>{_esc(CVSS_BAND[s])}</td>'
-            f'<td>{_esc(CVSS_NOTE[s][1 if lang=="en" else 0])}</td></tr>'
-        )
-    return f"""
-    <div class="section">
-      <h2>{_esc(T('h_scale', lang))}</h2>
-      <p class="lead">{_esc(T('scale_intro', lang))}</p>
-      <table class="scale">
-        <tr><th>{_esc(T('col_risk', lang))}</th><th>{_esc(T('col_name', lang))}</th>
-        <th>{_esc(T('col_score', lang))}</th><th>{_esc(T('col_desc', lang))}</th></tr>
-        {rows}
-      </table>
-    </div>"""
-
-
-def _owasp_methodology(result, lang):
-    used = set(result.get("owasp", {}).keys())
-    rows = ""
-    for code, name in OWASP_2025.items():
-        mark = " ✓" if code in used else ""
-        rows += (f'<tr><td><span class="owasp">{code}</span></td>'
-                 f'<td><b>{_esc(name)}{mark}</b><br>'
-                 f'<span class="lead">{_esc(OWASP_DESC[code][1 if lang=="en" else 0])}</span></td></tr>')
-    return f"""
-    <div class="section">
-      <h2>{_esc(T('h_owasp', lang))}</h2>
-      <p class="lead">{_esc(T('owasp_intro', lang))}</p>
-      <table><tr><th style="width:60px">{_esc(T('col_cat', lang))}</th>
-      <th>{_esc(OWASP_2025.get('A01') and T('col_name', lang))}</th></tr>{rows}</table>
-    </div>"""
-
-
-def _targets(scan_results, lang):
-    tcp = scan_results.get("tcp", {}) or {}
-    ips = sorted(tcp.keys())
-    items = "".join(f"<li>{_esc(ip)}</li>" for ip in ips) or "<li>—</li>"
-    return f"""
-    <div class="section">
-      <h2>{_esc(T('h_targets', lang))}</h2>
-      <p>{_esc(T('targets_intro', lang))}</p>
-      <ul>{items}</ul>
-    </div>"""
-
-
-def _tools_table(options, lang):
-    tools = options.get("tools") or []
-    if not tools:
-        return ""
-    rows = ""
-    for t in tools:
-        rows += (f"<tr><td>{_esc(t.get('name',''))}</td>"
-                 f"<td>{_esc(t.get('version','—'))}</td>"
-                 f"<td>{_esc(t.get('purpose',''))}</td></tr>")
-    return f"""
-    <div class="section">
-      <h2>{_esc(T('h_tools', lang))}</h2>
-      <p>{_esc(T('tools_intro', lang))}</p>
-      <table><tr><th>{_esc(T('col_tool', lang))}</th><th>{_esc(T('col_version', lang))}</th>
-      <th>{_esc(T('col_purpose', lang))}</th></tr>{rows}</table>
-    </div>"""
-
-
-def _summary_cards(summary, lang):
-    cards = ""
-    for s in SEVERITIES:
-        cards += (f'<div class="card risk-{s.lower()}"><div class="n">{summary.get(s,0)}</div>'
-                  f'<div class="l">{_esc(s)}</div></div>')
-    return f'<div class="cards">{cards}</div>'
-
-
 def _ip_of(target):
-    # target je "ip" nebo "ip:port" nebo "scheme://ip:port"
     t = target
     if "://" in t:
         t = t.split("://", 1)[1]
@@ -351,83 +283,194 @@ def _port_of(target):
     return ""
 
 
-def _findings_by_ip_table(findings, lang, with_detail=True, options=None):
-    """Hlavní technická část: per-IP tabulky IP|Porty|Služba|Zranitelnost|Riziko."""
-    options = options or {}
-    if not findings:
-        return f'<p class="lead">{_esc(T("no_findings", lang))}</p>'
+def _sev_chip(sev):
+    return f'<span class="chip" style="background:{SEVERITY_COLOR[sev]}">{_esc(sev)}</span>'
 
-    # seskupit dle IP
-    by_ip = {}
-    for f in findings:
-        by_ip.setdefault(_ip_of(f["target"]), []).append(f)
 
-    comments = options.get("comments", {}) or {}
-    blocks = ""
-    for ip in sorted(by_ip.keys()):
-        items = by_ip[ip]
-        rows = ""
-        for f in items:
-            sev = f["severity"]
-            port = _port_of(f["target"]) or "—"
-            owasp = f.get("owasp", "")
-            vuln = (f'<span class="owasp">{_esc(owasp)}</span> ' if owasp else "") + _esc(f["title"])
-            rows += (
-                f'<tr><td>{_esc(port)}</td>'
-                f'<td>{_esc(f["category"])}</td>'
-                f'<td>{vuln}</td>'
-                f'<td class="risk-cell risk-{sev.lower()}">{SEV_LABEL[sev]}</td></tr>'
-            )
-        blocks += f'<h3>{_esc(ip)}</h3><table class="avoid">' \
-                  f'<tr><th style="width:70px">{_esc(T("col_ports", lang))}</th>' \
-                  f'<th style="width:130px">{_esc(T("col_service", lang))}</th>' \
-                  f'<th>{_esc(T("col_vuln", lang))}</th>' \
-                  f'<th style="width:54px">{_esc(T("col_risk", lang))}</th></tr>{rows}</table>'
+def _owasp_chip(code):
+    return f'<span class="owasp">{_esc(code)}</span>' if code else ""
 
-        if with_detail:
-            for f in items:
-                cid = f["id"]
-                detail = f'<div class="avoid" style="margin:6px 0 12px;">'
-                detail += (f'<b>{_esc(f["id"])} — {_esc(f["title"])}</b> '
-                           f'<span class="chip" style="background:{SEVERITY_COLOR[f["severity"]]}">'
-                           f'{_esc(f["severity"])}</span><br>')
-                detail += f'<span>{_esc(f["description"])}</span>'
-                if options.get("include_evidence", True) and f.get("evidence"):
-                    detail += f'<pre>{_nl2br(f["evidence"])}</pre>'
-                if options.get("include_recommendations", True) and f.get("recommendation"):
-                    detail += (f'<div class="rec"><b>{_esc(T("recommendation", lang))}:</b> '
-                               f'{_esc(f["recommendation"])}</div>')
-                if comments.get(cid):
-                    detail += (f'<div class="cmt"><b>{_esc(T("comment", lang))}:</b> '
-                               f'{_nl2br(comments[cid])}</div>')
-                detail += "</div>"
-                blocks += detail
-    return blocks
+
+# ===========================================================================
+#  Sekce
+# ===========================================================================
+def _cover(meta, options, lang):
+    rtype = options.get("report_type", "technical")
+    sub = T("management_sub" if rtype == "management" else "technical_sub", lang)
+    rows = [
+        (T("client", lang), meta.get("client", "—")),
+        (T("project", lang), meta.get("project_name", "—")),
+        (T("prepared_by", lang), meta.get("author", "—")),
+        (T("date", lang), meta.get("date", "—")),
+    ]
+    if meta.get("run_info") and meta["run_info"] != "—":
+        rows.append((T("version", lang), meta["run_info"]))
+    info = "".join(f'<div><span class="k">{_esc(k)}</span>'
+                   f'<span class="v">{_esc(v)}</span></div>' for k, v in rows)
+    return f"""
+    <div class="cover">
+      <div class="band"></div>
+      <div class="kicker">{_esc(sub)}</div>
+      <h1>{_esc(meta.get('title', T('report', lang)))}</h1>
+      <div class="rule"></div>
+      <div class="info">{info}</div>
+      <div class="conf">{_esc(T('confidential', lang))}</div>
+    </div>"""
+
+
+def _severity_cards(summary):
+    cards = ""
+    for s in SEVERITIES:
+        cards += (f'<div class="scard sev-{s.lower()}"><div class="n">{summary.get(s,0)}</div>'
+                  f'<div class="l">{_esc(s)}</div></div>')
+    return f'<div class="cards">{cards}</div>'
+
+
+def _verdict(summary, lang):
+    if summary.get("CRITICAL", 0) > 0:
+        return T("verdict_crit", lang)
+    if summary.get("HIGH", 0) > 0:
+        return T("verdict_high", lang)
+    if summary.get("MEDIUM", 0) > 0:
+        return T("verdict_med", lang)
+    if any(summary.get(s, 0) for s in ("LOW", "INFO")):
+        return T("verdict_low", lang)
+    return T("verdict_none", lang)
+
+
+def _exec_summary(result, lang):
+    summary = result.get("summary", {})
+    total = result.get("total", 0)
+    return f"""
+    <div class="exec avoid">
+      <h2>{_esc(T('h_exec', lang))}</h2>
+      <div class="lead">{_esc(T('exec_intro', lang))}</div>
+      <div class="verdict">{_esc(T('found_total', lang))}: <b>{total}</b>. {_esc(_verdict(summary, lang))}</div>
+      {_severity_cards(summary)}
+    </div>"""
+
+
+def _scale_table(lang):
+    rows = ""
+    for s in SEVERITIES:
+        rows += (f'<tr><td class="risk-cell sev-{s.lower()}">{SEV_LABEL[s]}</td>'
+                 f'<td><b>{_esc(s)}</b></td><td>{_esc(CVSS_BAND[s])}</td>'
+                 f'<td>{_esc(CVSS_NOTE[s][1 if lang=="en" else 0])}</td></tr>')
+    return f"""<div class="section"><h2>{_esc(T('h_scale', lang))}</h2>
+      <p class="lead">{_esc(T('scale_intro', lang))}</p>
+      <table class="scale"><tr><th>{_esc(T('col_risk', lang))}</th><th>{_esc(T('col_name', lang))}</th>
+      <th>{_esc(T('col_score', lang))}</th><th>{_esc(T('col_desc', lang))}</th></tr>{rows}</table></div>"""
+
+
+def _owasp_methodology(result, lang):
+    used = set(result.get("owasp", {}).keys())
+    rows = ""
+    for code, name in OWASP_2025.items():
+        mark = ' <span class="chip" style="background:%s">✓</span>' % RED if code in used else ""
+        rows += (f'<tr><td><span class="owasp">{code}</span></td>'
+                 f'<td><b>{_esc(name)}</b>{mark}<br>'
+                 f'<span class="lead">{_esc(OWASP_DESC[code][1 if lang=="en" else 0])}</span></td></tr>')
+    return f"""<div class="section"><h2>{_esc(T('h_owasp', lang))}</h2>
+      <p class="lead">{_esc(T('owasp_intro', lang))}</p>
+      <table><tr><th style="width:46px">{_esc(T('col_cat', lang))}</th>
+      <th>{_esc(T('col_name', lang))}</th></tr>{rows}</table></div>"""
+
+
+def _targets(scan_results, lang):
+    ips = sorted((scan_results.get("tcp", {}) or {}).keys())
+    items = "".join(f"<li>{_esc(ip)}</li>" for ip in ips) or "<li>—</li>"
+    return f"""<div class="section"><h3>{_esc(T('h_targets', lang))}</h3>
+      <p>{_esc(T('targets_intro', lang))}</p><ul>{items}</ul></div>"""
+
+
+def _tools_table(options, lang):
+    tools = options.get("tools") or []
+    if not tools:
+        return ""
+    rows = "".join(f"<tr><td>{_esc(t.get('name',''))}</td><td>{_esc(t.get('version','—'))}</td>"
+                   f"<td>{_esc(t.get('purpose',''))}</td></tr>" for t in tools)
+    return f"""<div class="section"><h3>{_esc(T('h_tools', lang))}</h3>
+      <p>{_esc(T('tools_intro', lang))}</p>
+      <table><tr><th>{_esc(T('col_tool', lang))}</th><th>{_esc(T('col_version', lang))}</th>
+      <th>{_esc(T('col_purpose', lang))}</th></tr>{rows}</table></div>"""
 
 
 def _findings_summary_table(findings, lang):
-    """Kompaktní seznam nálezů: IP | Port | Služba | Zranitelnost | Riziko."""
     if not findings:
         return f'<p class="lead">{_esc(T("no_findings", lang))}</p>'
     rows = ""
     for f in findings:
         sev = f["severity"]
-        owasp_html = f'<span class="owasp">{_esc(f["owasp"])}</span> ' if f.get("owasp") else ""
-        rows += (
-            f'<tr><td>{_esc(_ip_of(f["target"]))}</td>'
-            f'<td>{_esc(_port_of(f["target"]) or "—")}</td>'
-            f'<td>{_esc(f["category"])}</td>'
-            f'<td>{owasp_html}{_esc(f["title"])}</td>'
-            f'<td class="risk-cell risk-{sev.lower()}">{SEV_LABEL[sev]}</td></tr>'
-        )
-    return f"""
-    <table><tr><th>{_esc(T('col_ip', lang))}</th><th>{_esc(T('col_ports', lang))}</th>
-    <th>{_esc(T('col_service', lang))}</th><th>{_esc(T('col_vuln', lang))}</th>
-    <th style="width:54px">{_esc(T('col_risk', lang))}</th></tr>{rows}</table>"""
+        rows += (f'<tr><td>{_esc(_ip_of(f["target"]))}</td>'
+                 f'<td>{_esc(_port_of(f["target"]) or "—")}</td>'
+                 f'<td>{_esc(f["category"])}</td>'
+                 f'<td>{_owasp_chip(f.get("owasp"))} {_esc(f["title"])}</td>'
+                 f'<td class="risk-cell sev-{sev.lower()}">{SEV_LABEL[sev]}</td></tr>')
+    return f"""<table><tr><th>{_esc(T('col_ip', lang))}</th><th>{_esc(T('col_ports', lang))}</th>
+      <th>{_esc(T('col_service', lang))}</th><th>{_esc(T('col_vuln', lang))}</th>
+      <th style="width:42px">{_esc(T('col_risk', lang))}</th></tr>{rows}</table>"""
+
+
+def _finding_card(f, lang, options, comments):
+    sev = f["severity"]
+    cwe = ""
+    ev = f.get("evidence", "")
+    for line in ev.splitlines():
+        if line.strip().upper().startswith("CWE-"):
+            cwe = f'<span class="cwe">{_esc(line.strip())}</span>'
+            break
+    parts = [
+        f'<div class="fcard" style="border-left-color:{SEVERITY_COLOR[sev]}">',
+        '<div class="top">',
+        f'<span class="ttl">{_esc(f["id"])} — {_esc(f["title"])}</span>',
+        f'<span>{_sev_chip(sev)}</span></div>',
+        f'<div class="meta">{_owasp_chip(f.get("owasp"))} '
+        f'<span class="lbl">{_esc(f.get("owasp_name",""))}</span> {cwe} '
+        f'&nbsp;·&nbsp; <span class="lbl">{_esc(f["category"])}</span> '
+        f'&nbsp;·&nbsp; <b>{_esc(f["target"])}</b></div>',
+        f'<div>{_esc(f["description"])}</div>',
+    ]
+    if options.get("include_evidence", True) and ev:
+        parts.append(f'<pre>{_nl2br(ev)}</pre>')
+    if options.get("include_recommendations", True) and f.get("recommendation"):
+        parts.append(f'<div class="rec"><span class="lbl">{_esc(T("recommendation", lang))}</span><br>'
+                     f'{_esc(f["recommendation"])}</div>')
+    if comments.get(f["id"]):
+        parts.append(f'<div class="cmt"><span class="lbl">{_esc(T("comment", lang))}</span><br>'
+                     f'{_nl2br(comments[f["id"]])}</div>')
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def _technical_results(result, lang, options):
+    findings = result.get("findings", [])
+    comments = options.get("comments", {}) or {}
+    if not findings:
+        return (f'<div class="section pb"><h2>{_esc(T("h_results", lang))}</h2>'
+                f'<p class="lead">{_esc(T("no_findings", lang))}</p></div>')
+
+    # 5.1 souhrnná tabulka per IP
+    by_ip = {}
+    for f in findings:
+        by_ip.setdefault(_ip_of(f["target"]), []).append(f)
+    tbl = ""
+    for ip in sorted(by_ip.keys()):
+        tbl += f'<h3>{_esc(ip)}</h3>{_findings_summary_table(by_ip[ip], lang)}'
+
+    # 5.2 detailní karty jen pro HIGH/CRITICAL
+    detail_cards = [_finding_card(f, lang, options, comments)
+                    for f in findings if f["severity"] in ("CRITICAL", "HIGH")]
+    detail = ""
+    if detail_cards:
+        detail = (f'<h3>{_esc(T("h_results_detail", lang))}</h3>'
+                  f'<p class="lead">{_esc(T("detail_note", lang))}</p>' + "".join(detail_cards))
+
+    return (f'<div class="section pb"><h2>{_esc(T("h_results", lang))}</h2>'
+            f'<p class="lead">{_esc(T("results_intro", lang))}</p>'
+            f'<h3>{_esc(T("h_results_table", lang))}</h3>{tbl}{detail}</div>')
 
 
 def _counts_list(findings, lang):
-    """Souhrnný seznam dle závažnosti (jako v referenčním reportu)."""
     by_sev = {s: [] for s in SEVERITIES}
     for f in findings:
         by_sev[f["severity"]].append(f)
@@ -438,18 +481,16 @@ def _counts_list(findings, lang):
             continue
         lis = "".join(f"<li>{_esc(f['title'])} <span class='lead'>({_esc(_ip_of(f['target']))})</span></li>"
                       for f in items[:30])
-        out += (f'<p><span class="chip" style="background:{SEVERITY_COLOR[s]}">{_esc(s)}</span> '
-                f'({len(items)})</p><ul>{lis}</ul>')
+        out += f'<p>{_sev_chip(s)} ({len(items)})</p><ul>{lis}</ul>'
     return out
 
 
 def _free_text(title, body):
-    return (f'<div class="section"><h2>{_esc(title)}</h2>'
-            f'<p>{_nl2br(body)}</p></div>')
+    return f'<div class="section"><h2>{_esc(title)}</h2><p>{_nl2br(body)}</p></div>'
 
 
 # ===========================================================================
-#  Sestavení reportu
+#  Sestavení
 # ===========================================================================
 def build_report(meta, result, options=None):
     options = options or {}
@@ -466,55 +507,55 @@ def build_report(meta, result, options=None):
     summary_txt = human.get("summary") or T("summary_default", lang)
     recommendation = human.get("recommendation") or T("recommendation_default", lang)
 
-    # Souhrn nálezů (karty + počty + seznam)
-    overview = f"""
-    <div class="section">
-      <h2>{_esc(T('h_overview', lang))}</h2>
-      <p>{_esc(T('overview_intro', lang))}</p>
-      {_summary_cards(summary, lang)}
-    </div>"""
+    inc_exec = options.get("include_exec", True)
+    inc_method = options.get("include_methodology", True)
+    inc_charts = options.get("include_charts", True)
 
-    findings_summary = f"""
-    <div class="section">
-      <h2>{_esc(T('h_findings_table', lang))}</h2>
-      {_findings_summary_table(findings, lang)}
-      <h3>{_esc(T('sev_counts', lang))}</h3>
-      {_counts_list(findings, lang)}
-    </div>"""
+    exec_box = _exec_summary(result, lang) if inc_exec else ""
+
+    findings_summary = ""
+    if inc_charts:
+        sec_rows = "".join(
+            f"<tr><td>{_esc(section_title(k, lang)) if False else _esc(k)}</td>"
+            f"<td style='text-align:center'>{v}</td></tr>"
+            for k, v in sorted(result.get("sections", {}).items()))
+        by_area = (f'<h3>{_esc(T("by_area", lang))}</h3>'
+                   f'<table><tr><th>{_esc(T("col_service", lang))}</th>'
+                   f'<th style="width:60px">{_esc(T("col_count", lang))}</th></tr>{sec_rows}</table>'
+                   ) if sec_rows else ""
+    else:
+        by_area = ""
+
+    findings_table_block = (
+        f'<div class="section"><h2>{_esc(T("h_findings_table", lang))}</h2>'
+        f'{_findings_summary_table(findings, lang)}'
+        f'<h3>{_esc(T("sev_counts", lang))}</h3>{_counts_list(findings, lang)}{by_area}</div>')
 
     if rtype == "management":
         body = "".join([
+            exec_box,
             _free_text(T("h_objectives", lang), scope),
             _targets(scan_results, lang),
-            _owasp_methodology(result, lang),
-            _scale_table(lang),
-            overview,
-            findings_summary,
+            (_owasp_methodology(result, lang) + _scale_table(lang)) if inc_method else "",
+            findings_table_block,
             _free_text(T("h_recommendation", lang), recommendation),
         ])
-    else:  # technical
-        main = f"""
-        <div class="section pb">
-          <h2>{_esc(T('h_results', lang))}</h2>
-          <p>{_esc(T('results_intro', lang))}</p>
-          {_findings_by_ip_table(findings, lang, with_detail=True, options=options)}
-        </div>"""
+    else:
         body = "".join([
+            exec_box,
             _free_text(T("h_limitation", lang), intro),
-            _owasp_methodology(result, lang),
-            _scale_table(lang),
+            (_owasp_methodology(result, lang) + _scale_table(lang)) if inc_method else "",
             _free_text(T("h_objectives", lang), scope),
             _targets(scan_results, lang),
             _tools_table(options, lang),
-            overview,
-            main,
-            findings_summary,
+            _technical_results(result, lang, options),
+            findings_table_block,
             _free_text(T("h_summary", lang), summary_txt),
             _free_text(T("h_conclusion", lang), conclusion),
         ])
 
-    foot = (f'<div class="section" style="margin-top:18px;color:{MUTED};font-size:10px;'
-            f'border-top:1px solid #ddd;padding-top:6px;">'
+    foot = (f'<div class="section" style="margin-top:18px;color:{MUTED};font-size:9.5px;'
+            f'border-top:1px solid {LINE};padding-top:6px;">'
             f'{_esc(T("generated_by", lang))} {_esc(meta.get("tool","NMAP Scanner — PT Lab"))} · '
             f'{_esc(meta.get("date",""))}</div>')
 
@@ -528,7 +569,52 @@ def build_report(meta, result, options=None):
     </body></html>"""
 
 
-# Zpětná kompatibilita se starým voláním (5.6.0 dialog)
+def toc_headings(result, options, lang):
+    """Seznam nadpisů pro obsah (TOC) ve stejném pořadí, jak je emituje build_report.
+
+    Vrací ``[(title, level)]`` (level 0 = kapitola, 1 = podkapitola). Post-processing
+    pak v textu stran dohledá, na které straně nadpis je.
+    """
+    options = options or {}
+    rtype = options.get("report_type", "technical")
+    inc_exec = options.get("include_exec", True)
+    inc_method = options.get("include_methodology", True)
+    has_detail = any(f["severity"] in ("CRITICAL", "HIGH") for f in result.get("findings", []))
+
+    h = []
+    if inc_exec:
+        h.append((T("h_exec", lang), 0))
+    if rtype == "management":
+        h.append((T("h_objectives", lang), 0))
+        h.append((T("h_targets", lang), 1))
+        if inc_method:
+            h.append((T("h_owasp", lang), 0))
+            h.append((T("h_scale", lang), 0))
+        h.append((T("h_findings_table", lang), 0))
+        h.append((T("h_recommendation", lang), 0))
+    else:
+        h.append((T("h_limitation", lang), 0))
+        if inc_method:
+            h.append((T("h_owasp", lang), 0))
+            h.append((T("h_scale", lang), 0))
+        h.append((T("h_objectives", lang), 0))
+        h.append((T("h_targets", lang), 1))
+        if options.get("tools"):
+            h.append((T("h_tools", lang), 1))
+        h.append((T("h_results", lang), 0))
+        h.append((T("h_results_table", lang), 1))
+        if has_detail:
+            h.append((T("h_results_detail", lang), 1))
+        h.append((T("h_findings_table", lang), 0))
+        h.append((T("h_summary", lang), 0))
+        h.append((T("h_conclusion", lang), 0))
+    return h
+
+
+def toc_title(lang):
+    return ("Obsah", "Table of contents")[1 if lang == "en" else 0]
+
+
 def build_html(meta, result, options=None):
     options = dict(options or {})
     options.setdefault("report_type", "technical")

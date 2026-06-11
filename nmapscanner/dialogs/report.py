@@ -126,14 +126,17 @@ class ReportDialog(QDialog):
 
         # Možnosti
         opt = QGroupBox("Možnosti"); og = QGridLayout(opt)
+        self.chk_exec = QCheckBox("Executive summary"); self.chk_exec.setChecked(True)
+        self.chk_toc = QCheckBox("Obsah (TOC) s čísly stran"); self.chk_toc.setChecked(True)
         self.chk_evidence = QCheckBox("Důkazy (evidence)"); self.chk_evidence.setChecked(True)
         self.chk_reco = QCheckBox("Doporučení"); self.chk_reco.setChecked(True)
         self.chk_method = QCheckBox("Metodika (OWASP/CVSS)"); self.chk_method.setChecked(True)
-        self.chk_charts = QCheckBox("Souhrn / karty"); self.chk_charts.setChecked(True)
+        self.chk_charts = QCheckBox("Souhrn nálezů / oblasti"); self.chk_charts.setChecked(True)
         self.chk_tools = QCheckBox("Použité nástroje + verze"); self.chk_tools.setChecked(True)
-        og.addWidget(self.chk_evidence, 0, 0); og.addWidget(self.chk_reco, 0, 1)
-        og.addWidget(self.chk_method, 1, 0); og.addWidget(self.chk_charts, 1, 1)
-        og.addWidget(self.chk_tools, 2, 0)
+        og.addWidget(self.chk_exec, 0, 0); og.addWidget(self.chk_toc, 0, 1)
+        og.addWidget(self.chk_evidence, 1, 0); og.addWidget(self.chk_reco, 1, 1)
+        og.addWidget(self.chk_method, 2, 0); og.addWidget(self.chk_charts, 2, 1)
+        og.addWidget(self.chk_tools, 3, 0)
         v.addWidget(opt)
         v.addStretch()
         return w
@@ -250,6 +253,8 @@ class ReportDialog(QDialog):
         return {
             "report_type": self.type_combo.currentData(),
             "lang": self._lang(),
+            "include_exec": self.chk_exec.isChecked(),
+            "include_toc": self.chk_toc.isChecked(),
             "include_evidence": self.chk_evidence.isChecked(),
             "include_recommendations": self.chk_reco.isChecked(),
             "include_methodology": self.chk_method.isChecked(),
@@ -296,6 +301,8 @@ class ReportDialog(QDialog):
             "min_severity": self.sev_combo.currentData(),
             "sections": {s: self.section_checks[s].isChecked() for s in ALL_SECTIONS},
             "options": {
+                "exec": self.chk_exec.isChecked(),
+                "toc": self.chk_toc.isChecked(),
                 "evidence": self.chk_evidence.isChecked(),
                 "recommendations": self.chk_reco.isChecked(),
                 "methodology": self.chk_method.isChecked(),
@@ -332,6 +339,8 @@ class ReportDialog(QDialog):
             if s in self.section_checks and self.section_checks[s].isEnabled():
                 self.section_checks[s].setChecked(bool(on))
         o = cfg.get("options", {})
+        self.chk_exec.setChecked(o.get("exec", True))
+        self.chk_toc.setChecked(o.get("toc", True))
         self.chk_evidence.setChecked(o.get("evidence", True))
         self.chk_reco.setChecked(o.get("recommendations", True))
         self.chk_method.setChecked(o.get("methodology", True))
@@ -393,8 +402,15 @@ class ReportDialog(QDialog):
         from PySide6.QtCore import QMarginsF
         layout = QPageLayout(QPageSize(QPageSize.A4), QPageLayout.Portrait,
                              QMarginsF(16, 30, 16, 18), QPageLayout.Millimeter)
+        # TOC: seznam nadpisů (dohledá se v textu stran při post-processingu)
+        from ..core.report_html import toc_headings, toc_title
+        toc_opts = {"report_type": rtype, "include_exec": self.chk_exec.isChecked(),
+                    "include_methodology": self.chk_method.isChecked(),
+                    "tools": self._tools if self.chk_tools.isChecked() else []}
+        headings = toc_headings(result, toc_opts, lang) if self.chk_toc.isChecked() else None
+
         raw_path = path + ".raw.pdf"
-        self._pdf_meta = (path, raw_path, rtype, lang)
+        self._pdf_meta = (path, raw_path, rtype, lang, headings, toc_title(lang))
         self._pdf_page = QWebEnginePage(self)
         self._pdf_page.loadFinished.connect(
             lambda ok: self._pdf_page.printToPdf(raw_path, layout) if ok else self._finish_pdf(False, path))
@@ -402,18 +418,26 @@ class ReportDialog(QDialog):
         self._pdf_page.setHtml(html)
 
     def _on_raw_pdf(self, ok):
-        path, raw_path, rtype, lang = self._pdf_meta
+        path, raw_path, rtype, lang, headings, toc_title_str = self._pdf_meta
         if not ok:
             self._finish_pdf(False, path)
             return
-        # Dokreslit hlavičku/patičku/čísla stran (post-processing)
+        # 1) volitelně vložit Obsah (TOC), 2) dokreslit hlavičku/patičku/čísla stran
         try:
-            from ..core.report_pdf import stamp_report
-            stamp_report(raw_path, path, lang)
-            try:
-                os.remove(raw_path)
-            except OSError:
-                pass
+            from ..core.report_pdf import stamp_report, assemble_with_toc
+            src = raw_path
+            toc_tmp = None
+            if headings:
+                toc_tmp = path + ".toc.pdf"
+                assemble_with_toc(raw_path, toc_tmp, lang, headings, toc_title_str)
+                src = toc_tmp
+            stamp_report(src, path, lang)
+            for tmp in (raw_path, toc_tmp):
+                if tmp:
+                    try:
+                        os.remove(tmp)
+                    except OSError:
+                        pass
         except Exception as e:
             # Razítkování selhalo → použít aspoň nerazítkovaný render
             print(f"DEBUG: stamp_report selhalo: {e}")
@@ -432,7 +456,8 @@ class ReportDialog(QDialog):
             return
         # Registrovat do manažeru reportů
         try:
-            _p, _raw, rtype, lang = getattr(self, "_pdf_meta", (path, "", "technical", "cs"))
+            meta_t = getattr(self, "_pdf_meta", (path, "", "technical", "cs", None, ""))
+            rtype, lang = meta_t[2], meta_t[3]
             title = f"{self.title_edit.text().strip() or 'Pentest Report'} " \
                     f"({'manažerský' if rtype == 'management' else 'technický'}, {lang.upper()})"
             report_store.register_report(self.reports_dir, path, "report_full", rtype, lang, title)

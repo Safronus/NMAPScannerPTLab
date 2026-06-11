@@ -4,6 +4,25 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.10.0] - 2026-06-11
+
+### Změněno
+- **Moderní redesign PDF reportu.** Bezpatkové písmo, výraznější titulní strana
+  (červený akcent PT Lab, výrazný klient/rozsah, „DŮVĚRNÉ / CONFIDENTIAL"
+  razítko), nadpisy s červeným akcentem. Hlavička/patička v bezpatkovém fontu.
+
+### Přidáno
+- **Generovaný obsah (TOC) s čísly stran.** Stránka „Obsah" za titulkou
+  s číslovanými kapitolami/podkapitolami, tečkovými leadery a čísly stran.
+  Dvouprůchodově: vyrenderuje se tělo, z textu stran se dohledají strany kapitol
+  (odolné vůči ligaturám přes NFKC), vygeneruje se Obsah a vloží za titulku.
+- **Executive summary box** na začátku — verdikt podle nejvyšší závažnosti
+  a velké barevné počty CRITICAL/HIGH/MEDIUM/LOW/INFO.
+- **Nálezy jako kombinace** — souhrnná tabulka per IP + **karty pro HIGH/CRITICAL**
+  (barevný pruh dle závažnosti, chipy OWASP/CWE, důkaz, doporučení, komentář).
+- **Nové přepínače v dialogu reportu** (Executive summary, Obsah/TOC) — obsah
+  reportu je plně ovladatelný z dialogu.
+
 ## [5.9.3] - 2026-06-11
 
 ### Opraveno

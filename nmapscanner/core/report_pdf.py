@@ -18,28 +18,29 @@ _ASSETS = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
 MM = 2.834645  # 1 mm v bodech
 RED = (0.886, 0.137, 0.102)
 
-# Kandidáti serif TTF fontů (macOS → Linux → fallback uvnitř reportlab)
+# Kandidáti bezpatkových (sans) TTF fontů — moderní vzhled (macOS → Linux → fallback)
 _FONT_CANDIDATES = {
     "regular": [
-        "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
-        "/Library/Fonts/Times New Roman.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSerif.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/Library/Fonts/Arial.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
     ],
     "bold": [
-        "/System/Library/Fonts/Supplemental/Times New Roman Bold.ttf",
-        "/Library/Fonts/Times New Roman Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSerifBold.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/Library/Fonts/Arial Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
     ],
     "bolditalic": [
-        "/System/Library/Fonts/Supplemental/Times New Roman Bold Italic.ttf",
-        "/Library/Fonts/Times New Roman Bold Italic.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSerif-BoldItalic.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSerif-BoldItalic.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSerifBoldItalic.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Bold Italic.ttf",
+        "/Library/Fonts/Arial Bold Italic.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-BoldItalic.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSansBoldOblique.ttf",
     ],
 }
 
@@ -59,7 +60,7 @@ def _register_fonts():
         font_name = builtin[style]
         for p in paths:
             if os.path.exists(p):
-                reg_name = f"PTSerif-{style}"
+                reg_name = f"PTFont-{style}"
                 try:
                     pdfmetrics.registerFont(TTFont(reg_name, p))
                     font_name = reg_name
@@ -110,15 +111,17 @@ def _overlay_page(canvas, w, h, page_no, total, lang, logo):
         logo_w = 0
 
     addr = _TXT["addr"][i]
-    canvas.setFillColorRGB(0, 0, 0)
-    canvas.setFont(fonts["bolditalic"], 8.5)
     tx = left + logo_w + 4 * MM
     ty = h - 13 * MM
-    for line in addr:
+    # 1. řádek tučně (název laboratoře), zbytek normálně
+    canvas.setFillColorRGB(0, 0, 0)
+    for k, line in enumerate(addr):
+        canvas.setFont(fonts["bold"] if k == 0 else fonts["regular"], 8.3)
         canvas.drawString(tx, ty, line)
         ty -= 3.4 * MM
 
-    canvas.setFont(fonts["bolditalic"], 9)
+    canvas.setFont(fonts["bold"], 9)
+    canvas.setFillColorRGB(0.42, 0.45, 0.5)  # šedá
     canvas.drawRightString(right, h - 13 * MM, _TXT["pages"][i].format(n=total))
 
     # --- Patička: SENSITIVE (červeně, na střed) + „i / N" vpravo ---
@@ -128,6 +131,104 @@ def _overlay_page(canvas, w, h, page_no, total, lang, logo):
     canvas.setFillColorRGB(0, 0, 0)
     canvas.setFont(fonts["regular"], 9)
     canvas.drawRightString(right, 11 * MM, f"{page_no} / {total}")
+
+
+def _render_toc_page(toc_title, entries, w, h, lang):
+    """Vyrenderuje jednu stránku Obsahu (reportlab) → PDF bytes.
+
+    ``entries`` = ``[(title, level, page_no)]``. Tečkový leader mezi názvem a číslem.
+    """
+    import io
+    from reportlab.pdfgen import canvas as rl_canvas
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+
+    _register_fonts()
+    fonts = _FONTS
+    buf = io.BytesIO()
+    c = rl_canvas.Canvas(buf, pagesize=(w, h))
+    left = 16 * MM
+    right = w - 16 * MM
+
+    c.setFillColorRGB(0.086, 0.137, 0.247)  # navy
+    c.setFont(fonts["bold"], 18)
+    c.drawString(left, h - 36 * MM, toc_title)
+    c.setStrokeColorRGB(0.886, 0.137, 0.102)
+    c.setLineWidth(2)
+    c.line(left, h - 39 * MM, left + 24 * MM, h - 39 * MM)
+
+    y = h - 50 * MM
+    for title, level, page_no in entries:
+        indent = 8 * MM if level else 0
+        size = 10.5 if level else 11.5
+        font = fonts["regular"] if level else fonts["bold"]
+        c.setFont(font, size)
+        c.setFillColorRGB(0.13, 0.16, 0.19)
+        tx = left + indent
+        c.drawString(tx, y, title)
+        pno = str(page_no)
+        c.setFont(fonts["regular"], size)
+        pw = stringWidth(pno, fonts["regular"], size)
+        c.drawRightString(right, y, pno)
+        # tečkový leader
+        tw = stringWidth(title, font, size)
+        dot_start = tx + tw + 2 * MM
+        dot_end = right - pw - 2 * MM
+        if dot_end > dot_start:
+            c.setFillColorRGB(0.6, 0.63, 0.67)
+            c.setFont(fonts["regular"], size)
+            dots = "." * max(0, int((dot_end - dot_start) / stringWidth(".", fonts["regular"], size)))
+            c.drawString(dot_start, y, dots)
+        y -= 7.2 * MM
+        if y < 30 * MM:
+            break  # ochrana — TOC se vejde na jednu stranu
+
+    c.save()
+    buf.seek(0)
+    return buf.read()
+
+
+def assemble_with_toc(in_pdf, out_pdf, lang, headings, toc_title):
+    """Vloží za titulku (stranu 1) vygenerovaný Obsah a uloží do ``out_pdf``.
+
+    Strany kapitol dohledá z textu stran ``in_pdf``. Čísla stran v obsahu počítají
+    s vloženou stranou Obsahu (+1 pro obsahové strany). Vrací ``out_pdf``.
+    """
+    from pypdf import PdfReader, PdfWriter
+
+    import unicodedata
+    reader = PdfReader(in_pdf)
+    # Porovnání jen přes alfanumerické znaky + NFKC (rozloží ligatury jako „ﬁ"→"fi",
+    # které Chromium do PDF vkládá) → odolné vůči mezerám, závorkám i ligaturám.
+    norm = lambda s: "".join(
+        ch.lower() for ch in unicodedata.normalize("NFKC", s or "") if ch.isalnum())
+
+    page_of = {}
+    for pidx, page in enumerate(reader.pages, start=1):
+        try:
+            txt = norm(page.extract_text())
+        except Exception:
+            txt = ""
+        for title, _lvl in headings:
+            if title not in page_of and norm(title) in txt:
+                page_of[title] = pidx
+
+    # +1 protože za titulku vkládáme stranu Obsahu (posune obsahové strany)
+    entries = [(title, lvl, page_of[title] + 1) for title, lvl in headings if title in page_of]
+
+    w = float(reader.pages[0].mediabox.width)
+    h = float(reader.pages[0].mediabox.height)
+    toc_bytes = _render_toc_page(toc_title, entries, w, h, lang)
+    import io
+    toc_reader = PdfReader(io.BytesIO(toc_bytes))
+
+    writer = PdfWriter()
+    writer.add_page(reader.pages[0])        # titulka
+    writer.add_page(toc_reader.pages[0])    # obsah
+    for p in reader.pages[1:]:              # zbytek
+        writer.add_page(p)
+    with open(out_pdf, "wb") as f:
+        writer.write(f)
+    return out_pdf
 
 
 def stamp_report(in_pdf, out_pdf, lang="cs"):
