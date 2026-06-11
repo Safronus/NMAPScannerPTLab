@@ -16,7 +16,10 @@ _ASSETS = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))), "assets")
 
 MM = 2.834645  # 1 mm v bodech
-RED = (0.886, 0.137, 0.102)
+RED = (0.886, 0.137, 0.102)        # akcent PT Lab
+NAVY = (0.0, 0.063, 0.18)          # #00102E — tmavá z webu laboratoře
+WHITE = (1, 1, 1)
+DIM = (0.78, 0.82, 0.88)           # tlumená bílá
 
 # Kandidáti bezpatkových (sans) TTF fontů — moderní vzhled (macOS → Linux → fallback)
 _FONT_CANDIDATES = {
@@ -94,43 +97,60 @@ _TXT = {
 def _overlay_page(canvas, w, h, page_no, total, lang, logo):
     fonts = _FONTS
     i = 1 if lang == "en" else 0
-    left = 16 * MM
-    right = w - 16 * MM
+    left = 14 * MM
+    right = w - 14 * MM
+    hband = 22 * MM      # výška hlavičkového pruhu
+    fband = 13 * MM      # výška patičkového pruhu
 
-    # --- Hlavička: logo + adresa + „N stran" ---
+    # === Hlavičkový pruh (navy + červený akcent dole) ===
+    canvas.setFillColorRGB(*NAVY)
+    canvas.rect(0, h - hband, w, hband, stroke=0, fill=1)
+    canvas.setFillColorRGB(*RED)
+    canvas.rect(0, h - hband, w, 1.1 * MM, stroke=0, fill=1)  # červená linka dole
+
+    # logo (značka — kruh) vlevo, svisle vystředěné v pruhu
     logo_h = 13 * MM
+    logo_w = 0
     if logo:
         try:
             iw, ih = logo.getSize()
             logo_w = logo_h * iw / ih
-            canvas.drawImage(logo, left, h - 11 * MM - logo_h, width=logo_w, height=logo_h,
+            ly = h - hband + (hband - logo_h) / 2 + 0.5 * MM
+            canvas.drawImage(logo, left, ly, width=logo_w, height=logo_h,
                              preserveAspectRatio=True, mask="auto")
         except Exception:
             logo_w = 0
-    else:
-        logo_w = 0
 
+    # texty hlavičky (bíle)
     addr = _TXT["addr"][i]
-    tx = left + logo_w + 4 * MM
-    ty = h - 13 * MM
-    # 1. řádek tučně (název laboratoře), zbytek normálně
-    canvas.setFillColorRGB(0, 0, 0)
+    tx = left + logo_w + 5 * MM
+    ty = h - 8.5 * MM
     for k, line in enumerate(addr):
-        canvas.setFont(fonts["bold"] if k == 0 else fonts["regular"], 8.3)
+        if k == 0:
+            canvas.setFillColorRGB(*WHITE)
+            canvas.setFont(fonts["bold"], 9.5)
+        else:
+            canvas.setFillColorRGB(*DIM)
+            canvas.setFont(fonts["regular"], 8.2)
         canvas.drawString(tx, ty, line)
-        ty -= 3.4 * MM
+        ty -= 3.7 * MM
 
+    canvas.setFillColorRGB(*DIM)
     canvas.setFont(fonts["bold"], 9)
-    canvas.setFillColorRGB(0.42, 0.45, 0.5)  # šedá
-    canvas.drawRightString(right, h - 13 * MM, _TXT["pages"][i].format(n=total))
+    canvas.drawRightString(right, h - 9 * MM, _TXT["pages"][i].format(n=total))
 
-    # --- Patička: SENSITIVE (červeně, na střed) + „i / N" vpravo ---
-    canvas.setFont(fonts["bold"], 9)
+    # === Patičkový pruh (navy + červený akcent nahoře) ===
+    canvas.setFillColorRGB(*NAVY)
+    canvas.rect(0, 0, w, fband, stroke=0, fill=1)
     canvas.setFillColorRGB(*RED)
-    canvas.drawCentredString(w / 2.0, 11 * MM, _TXT["sensitive"][i])
-    canvas.setFillColorRGB(0, 0, 0)
+    canvas.rect(0, fband - 1.1 * MM, w, 1.1 * MM, stroke=0, fill=1)  # červená linka nahoře
+
+    canvas.setFillColorRGB(*WHITE)
+    canvas.setFont(fonts["bold"], 9)
+    canvas.drawCentredString(w / 2.0, fband / 2 - 2.2, _TXT["sensitive"][i])
+    canvas.setFillColorRGB(*DIM)
     canvas.setFont(fonts["regular"], 9)
-    canvas.drawRightString(right, 11 * MM, f"{page_no} / {total}")
+    canvas.drawRightString(right, fband / 2 - 2.2, f"{page_no} / {total}")
 
 
 def _render_toc_page(toc_title, entries, w, h, lang):
@@ -242,8 +262,13 @@ def stamp_report(in_pdf, out_pdf, lang="cs"):
     from pypdf import PdfReader, PdfWriter
 
     _register_fonts()
-    logo_path = os.path.join(_ASSETS, "ptlab_logo.png")
-    logo = ImageReader(logo_path) if os.path.exists(logo_path) else None
+    # Na tmavém pruhu je čitelnější značka bez textu (kruh); fallback na plné logo.
+    logo = None
+    for fn in ("ptlab_mark.png", "ptlab_logo.png"):
+        p = os.path.join(_ASSETS, fn)
+        if os.path.exists(p):
+            logo = ImageReader(p)
+            break
 
     reader = PdfReader(in_pdf)
     total = len(reader.pages)

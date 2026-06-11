@@ -4,6 +4,15 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.10.1] - 2026-06-11
+
+### Změněno
+- **Výrazná hlavička a patička reportu ve stylu webu laboratoře.** Místo strohého
+  textu na bílé jsou teď **tmavě navy pruhy** (`#00102E` z webu PT Lab) s červeným
+  akcentem, bílým textem a čistou značkou PT Lab (kruh). Hlavička: značka + název
+  a adresa laboratoře + „N stran"; patička: „CITLIVÁ DATA / SENSITIVE DATA" +
+  čísla stran. Titulka zbavena nadbytečného červeného proužku (akcent dělá pruh).
+
 ## [5.10.0] - 2026-06-11
 
 ### Změněno

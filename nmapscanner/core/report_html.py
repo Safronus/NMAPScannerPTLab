@@ -200,8 +200,7 @@ def _css():
 
     /* Titulní strana */
     .cover {{ position: relative; }}
-    .cover .band {{ height: 10px; background: {RED}; margin-bottom: 60mm; }}
-    .cover .kicker {{ color: {RED}; font-weight: 700; letter-spacing: 3px;
+    .cover .kicker {{ margin-top: 58mm; color: {RED}; font-weight: 700; letter-spacing: 3px;
                       text-transform: uppercase; font-size: 12px; }}
     .cover h1 {{ font-size: 40px; font-weight: 800; color: {NAVY}; margin: 6px 0 2px; }}
     .cover .rule {{ width: 70px; height: 4px; background: {RED}; margin: 14px 0 22px; }}
@@ -309,7 +308,6 @@ def _cover(meta, options, lang):
                    f'<span class="v">{_esc(v)}</span></div>' for k, v in rows)
     return f"""
     <div class="cover">
-      <div class="band"></div>
       <div class="kicker">{_esc(sub)}</div>
       <h1>{_esc(meta.get('title', T('report', lang)))}</h1>
       <div class="rule"></div>
