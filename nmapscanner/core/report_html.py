@@ -437,9 +437,10 @@ def _finding_card(f, lang, options, comments):
     if options.get("include_recommendations", True) and f.get("recommendation"):
         parts.append(f'<div class="rec"><span class="lbl">{_esc(T("recommendation", lang))}</span><br>'
                      f'{_esc(f["recommendation"])}</div>')
-    if comments.get(f["id"]):
+    cmt = f.get("comment") or comments.get(f["id"])
+    if cmt:
         parts.append(f'<div class="cmt"><span class="lbl">{_esc(T("comment", lang))}</span><br>'
-                     f'{_nl2br(comments[f["id"]])}</div>')
+                     f'{_nl2br(cmt)}</div>')
     parts.append("</div>")
     return "".join(parts)
 

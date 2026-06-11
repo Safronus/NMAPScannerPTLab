@@ -183,20 +183,34 @@ class ReportDialog(QDialog):
 
     def _tab_comments(self):
         w = QWidget(); v = QVBoxLayout(w)
-        v.addWidget(QLabel("Volitelné komentáře k jednotlivým nálezům "
-                           "(zobrazí se u nálezu v reportu):"))
-        self.comments_table = QTableWidget(0, 4)
-        self.comments_table.setHorizontalHeaderLabels(["Záv.", "Cíl", "Nález", "Komentář"])
+        v.addWidget(QLabel("Nálezy v reportu — <b>dvojklik</b> upraví závažnost, OWASP, "
+                           "doporučení, dopad, název i komentář (pro tento report). "
+                           "Komentář lze psát i přímo do sloupce."))
+        self.comments_table = QTableWidget(0, 5)
+        self.comments_table.setHorizontalHeaderLabels(["Záv.", "OWASP", "Cíl", "Nález", "Komentář"])
         hh = self.comments_table.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         hh.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        hh.setSectionResizeMode(2, QHeaderView.Stretch)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         hh.setSectionResizeMode(3, QHeaderView.Stretch)
+        hh.setSectionResizeMode(4, QHeaderView.Stretch)
+        self.comments_table.itemDoubleClicked.connect(self._edit_finding_row)
         v.addWidget(self.comments_table)
-        refresh = QPushButton("↻ Načíst nálezy dle aktuálního výběru")
+        row = QHBoxLayout()
+        mgr = QPushButton("⚙ Správce knihovny")
+        mgr.clicked.connect(self._open_manager)
+        row.addWidget(mgr)
+        row.addStretch()
+        refresh = QPushButton("↻ Načíst nálezy")
         refresh.clicked.connect(self._refresh_comments_table)
-        v.addWidget(refresh, 0, Qt.AlignRight)
+        row.addWidget(refresh)
+        v.addLayout(row)
         return w
+
+    def _open_manager(self):
+        from .classification import ClassificationManagerDialog
+        ClassificationManagerDialog(self).exec()
+        self._refresh_comments_table()
 
     # ------------------------------------------------------------------
     def _lang(self):
@@ -229,25 +243,53 @@ class ReportDialog(QDialog):
         except Exception:
             pass
 
+    def _overrides(self):
+        return (self.scan_results.get("report_config", {}) or {}).get("overrides", {}) or {}
+
     def _refresh_comments_table(self):
+        from ..core.report_classify import apply_overrides
+        from ..core.report_classify import SEVERITY_COLOR
+        from PySide6.QtGui import QColor
         # Zachovat dosud napsané (neuložené) komentáře — přepnutí záložky je nesmí smazat
         saved = dict(self._cfg.get("comments", {}))
         saved.update(self._collect_comments())
 
         result = build_findings(self.scan_results, sections=self._selected_sections(),
                                 min_severity=self.sev_combo.currentData(), lang=self._lang())
+        apply_overrides(result, self._overrides(), self._lang())
         self._comment_keys = []
+        self._row_findings = []
         findings = result["findings"]
         self.comments_table.setRowCount(len(findings))
         for i, f in enumerate(findings):
             ckey = self._comment_key(f)
             self._comment_keys.append(ckey)
-            for col, val in enumerate([f["severity"], f["target"], f["title"]]):
+            self._row_findings.append(f)
+            for col, val in enumerate([f["severity"], f.get("owasp", ""), f["target"], f["title"]]):
                 it = QTableWidgetItem(val)
                 it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                if col == 0 and val in SEVERITY_COLOR:
+                    it.setForeground(QColor(SEVERITY_COLOR[val]))
                 self.comments_table.setItem(i, col, it)
-            cit = QTableWidgetItem(saved.get(ckey, ""))
-            self.comments_table.setItem(i, 3, cit)
+            cmt = f.get("comment") or saved.get(ckey, "")
+            self.comments_table.setItem(i, 4, QTableWidgetItem(cmt))
+
+    def _edit_finding_row(self, item):
+        """Dvojklik na řádek → plná editace nálezu pro tento report (override)."""
+        row = item.row()
+        if row < 0 or row >= len(getattr(self, "_row_findings", [])):
+            return
+        f = self._row_findings[row]
+        from .classification import FindingEditDialog, ClassificationManagerDialog
+        from ..core.report_classify import override_key
+        dlg = FindingEditDialog(f, self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        cfg = self.scan_results.setdefault("report_config", {})
+        cfg.setdefault("overrides", {})[override_key(f)] = dlg.get_override()
+        if getattr(dlg, "open_manager_requested", False):
+            ClassificationManagerDialog(self).exec()
+        self._refresh_comments_table()
 
     @staticmethod
     def _comment_key(f):
@@ -258,7 +300,7 @@ class ReportDialog(QDialog):
         out = {}
         if getattr(self, "_comment_keys", None):
             for i, ckey in enumerate(self._comment_keys):
-                it = self.comments_table.item(i, 3)
+                it = self.comments_table.item(i, 4)  # sloupec Komentář
                 txt = it.text().strip() if it else ""
                 if txt:
                     out[ckey] = txt
@@ -340,6 +382,8 @@ class ReportDialog(QDialog):
             },
             "human": {k: self.free_edits[k].toPlainText() for k in self.free_edits},
             "comments": comments_by_key,
+            # zachovat per-nález úpravy (overrides) — nesmí se přepsat
+            "overrides": (self.scan_results.get("report_config", {}) or {}).get("overrides", {}),
         }
         self.scan_results["report_config"] = cfg
         self._cfg = cfg

@@ -4,6 +4,17 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.12.1] - 2026-06-11
+
+### Přidáno
+- **Per-nález úpravy přímo v dialogu reportu.** Záložka s nálezy je teď plnohodnotný
+  editor — **dvojklik na nález** otevře úpravu závažnosti, OWASP, názvu, **dopadu,
+  doporučení a komentáře** pro daný report (uloží se jako override do projektu a
+  projeví se v PDF). Tabulka ukazuje závažnost (barevně) i OWASP a reflektuje
+  úpravy; komentář lze psát i přímo do sloupce. Tlačítko **⚙ Správce knihovny**
+  otevře globální editaci pravidel. Overrides se při ukládání konfigurace
+  zachovávají (nepřepíšou se).
+
 ## [5.12.0] - 2026-06-11
 
 ### Přidáno
