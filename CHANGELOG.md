@@ -4,6 +4,15 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.11.1] - 2026-06-11
+
+### Přidáno
+- **Dopady (impact) v knihovně klasifikací.** Každý nález má nově i **dopad** —
+  generický dle závažnosti (`impact_by_severity` v knihovně, editovatelné) +
+  konkrétní dopady u klíčových pravidel (Telnet, SMB, Docker API, DB, Redis,
+  .git/.env, slabé TLS, chybějící HSTS, Log4Shell). Zobrazuje se v kartě nálezu
+  v PDF reportu (sekce „Dopad").
+
 ## [5.11.0] - 2026-06-11
 
 ### Přidáno

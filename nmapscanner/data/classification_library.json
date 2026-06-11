@@ -12,220 +12,1266 @@
       "NVD — https://nvd.nist.gov/"
     ]
   },
-
+  "impact_by_severity": {
+    "CRITICAL": {
+      "cs": "Kritický dopad — možný úplný kompromis systému, vzdálené spuštění kódu nebo rozsáhlý únik dat. Vyžaduje okamžitou nápravu.",
+      "en": "Critical impact — possible full system compromise, remote code execution or large-scale data breach. Requires immediate remediation."
+    },
+    "HIGH": {
+      "cs": "Vysoký dopad — výrazné zvýšení rizika kompromitace, únik citlivých dat nebo narušení dostupnosti. Prioritní náprava.",
+      "en": "High impact — significantly increased risk of compromise, sensitive data leak or availability disruption. Priority remediation."
+    },
+    "MEDIUM": {
+      "cs": "Střední dopad — usnadňuje útok nebo částečně odhaluje informace; v kombinaci s dalšími nálezy může vést k vážnějšímu dopadu.",
+      "en": "Medium impact — facilitates an attack or partially discloses information; combined with other findings may lead to a more serious impact."
+    },
+    "LOW": {
+      "cs": "Nízký dopad — drobné odhalení informací nebo nedostatek v hardeningu; samo o sobě obvykle nevede ke kompromitaci.",
+      "en": "Low impact — minor information disclosure or a hardening gap; on its own it usually does not lead to compromise."
+    },
+    "INFO": {
+      "cs": "Informativní — bez přímého bezpečnostního dopadu; slouží jako kontext a rozšiřuje znalost útočné plochy.",
+      "en": "Informational — no direct security impact; provides context and expands knowledge of the attack surface."
+    }
+  },
   "ports": {
-    "21": {"severity": "MEDIUM", "owasp": "A04", "name": {"cs": "FTP", "en": "FTP"},
-      "recommendation": {"cs": "FTP přenáší přihlašovací údaje i data v otevřené podobě. Nahradit FTPS/SFTP (SSH), nebo službu omezit firewallem jen na management síť/VPN. Zakázat anonymní přístup.", "en": "FTP transfers credentials and data in cleartext. Replace with FTPS/SFTP (SSH), or restrict via firewall to a management network/VPN. Disable anonymous access."}},
-    "22": {"severity": "LOW", "owasp": "A02", "name": {"cs": "SSH", "en": "SSH"},
-      "recommendation": {"cs": "SSH omezit na management síť/VPN, povolit jen klíče (zakázat heslovou autentizaci a root login), nasadit fail2ban a moderní šifry.", "en": "Restrict SSH to a management network/VPN, allow key-based auth only (disable password and root login), deploy fail2ban and modern ciphers."}},
-    "23": {"severity": "HIGH", "owasp": "A04", "name": {"cs": "Telnet", "en": "Telnet"},
-      "recommendation": {"cs": "Telnet posílá hesla i relaci v plaintextu — okamžitě vypnout a nahradit SSH. Pokud je nezbytný, jen přes izolovanou management síť.", "en": "Telnet sends passwords and sessions in cleartext — disable immediately and replace with SSH. If unavoidable, only over an isolated management network."}},
-    "25": {"severity": "INFO", "owasp": "A02", "name": {"cs": "SMTP", "en": "SMTP"},
-      "recommendation": {"cs": "Ověřit, že SMTP není otevřený relay, vynutit STARTTLS a SPF/DKIM/DMARC.", "en": "Ensure SMTP is not an open relay, enforce STARTTLS and SPF/DKIM/DMARC."}},
-    "53": {"severity": "LOW", "owasp": "A02", "name": {"cs": "DNS", "en": "DNS"},
-      "recommendation": {"cs": "Zakázat otevřenou rekurzi a zónové přenosy (AXFR) vůči neoprávněným, omezit na potřebné klienty.", "en": "Disable open recursion and zone transfers (AXFR) to unauthorized parties; restrict to required clients."}},
-    "69": {"severity": "MEDIUM", "owasp": "A02", "name": {"cs": "TFTP", "en": "TFTP"},
-      "recommendation": {"cs": "TFTP nemá autentizaci. Vypnout, pokud není nezbytně nutné; jinak izolovat do management sítě.", "en": "TFTP has no authentication. Disable unless strictly required; otherwise isolate to a management network."}},
-    "110": {"severity": "LOW", "owasp": "A04", "name": {"cs": "POP3", "en": "POP3"},
-      "recommendation": {"cs": "Vynutit POP3S/STARTTLS, zakázat plaintext autentizaci.", "en": "Enforce POP3S/STARTTLS, disable plaintext authentication."}},
-    "111": {"severity": "LOW", "owasp": "A02", "name": {"cs": "rpcbind/portmapper", "en": "rpcbind/portmapper"},
-      "recommendation": {"cs": "rpcbind odhaluje RPC služby a bývá zneužit k amplifikaci. Omezit firewallem, zvážit vypnutí.", "en": "rpcbind exposes RPC services and is abused for amplification. Firewall it, consider disabling."}},
-    "135": {"severity": "MEDIUM", "owasp": "A02", "name": {"cs": "MSRPC", "en": "MSRPC"},
-      "recommendation": {"cs": "MSRPC endpoint mapper nevystavovat do internetu — blokovat na perimetru, povolit jen interně.", "en": "Do not expose the MSRPC endpoint mapper to the internet — block at the perimeter, allow internally only."}},
-    "139": {"severity": "MEDIUM", "owasp": "A01", "name": {"cs": "NetBIOS/SMB", "en": "NetBIOS/SMB"},
-      "recommendation": {"cs": "NetBIOS/SMB nevystavovat do internetu. Blokovat 139/445 na perimetru, vypnout SMBv1.", "en": "Do not expose NetBIOS/SMB to the internet. Block 139/445 at the perimeter, disable SMBv1."}},
-    "143": {"severity": "LOW", "owasp": "A04", "name": {"cs": "IMAP", "en": "IMAP"},
-      "recommendation": {"cs": "Vynutit IMAPS/STARTTLS, zakázat plaintext login.", "en": "Enforce IMAPS/STARTTLS, disable plaintext login."}},
-    "161": {"severity": "MEDIUM", "owasp": "A02", "name": {"cs": "SNMP", "en": "SNMP"},
-      "recommendation": {"cs": "SNMP často běží s výchozím community stringem (public/private). Přejít na SNMPv3 s autentizací a šifrováním, omezit na management síť, změnit community.", "en": "SNMP often runs with a default community string (public/private). Move to SNMPv3 with auth and encryption, restrict to a management network, change the community."}},
-    "389": {"severity": "LOW", "owasp": "A02", "name": {"cs": "LDAP", "en": "LDAP"},
-      "recommendation": {"cs": "LDAP nevystavovat do internetu, vynutit LDAPS (TLS), zakázat anonymní bind.", "en": "Do not expose LDAP to the internet, enforce LDAPS (TLS), disable anonymous bind."}},
-    "445": {"severity": "HIGH", "owasp": "A01", "name": {"cs": "SMB", "en": "SMB"},
-      "recommendation": {"cs": "SMB je častý vektor (EternalBlue, ransomware). Nevystavovat do internetu — blokovat na perimetru, vypnout SMBv1, vynutit podepisování, patchovat.", "en": "SMB is a common vector (EternalBlue, ransomware). Do not expose to the internet — block at the perimeter, disable SMBv1, enforce signing, patch."}},
-    "512": {"severity": "HIGH", "owasp": "A04", "name": {"cs": "rexec", "en": "rexec"},
-      "recommendation": {"cs": "r-služby (rexec) bez šifrování — vypnout a nahradit SSH.", "en": "r-services (rexec) without encryption — disable and replace with SSH."}},
-    "513": {"severity": "HIGH", "owasp": "A04", "name": {"cs": "rlogin", "en": "rlogin"},
-      "recommendation": {"cs": "rlogin bez šifrování a se slabou autentizací — vypnout, nahradit SSH.", "en": "rlogin without encryption and with weak auth — disable, replace with SSH."}},
-    "514": {"severity": "HIGH", "owasp": "A04", "name": {"cs": "rsh", "en": "rsh"},
-      "recommendation": {"cs": "rsh bez šifrování — vypnout, nahradit SSH.", "en": "rsh without encryption — disable, replace with SSH."}},
-    "873": {"severity": "MEDIUM", "owasp": "A01", "name": {"cs": "rsync", "en": "rsync"},
-      "recommendation": {"cs": "rsync démon často bez autentizace. Vyžadovat autentizaci, omezit moduly a přístup ze sítě.", "en": "rsync daemon is often unauthenticated. Require authentication, restrict modules and network access."}},
-    "1433": {"severity": "HIGH", "owasp": "A01", "name": {"cs": "MSSQL", "en": "MSSQL"},
-      "recommendation": {"cs": "Databáze MSSQL nemá být přístupná ze sítě/internetu. Omezit na aplikační servery/VPN, silná hesla, vynutit šifrování spojení.", "en": "MSSQL database must not be reachable from the network/internet. Restrict to app servers/VPN, strong passwords, enforce connection encryption."}},
-    "1521": {"severity": "HIGH", "owasp": "A01", "name": {"cs": "Oracle DB", "en": "Oracle DB"},
-      "recommendation": {"cs": "Oracle DB neexponovat. Omezit na aplikační vrstvu/VPN, patchovat, silná hesla.", "en": "Do not expose Oracle DB. Restrict to the app tier/VPN, patch, strong passwords."}},
-    "2049": {"severity": "MEDIUM", "owasp": "A01", "name": {"cs": "NFS", "en": "NFS"},
-      "recommendation": {"cs": "NFS exporty omezit na konkrétní hosty (no_root_squash vypnout), neexponovat do internetu.", "en": "Restrict NFS exports to specific hosts (disable no_root_squash), do not expose to the internet."}},
-    "2375": {"severity": "CRITICAL", "owasp": "A02", "name": {"cs": "Docker API (bez TLS)", "en": "Docker API (no TLS)"},
-      "recommendation": {"cs": "Nešifrované Docker API = plná kontrola nad hostitelem bez autentizace. Okamžitě uzavřít, povolit jen přes TLS s klientskými certifikáty / socket.", "en": "Unencrypted Docker API = full host control without auth. Close immediately, allow only over TLS with client certs / local socket."}},
-    "3306": {"severity": "HIGH", "owasp": "A01", "name": {"cs": "MySQL/MariaDB", "en": "MySQL/MariaDB"},
-      "recommendation": {"cs": "Databáze nemá být přístupná ze sítě. Bind na localhost / omezit na aplikační servery/VPN, silná hesla, TLS.", "en": "Database must not be network-reachable. Bind to localhost / restrict to app servers/VPN, strong passwords, TLS."}},
-    "3389": {"severity": "MEDIUM", "owasp": "A07", "name": {"cs": "RDP", "en": "RDP"},
-      "recommendation": {"cs": "RDP nevystavovat do internetu (brute-force, BlueKeep). Zpřístupnit jen přes VPN, vynutit NLA, MFA, silná hesla, patchovat.", "en": "Do not expose RDP to the internet (brute-force, BlueKeep). Only via VPN, enforce NLA, MFA, strong passwords, patch."}},
-    "5432": {"severity": "HIGH", "owasp": "A01", "name": {"cs": "PostgreSQL", "en": "PostgreSQL"},
-      "recommendation": {"cs": "PostgreSQL neexponovat. Omezit pg_hba.conf na aplikační vrstvu/VPN, vynutit TLS, silná hesla.", "en": "Do not expose PostgreSQL. Restrict pg_hba.conf to the app tier/VPN, enforce TLS, strong passwords."}},
-    "5900": {"severity": "HIGH", "owasp": "A07", "name": {"cs": "VNC", "en": "VNC"},
-      "recommendation": {"cs": "VNC mívá slabou/žádnou autentizaci a slabé šifrování. Zpřístupnit jen přes VPN/SSH tunel, silné heslo, omezit přístup.", "en": "VNC often has weak/no auth and weak encryption. Only via VPN/SSH tunnel, strong password, restrict access."}},
-    "5985": {"severity": "MEDIUM", "owasp": "A02", "name": {"cs": "WinRM (HTTP)", "en": "WinRM (HTTP)"},
-      "recommendation": {"cs": "WinRM přes HTTP nešifruje. Použít HTTPS (5986), omezit na management síť, vyžadovat autentizaci.", "en": "WinRM over HTTP is unencrypted. Use HTTPS (5986), restrict to a management network, require authentication."}},
-    "6379": {"severity": "HIGH", "owasp": "A01", "name": {"cs": "Redis", "en": "Redis"},
-      "recommendation": {"cs": "Redis je ve výchozím stavu bez autentizace a umožňuje RCE. Nastavit requirepass/ACL, bind na localhost, neexponovat do internetu.", "en": "Redis is unauthenticated by default and allows RCE. Set requirepass/ACL, bind to localhost, do not expose to the internet."}},
-    "9200": {"severity": "HIGH", "owasp": "A01", "name": {"cs": "Elasticsearch", "en": "Elasticsearch"},
-      "recommendation": {"cs": "Elasticsearch často bez autentizace = únik dat. Zapnout security (autentizace + TLS), neexponovat do internetu.", "en": "Elasticsearch is often unauthenticated = data leak. Enable security (auth + TLS), do not expose to the internet."}},
-    "11211": {"severity": "HIGH", "owasp": "A01", "name": {"cs": "Memcached", "en": "Memcached"},
-      "recommendation": {"cs": "Memcached bez autentizace a zneužitelný k DDoS amplifikaci. Bind na localhost, vypnout UDP, neexponovat.", "en": "Memcached is unauthenticated and abused for DDoS amplification. Bind to localhost, disable UDP, do not expose."}},
-    "27017": {"severity": "HIGH", "owasp": "A01", "name": {"cs": "MongoDB", "en": "MongoDB"},
-      "recommendation": {"cs": "MongoDB často bez autentizace = únik dat. Zapnout autorizaci, bind na localhost/VPN, TLS.", "en": "MongoDB is often unauthenticated = data leak. Enable authorization, bind to localhost/VPN, TLS."}},
-    "80": {"severity": "INFO", "owasp": "A02", "name": {"cs": "HTTP", "en": "HTTP"},
-      "recommendation": {"cs": "Přesměrovat HTTP na HTTPS a nasadit HSTS.", "en": "Redirect HTTP to HTTPS and deploy HSTS."}},
-    "443": {"severity": "INFO", "owasp": "A02", "name": {"cs": "HTTPS", "en": "HTTPS"},
-      "recommendation": {"cs": "Ověřit konfiguraci TLS a bezpečnostní hlavičky (viz TLS audit a hlavičky).", "en": "Verify TLS configuration and security headers (see TLS audit and headers)."}},
-    "8080": {"severity": "INFO", "owasp": "A02", "name": {"cs": "HTTP (alt)", "en": "HTTP (alt)"},
-      "recommendation": {"cs": "Alternativní HTTP port — ověřit, zda nejde o nechtěně exponované admin/aplikační rozhraní.", "en": "Alternative HTTP port — verify it is not an unintentionally exposed admin/application interface."}},
-    "8443": {"severity": "INFO", "owasp": "A02", "name": {"cs": "HTTPS (alt)", "en": "HTTPS (alt)"},
-      "recommendation": {"cs": "Alternativní HTTPS port — ověřit TLS a účel služby.", "en": "Alternative HTTPS port — verify TLS and the service purpose."}}
+    "21": {
+      "severity": "MEDIUM",
+      "owasp": "A04",
+      "name": {
+        "cs": "FTP",
+        "en": "FTP"
+      },
+      "impact": {
+        "cs": "Odposlechem sítě lze získat přihlašovací údaje a přenášená data.",
+        "en": "Network eavesdropping can capture credentials and transferred data."
+      },
+      "recommendation": {
+        "cs": "FTP přenáší přihlašovací údaje i data v otevřené podobě. Nahradit FTPS/SFTP (SSH), nebo službu omezit firewallem jen na management síť/VPN. Zakázat anonymní přístup.",
+        "en": "FTP transfers credentials and data in cleartext. Replace with FTPS/SFTP (SSH), or restrict via firewall to a management network/VPN. Disable anonymous access."
+      }
+    },
+    "22": {
+      "severity": "LOW",
+      "owasp": "A02",
+      "name": {
+        "cs": "SSH",
+        "en": "SSH"
+      },
+      "recommendation": {
+        "cs": "SSH omezit na management síť/VPN, povolit jen klíče (zakázat heslovou autentizaci a root login), nasadit fail2ban a moderní šifry.",
+        "en": "Restrict SSH to a management network/VPN, allow key-based auth only (disable password and root login), deploy fail2ban and modern ciphers."
+      }
+    },
+    "23": {
+      "severity": "HIGH",
+      "owasp": "A04",
+      "name": {
+        "cs": "Telnet",
+        "en": "Telnet"
+      },
+      "recommendation": {
+        "cs": "Telnet posílá hesla i relaci v plaintextu — okamžitě vypnout a nahradit SSH. Pokud je nezbytný, jen přes izolovanou management síť.",
+        "en": "Telnet sends passwords and sessions in cleartext — disable immediately and replace with SSH. If unavoidable, only over an isolated management network."
+      },
+      "impact": {
+        "cs": "Hesla i celá relace jdou po síti v plaintextu — odposlech vede k převzetí účtu/zařízení.",
+        "en": "Passwords and the whole session traverse the network in cleartext — eavesdropping leads to account/device takeover."
+      }
+    },
+    "25": {
+      "severity": "INFO",
+      "owasp": "A02",
+      "name": {
+        "cs": "SMTP",
+        "en": "SMTP"
+      },
+      "recommendation": {
+        "cs": "Ověřit, že SMTP není otevřený relay, vynutit STARTTLS a SPF/DKIM/DMARC.",
+        "en": "Ensure SMTP is not an open relay, enforce STARTTLS and SPF/DKIM/DMARC."
+      }
+    },
+    "53": {
+      "severity": "LOW",
+      "owasp": "A02",
+      "name": {
+        "cs": "DNS",
+        "en": "DNS"
+      },
+      "recommendation": {
+        "cs": "Zakázat otevřenou rekurzi a zónové přenosy (AXFR) vůči neoprávněným, omezit na potřebné klienty.",
+        "en": "Disable open recursion and zone transfers (AXFR) to unauthorized parties; restrict to required clients."
+      }
+    },
+    "69": {
+      "severity": "MEDIUM",
+      "owasp": "A02",
+      "name": {
+        "cs": "TFTP",
+        "en": "TFTP"
+      },
+      "recommendation": {
+        "cs": "TFTP nemá autentizaci. Vypnout, pokud není nezbytně nutné; jinak izolovat do management sítě.",
+        "en": "TFTP has no authentication. Disable unless strictly required; otherwise isolate to a management network."
+      }
+    },
+    "110": {
+      "severity": "LOW",
+      "owasp": "A04",
+      "name": {
+        "cs": "POP3",
+        "en": "POP3"
+      },
+      "recommendation": {
+        "cs": "Vynutit POP3S/STARTTLS, zakázat plaintext autentizaci.",
+        "en": "Enforce POP3S/STARTTLS, disable plaintext authentication."
+      }
+    },
+    "111": {
+      "severity": "LOW",
+      "owasp": "A02",
+      "name": {
+        "cs": "rpcbind/portmapper",
+        "en": "rpcbind/portmapper"
+      },
+      "recommendation": {
+        "cs": "rpcbind odhaluje RPC služby a bývá zneužit k amplifikaci. Omezit firewallem, zvážit vypnutí.",
+        "en": "rpcbind exposes RPC services and is abused for amplification. Firewall it, consider disabling."
+      }
+    },
+    "135": {
+      "severity": "MEDIUM",
+      "owasp": "A02",
+      "name": {
+        "cs": "MSRPC",
+        "en": "MSRPC"
+      },
+      "recommendation": {
+        "cs": "MSRPC endpoint mapper nevystavovat do internetu — blokovat na perimetru, povolit jen interně.",
+        "en": "Do not expose the MSRPC endpoint mapper to the internet — block at the perimeter, allow internally only."
+      }
+    },
+    "139": {
+      "severity": "MEDIUM",
+      "owasp": "A01",
+      "name": {
+        "cs": "NetBIOS/SMB",
+        "en": "NetBIOS/SMB"
+      },
+      "recommendation": {
+        "cs": "NetBIOS/SMB nevystavovat do internetu. Blokovat 139/445 na perimetru, vypnout SMBv1.",
+        "en": "Do not expose NetBIOS/SMB to the internet. Block 139/445 at the perimeter, disable SMBv1."
+      }
+    },
+    "143": {
+      "severity": "LOW",
+      "owasp": "A04",
+      "name": {
+        "cs": "IMAP",
+        "en": "IMAP"
+      },
+      "recommendation": {
+        "cs": "Vynutit IMAPS/STARTTLS, zakázat plaintext login.",
+        "en": "Enforce IMAPS/STARTTLS, disable plaintext login."
+      }
+    },
+    "161": {
+      "severity": "MEDIUM",
+      "owasp": "A02",
+      "name": {
+        "cs": "SNMP",
+        "en": "SNMP"
+      },
+      "recommendation": {
+        "cs": "SNMP často běží s výchozím community stringem (public/private). Přejít na SNMPv3 s autentizací a šifrováním, omezit na management síť, změnit community.",
+        "en": "SNMP often runs with a default community string (public/private). Move to SNMPv3 with auth and encryption, restrict to a management network, change the community."
+      }
+    },
+    "389": {
+      "severity": "LOW",
+      "owasp": "A02",
+      "name": {
+        "cs": "LDAP",
+        "en": "LDAP"
+      },
+      "recommendation": {
+        "cs": "LDAP nevystavovat do internetu, vynutit LDAPS (TLS), zakázat anonymní bind.",
+        "en": "Do not expose LDAP to the internet, enforce LDAPS (TLS), disable anonymous bind."
+      }
+    },
+    "445": {
+      "severity": "HIGH",
+      "owasp": "A01",
+      "name": {
+        "cs": "SMB",
+        "en": "SMB"
+      },
+      "recommendation": {
+        "cs": "SMB je častý vektor (EternalBlue, ransomware). Nevystavovat do internetu — blokovat na perimetru, vypnout SMBv1, vynutit podepisování, patchovat.",
+        "en": "SMB is a common vector (EternalBlue, ransomware). Do not expose to the internet — block at the perimeter, disable SMBv1, enforce signing, patch."
+      },
+      "impact": {
+        "cs": "Při zranitelné verzi hrozí vzdálené spuštění kódu (EternalBlue) a šíření ransomwaru.",
+        "en": "With a vulnerable version, remote code execution (EternalBlue) and ransomware spread are possible."
+      }
+    },
+    "512": {
+      "severity": "HIGH",
+      "owasp": "A04",
+      "name": {
+        "cs": "rexec",
+        "en": "rexec"
+      },
+      "recommendation": {
+        "cs": "r-služby (rexec) bez šifrování — vypnout a nahradit SSH.",
+        "en": "r-services (rexec) without encryption — disable and replace with SSH."
+      }
+    },
+    "513": {
+      "severity": "HIGH",
+      "owasp": "A04",
+      "name": {
+        "cs": "rlogin",
+        "en": "rlogin"
+      },
+      "recommendation": {
+        "cs": "rlogin bez šifrování a se slabou autentizací — vypnout, nahradit SSH.",
+        "en": "rlogin without encryption and with weak auth — disable, replace with SSH."
+      }
+    },
+    "514": {
+      "severity": "HIGH",
+      "owasp": "A04",
+      "name": {
+        "cs": "rsh",
+        "en": "rsh"
+      },
+      "recommendation": {
+        "cs": "rsh bez šifrování — vypnout, nahradit SSH.",
+        "en": "rsh without encryption — disable, replace with SSH."
+      }
+    },
+    "873": {
+      "severity": "MEDIUM",
+      "owasp": "A01",
+      "name": {
+        "cs": "rsync",
+        "en": "rsync"
+      },
+      "recommendation": {
+        "cs": "rsync démon často bez autentizace. Vyžadovat autentizaci, omezit moduly a přístup ze sítě.",
+        "en": "rsync daemon is often unauthenticated. Require authentication, restrict modules and network access."
+      }
+    },
+    "1433": {
+      "severity": "HIGH",
+      "owasp": "A01",
+      "name": {
+        "cs": "MSSQL",
+        "en": "MSSQL"
+      },
+      "recommendation": {
+        "cs": "Databáze MSSQL nemá být přístupná ze sítě/internetu. Omezit na aplikační servery/VPN, silná hesla, vynutit šifrování spojení.",
+        "en": "MSSQL database must not be reachable from the network/internet. Restrict to app servers/VPN, strong passwords, enforce connection encryption."
+      }
+    },
+    "1521": {
+      "severity": "HIGH",
+      "owasp": "A01",
+      "name": {
+        "cs": "Oracle DB",
+        "en": "Oracle DB"
+      },
+      "recommendation": {
+        "cs": "Oracle DB neexponovat. Omezit na aplikační vrstvu/VPN, patchovat, silná hesla.",
+        "en": "Do not expose Oracle DB. Restrict to the app tier/VPN, patch, strong passwords."
+      }
+    },
+    "2049": {
+      "severity": "MEDIUM",
+      "owasp": "A01",
+      "name": {
+        "cs": "NFS",
+        "en": "NFS"
+      },
+      "recommendation": {
+        "cs": "NFS exporty omezit na konkrétní hosty (no_root_squash vypnout), neexponovat do internetu.",
+        "en": "Restrict NFS exports to specific hosts (disable no_root_squash), do not expose to the internet."
+      }
+    },
+    "2375": {
+      "severity": "CRITICAL",
+      "owasp": "A02",
+      "name": {
+        "cs": "Docker API (bez TLS)",
+        "en": "Docker API (no TLS)"
+      },
+      "recommendation": {
+        "cs": "Nešifrované Docker API = plná kontrola nad hostitelem bez autentizace. Okamžitě uzavřít, povolit jen přes TLS s klientskými certifikáty / socket.",
+        "en": "Unencrypted Docker API = full host control without auth. Close immediately, allow only over TLS with client certs / local socket."
+      },
+      "impact": {
+        "cs": "Nešifrované Docker API bez autentizace = plné převzetí hostitele a všech kontejnerů.",
+        "en": "Unencrypted, unauthenticated Docker API = full takeover of the host and all containers."
+      }
+    },
+    "3306": {
+      "severity": "HIGH",
+      "owasp": "A01",
+      "name": {
+        "cs": "MySQL/MariaDB",
+        "en": "MySQL/MariaDB"
+      },
+      "recommendation": {
+        "cs": "Databáze nemá být přístupná ze sítě. Bind na localhost / omezit na aplikační servery/VPN, silná hesla, TLS.",
+        "en": "Database must not be network-reachable. Bind to localhost / restrict to app servers/VPN, strong passwords, TLS."
+      },
+      "impact": {
+        "cs": "Přímý přístup k databázi ze sítě umožňuje brute-force a při slabém hesle únik všech dat.",
+        "en": "Direct network access to the database enables brute-force and, with a weak password, leakage of all data."
+      }
+    },
+    "3389": {
+      "severity": "MEDIUM",
+      "owasp": "A07",
+      "name": {
+        "cs": "RDP",
+        "en": "RDP"
+      },
+      "recommendation": {
+        "cs": "RDP nevystavovat do internetu (brute-force, BlueKeep). Zpřístupnit jen přes VPN, vynutit NLA, MFA, silná hesla, patchovat.",
+        "en": "Do not expose RDP to the internet (brute-force, BlueKeep). Only via VPN, enforce NLA, MFA, strong passwords, patch."
+      }
+    },
+    "5432": {
+      "severity": "HIGH",
+      "owasp": "A01",
+      "name": {
+        "cs": "PostgreSQL",
+        "en": "PostgreSQL"
+      },
+      "recommendation": {
+        "cs": "PostgreSQL neexponovat. Omezit pg_hba.conf na aplikační vrstvu/VPN, vynutit TLS, silná hesla.",
+        "en": "Do not expose PostgreSQL. Restrict pg_hba.conf to the app tier/VPN, enforce TLS, strong passwords."
+      }
+    },
+    "5900": {
+      "severity": "HIGH",
+      "owasp": "A07",
+      "name": {
+        "cs": "VNC",
+        "en": "VNC"
+      },
+      "recommendation": {
+        "cs": "VNC mívá slabou/žádnou autentizaci a slabé šifrování. Zpřístupnit jen přes VPN/SSH tunel, silné heslo, omezit přístup.",
+        "en": "VNC often has weak/no auth and weak encryption. Only via VPN/SSH tunnel, strong password, restrict access."
+      }
+    },
+    "5985": {
+      "severity": "MEDIUM",
+      "owasp": "A02",
+      "name": {
+        "cs": "WinRM (HTTP)",
+        "en": "WinRM (HTTP)"
+      },
+      "recommendation": {
+        "cs": "WinRM přes HTTP nešifruje. Použít HTTPS (5986), omezit na management síť, vyžadovat autentizaci.",
+        "en": "WinRM over HTTP is unencrypted. Use HTTPS (5986), restrict to a management network, require authentication."
+      }
+    },
+    "6379": {
+      "severity": "HIGH",
+      "owasp": "A01",
+      "name": {
+        "cs": "Redis",
+        "en": "Redis"
+      },
+      "recommendation": {
+        "cs": "Redis je ve výchozím stavu bez autentizace a umožňuje RCE. Nastavit requirepass/ACL, bind na localhost, neexponovat do internetu.",
+        "en": "Redis is unauthenticated by default and allows RCE. Set requirepass/ACL, bind to localhost, do not expose to the internet."
+      },
+      "impact": {
+        "cs": "Redis bez autentizace umožňuje čtení/zápis dat a často i vzdálené spuštění kódu.",
+        "en": "Unauthenticated Redis allows read/write of data and often remote code execution."
+      }
+    },
+    "9200": {
+      "severity": "HIGH",
+      "owasp": "A01",
+      "name": {
+        "cs": "Elasticsearch",
+        "en": "Elasticsearch"
+      },
+      "recommendation": {
+        "cs": "Elasticsearch často bez autentizace = únik dat. Zapnout security (autentizace + TLS), neexponovat do internetu.",
+        "en": "Elasticsearch is often unauthenticated = data leak. Enable security (auth + TLS), do not expose to the internet."
+      }
+    },
+    "11211": {
+      "severity": "HIGH",
+      "owasp": "A01",
+      "name": {
+        "cs": "Memcached",
+        "en": "Memcached"
+      },
+      "recommendation": {
+        "cs": "Memcached bez autentizace a zneužitelný k DDoS amplifikaci. Bind na localhost, vypnout UDP, neexponovat.",
+        "en": "Memcached is unauthenticated and abused for DDoS amplification. Bind to localhost, disable UDP, do not expose."
+      }
+    },
+    "27017": {
+      "severity": "HIGH",
+      "owasp": "A01",
+      "name": {
+        "cs": "MongoDB",
+        "en": "MongoDB"
+      },
+      "recommendation": {
+        "cs": "MongoDB často bez autentizace = únik dat. Zapnout autorizaci, bind na localhost/VPN, TLS.",
+        "en": "MongoDB is often unauthenticated = data leak. Enable authorization, bind to localhost/VPN, TLS."
+      }
+    },
+    "80": {
+      "severity": "INFO",
+      "owasp": "A02",
+      "name": {
+        "cs": "HTTP",
+        "en": "HTTP"
+      },
+      "recommendation": {
+        "cs": "Přesměrovat HTTP na HTTPS a nasadit HSTS.",
+        "en": "Redirect HTTP to HTTPS and deploy HSTS."
+      }
+    },
+    "443": {
+      "severity": "INFO",
+      "owasp": "A02",
+      "name": {
+        "cs": "HTTPS",
+        "en": "HTTPS"
+      },
+      "recommendation": {
+        "cs": "Ověřit konfiguraci TLS a bezpečnostní hlavičky (viz TLS audit a hlavičky).",
+        "en": "Verify TLS configuration and security headers (see TLS audit and headers)."
+      }
+    },
+    "8080": {
+      "severity": "INFO",
+      "owasp": "A02",
+      "name": {
+        "cs": "HTTP (alt)",
+        "en": "HTTP (alt)"
+      },
+      "recommendation": {
+        "cs": "Alternativní HTTP port — ověřit, zda nejde o nechtěně exponované admin/aplikační rozhraní.",
+        "en": "Alternative HTTP port — verify it is not an unintentionally exposed admin/application interface."
+      }
+    },
+    "8443": {
+      "severity": "INFO",
+      "owasp": "A02",
+      "name": {
+        "cs": "HTTPS (alt)",
+        "en": "HTTPS (alt)"
+      },
+      "recommendation": {
+        "cs": "Alternativní HTTPS port — ověřit TLS a účel služby.",
+        "en": "Alternative HTTPS port — verify TLS and the service purpose."
+      }
+    }
   },
-
-  "port_default": {"severity": "INFO", "owasp": "A02", "name": {"cs": "Otevřený port", "en": "Open port"},
-    "recommendation": {"cs": "Ověřit nutnost služby; nepotřebné porty zavřít nebo omezit firewallem na management síť/VPN. Veřejně dostupné služby (mimo VPN) jen pokud je to záměr.", "en": "Verify the service is needed; close unnecessary ports or restrict them to a management network/VPN. Keep publicly reachable services (outside VPN) only when intended."}},
-
+  "port_default": {
+    "severity": "INFO",
+    "owasp": "A02",
+    "name": {
+      "cs": "Otevřený port",
+      "en": "Open port"
+    },
+    "recommendation": {
+      "cs": "Ověřit nutnost služby; nepotřebné porty zavřít nebo omezit firewallem na management síť/VPN. Veřejně dostupné služby (mimo VPN) jen pokud je to záměr.",
+      "en": "Verify the service is needed; close unnecessary ports or restrict them to a management network/VPN. Keep publicly reachable services (outside VPN) only when intended."
+    }
+  },
   "service_keywords": [
-    {"match": "telnet", "severity": "HIGH", "owasp": "A04", "name": {"cs": "Telnet", "en": "Telnet"}, "recommendation": {"cs": "Vypnout Telnet, nahradit SSH.", "en": "Disable Telnet, replace with SSH."}},
-    {"match": "ftp", "severity": "MEDIUM", "owasp": "A04", "name": {"cs": "FTP", "en": "FTP"}, "recommendation": {"cs": "Nahradit SFTP/FTPS, zakázat anonymní přístup.", "en": "Replace with SFTP/FTPS, disable anonymous access."}},
-    {"match": "vnc", "severity": "HIGH", "owasp": "A07", "name": {"cs": "VNC", "en": "VNC"}, "recommendation": {"cs": "Jen přes VPN/SSH tunel, silné heslo.", "en": "Only via VPN/SSH tunnel, strong password."}},
-    {"match": "ms-wbt", "severity": "MEDIUM", "owasp": "A07", "name": {"cs": "RDP", "en": "RDP"}, "recommendation": {"cs": "Jen přes VPN, NLA + MFA.", "en": "Only via VPN, NLA + MFA."}},
-    {"match": "rdp", "severity": "MEDIUM", "owasp": "A07", "name": {"cs": "RDP", "en": "RDP"}, "recommendation": {"cs": "Jen přes VPN, NLA + MFA.", "en": "Only via VPN, NLA + MFA."}},
-    {"match": "mysql", "severity": "HIGH", "owasp": "A01", "name": {"cs": "MySQL", "en": "MySQL"}, "recommendation": {"cs": "Neexponovat databázi, omezit na aplikační vrstvu/VPN.", "en": "Do not expose the database, restrict to app tier/VPN."}},
-    {"match": "postgres", "severity": "HIGH", "owasp": "A01", "name": {"cs": "PostgreSQL", "en": "PostgreSQL"}, "recommendation": {"cs": "Neexponovat databázi, omezit pg_hba.conf.", "en": "Do not expose the database, restrict pg_hba.conf."}},
-    {"match": "mongodb", "severity": "HIGH", "owasp": "A01", "name": {"cs": "MongoDB", "en": "MongoDB"}, "recommendation": {"cs": "Zapnout autorizaci, neexponovat.", "en": "Enable authorization, do not expose."}},
-    {"match": "redis", "severity": "HIGH", "owasp": "A01", "name": {"cs": "Redis", "en": "Redis"}, "recommendation": {"cs": "Nastavit heslo/ACL, bind na localhost.", "en": "Set password/ACL, bind to localhost."}},
-    {"match": "microsoft-ds", "severity": "HIGH", "owasp": "A01", "name": {"cs": "SMB", "en": "SMB"}, "recommendation": {"cs": "Neexponovat SMB, vypnout SMBv1.", "en": "Do not expose SMB, disable SMBv1."}},
-    {"match": "snmp", "severity": "MEDIUM", "owasp": "A02", "name": {"cs": "SNMP", "en": "SNMP"}, "recommendation": {"cs": "SNMPv3, změnit community, omezit na management síť.", "en": "SNMPv3, change community, restrict to management network."}},
-    {"match": "ldap", "severity": "LOW", "owasp": "A02", "name": {"cs": "LDAP", "en": "LDAP"}, "recommendation": {"cs": "LDAPS, zakázat anonymní bind.", "en": "LDAPS, disable anonymous bind."}}
+    {
+      "match": "telnet",
+      "severity": "HIGH",
+      "owasp": "A04",
+      "name": {
+        "cs": "Telnet",
+        "en": "Telnet"
+      },
+      "recommendation": {
+        "cs": "Vypnout Telnet, nahradit SSH.",
+        "en": "Disable Telnet, replace with SSH."
+      }
+    },
+    {
+      "match": "ftp",
+      "severity": "MEDIUM",
+      "owasp": "A04",
+      "name": {
+        "cs": "FTP",
+        "en": "FTP"
+      },
+      "recommendation": {
+        "cs": "Nahradit SFTP/FTPS, zakázat anonymní přístup.",
+        "en": "Replace with SFTP/FTPS, disable anonymous access."
+      }
+    },
+    {
+      "match": "vnc",
+      "severity": "HIGH",
+      "owasp": "A07",
+      "name": {
+        "cs": "VNC",
+        "en": "VNC"
+      },
+      "recommendation": {
+        "cs": "Jen přes VPN/SSH tunel, silné heslo.",
+        "en": "Only via VPN/SSH tunnel, strong password."
+      }
+    },
+    {
+      "match": "ms-wbt",
+      "severity": "MEDIUM",
+      "owasp": "A07",
+      "name": {
+        "cs": "RDP",
+        "en": "RDP"
+      },
+      "recommendation": {
+        "cs": "Jen přes VPN, NLA + MFA.",
+        "en": "Only via VPN, NLA + MFA."
+      }
+    },
+    {
+      "match": "rdp",
+      "severity": "MEDIUM",
+      "owasp": "A07",
+      "name": {
+        "cs": "RDP",
+        "en": "RDP"
+      },
+      "recommendation": {
+        "cs": "Jen přes VPN, NLA + MFA.",
+        "en": "Only via VPN, NLA + MFA."
+      }
+    },
+    {
+      "match": "mysql",
+      "severity": "HIGH",
+      "owasp": "A01",
+      "name": {
+        "cs": "MySQL",
+        "en": "MySQL"
+      },
+      "recommendation": {
+        "cs": "Neexponovat databázi, omezit na aplikační vrstvu/VPN.",
+        "en": "Do not expose the database, restrict to app tier/VPN."
+      }
+    },
+    {
+      "match": "postgres",
+      "severity": "HIGH",
+      "owasp": "A01",
+      "name": {
+        "cs": "PostgreSQL",
+        "en": "PostgreSQL"
+      },
+      "recommendation": {
+        "cs": "Neexponovat databázi, omezit pg_hba.conf.",
+        "en": "Do not expose the database, restrict pg_hba.conf."
+      }
+    },
+    {
+      "match": "mongodb",
+      "severity": "HIGH",
+      "owasp": "A01",
+      "name": {
+        "cs": "MongoDB",
+        "en": "MongoDB"
+      },
+      "recommendation": {
+        "cs": "Zapnout autorizaci, neexponovat.",
+        "en": "Enable authorization, do not expose."
+      }
+    },
+    {
+      "match": "redis",
+      "severity": "HIGH",
+      "owasp": "A01",
+      "name": {
+        "cs": "Redis",
+        "en": "Redis"
+      },
+      "recommendation": {
+        "cs": "Nastavit heslo/ACL, bind na localhost.",
+        "en": "Set password/ACL, bind to localhost."
+      }
+    },
+    {
+      "match": "microsoft-ds",
+      "severity": "HIGH",
+      "owasp": "A01",
+      "name": {
+        "cs": "SMB",
+        "en": "SMB"
+      },
+      "recommendation": {
+        "cs": "Neexponovat SMB, vypnout SMBv1.",
+        "en": "Do not expose SMB, disable SMBv1."
+      }
+    },
+    {
+      "match": "snmp",
+      "severity": "MEDIUM",
+      "owasp": "A02",
+      "name": {
+        "cs": "SNMP",
+        "en": "SNMP"
+      },
+      "recommendation": {
+        "cs": "SNMPv3, změnit community, omezit na management síť.",
+        "en": "SNMPv3, change community, restrict to management network."
+      }
+    },
+    {
+      "match": "ldap",
+      "severity": "LOW",
+      "owasp": "A02",
+      "name": {
+        "cs": "LDAP",
+        "en": "LDAP"
+      },
+      "recommendation": {
+        "cs": "LDAPS, zakázat anonymní bind.",
+        "en": "LDAPS, disable anonymous bind."
+      }
+    }
   ],
-
   "tls_grade": {
-    "F": {"severity": "HIGH", "owasp": "A04", "recommendation": {"cs": "Kriticky slabé TLS (SSLv2/SSLv3, nebezpečné šifry nebo chybí TLS 1.2/1.3). Vypnout SSLv2/SSLv3 i TLS 1.0/1.1, povolit jen TLS 1.2/1.3 s AEAD šiframi a forward secrecy. Doporučená konfigurace: Mozilla Intermediate (https://ssl-config.mozilla.org/).", "en": "Critically weak TLS (SSLv2/SSLv3, insecure ciphers, or missing TLS 1.2/1.3). Disable SSLv2/SSLv3 and TLS 1.0/1.1, allow only TLS 1.2/1.3 with AEAD ciphers and forward secrecy. Recommended: Mozilla Intermediate (https://ssl-config.mozilla.org/)."}},
-    "C": {"severity": "MEDIUM", "owasp": "A04", "recommendation": {"cs": "Podporován zastaralý SSLv3. Vypnout SSLv3 a TLS 1.0/1.1, nasadit Mozilla Intermediate (TLS 1.2/1.3).", "en": "Obsolete SSLv3 is supported. Disable SSLv3 and TLS 1.0/1.1, deploy Mozilla Intermediate (TLS 1.2/1.3)."}},
-    "B": {"severity": "LOW", "owasp": "A04", "recommendation": {"cs": "Zastaralé protokoly (TLS 1.0/1.1) nebo slabé šifry (CBC/3DES/bez forward secrecy). Vypnout TLS 1.0/1.1, odstranit slabé šifry, ponechat jen AEAD s forward secrecy.", "en": "Obsolete protocols (TLS 1.0/1.1) or weak ciphers (CBC/3DES/no forward secrecy). Disable TLS 1.0/1.1, remove weak ciphers, keep only AEAD with forward secrecy."}},
-    "A": {"severity": "INFO", "owasp": "A04", "recommendation": {"cs": "TLS konfigurace je v pořádku (moderní protokoly a silné šifry). Udržovat dle Mozilla Intermediate/Modern.", "en": "TLS configuration is fine (modern protocols and strong ciphers). Maintain per Mozilla Intermediate/Modern."}}
+    "F": {
+      "severity": "HIGH",
+      "owasp": "A04",
+      "recommendation": {
+        "cs": "Kriticky slabé TLS (SSLv2/SSLv3, nebezpečné šifry nebo chybí TLS 1.2/1.3). Vypnout SSLv2/SSLv3 i TLS 1.0/1.1, povolit jen TLS 1.2/1.3 s AEAD šiframi a forward secrecy. Doporučená konfigurace: Mozilla Intermediate (https://ssl-config.mozilla.org/).",
+        "en": "Critically weak TLS (SSLv2/SSLv3, insecure ciphers, or missing TLS 1.2/1.3). Disable SSLv2/SSLv3 and TLS 1.0/1.1, allow only TLS 1.2/1.3 with AEAD ciphers and forward secrecy. Recommended: Mozilla Intermediate (https://ssl-config.mozilla.org/)."
+      },
+      "impact": {
+        "cs": "Slabé/zastaralé TLS umožňuje odposlech a manipulaci šifrovaného provozu (MITM, downgrade).",
+        "en": "Weak/obsolete TLS enables eavesdropping and tampering of encrypted traffic (MITM, downgrade)."
+      }
+    },
+    "C": {
+      "severity": "MEDIUM",
+      "owasp": "A04",
+      "recommendation": {
+        "cs": "Podporován zastaralý SSLv3. Vypnout SSLv3 a TLS 1.0/1.1, nasadit Mozilla Intermediate (TLS 1.2/1.3).",
+        "en": "Obsolete SSLv3 is supported. Disable SSLv3 and TLS 1.0/1.1, deploy Mozilla Intermediate (TLS 1.2/1.3)."
+      }
+    },
+    "B": {
+      "severity": "LOW",
+      "owasp": "A04",
+      "recommendation": {
+        "cs": "Zastaralé protokoly (TLS 1.0/1.1) nebo slabé šifry (CBC/3DES/bez forward secrecy). Vypnout TLS 1.0/1.1, odstranit slabé šifry, ponechat jen AEAD s forward secrecy.",
+        "en": "Obsolete protocols (TLS 1.0/1.1) or weak ciphers (CBC/3DES/no forward secrecy). Disable TLS 1.0/1.1, remove weak ciphers, keep only AEAD with forward secrecy."
+      }
+    },
+    "A": {
+      "severity": "INFO",
+      "owasp": "A04",
+      "recommendation": {
+        "cs": "TLS konfigurace je v pořádku (moderní protokoly a silné šifry). Udržovat dle Mozilla Intermediate/Modern.",
+        "en": "TLS configuration is fine (modern protocols and strong ciphers). Maintain per Mozilla Intermediate/Modern."
+      }
+    }
   },
-
   "tls_recommended_ciphers": {
-    "tls13": ["TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384", "TLS_CHACHA20_POLY1305_SHA256"],
-    "tls12": ["ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-ECDSA-AES256-GCM-SHA384", "ECDHE-RSA-AES256-GCM-SHA384", "ECDHE-ECDSA-CHACHA20-POLY1305", "ECDHE-RSA-CHACHA20-POLY1305"],
-    "avoid": ["RC4", "3DES", "DES", "NULL", "EXPORT", "MD5", "CBC (Lucky13/POODLE)", "static RSA (bez forward secrecy)"]
+    "tls13": [
+      "TLS_AES_128_GCM_SHA256",
+      "TLS_AES_256_GCM_SHA384",
+      "TLS_CHACHA20_POLY1305_SHA256"
+    ],
+    "tls12": [
+      "ECDHE-ECDSA-AES128-GCM-SHA256",
+      "ECDHE-RSA-AES128-GCM-SHA256",
+      "ECDHE-ECDSA-AES256-GCM-SHA384",
+      "ECDHE-RSA-AES256-GCM-SHA384",
+      "ECDHE-ECDSA-CHACHA20-POLY1305",
+      "ECDHE-RSA-CHACHA20-POLY1305"
+    ],
+    "avoid": [
+      "RC4",
+      "3DES",
+      "DES",
+      "NULL",
+      "EXPORT",
+      "MD5",
+      "CBC (Lucky13/POODLE)",
+      "static RSA (bez forward secrecy)"
+    ]
   },
-
   "certificate": {
-    "expired": {"severity": "MEDIUM", "owasp": "A04", "recommendation": {"cs": "Certifikát je prošlý — obnovit a nasadit automatickou obnovu (ACME/Let's Encrypt nebo interní CA).", "en": "The certificate has expired — renew and set up automatic renewal (ACME/Let's Encrypt or internal CA)."}},
-    "expiring": {"severity": "LOW", "owasp": "A04", "recommendation": {"cs": "Certifikát brzy vyprší — obnovit včas a nasadit automatickou obnovu/monitoring.", "en": "The certificate expires soon — renew in time and set up automatic renewal/monitoring."}},
-    "self_signed": {"severity": "LOW", "owasp": "A04", "recommendation": {"cs": "Self-signed certifikát — nasadit certifikát od důvěryhodné CA, případně řádně distribuovat interní CA.", "en": "Self-signed certificate — deploy a certificate from a trusted CA, or properly distribute an internal CA."}}
+    "expired": {
+      "severity": "MEDIUM",
+      "owasp": "A04",
+      "recommendation": {
+        "cs": "Certifikát je prošlý — obnovit a nasadit automatickou obnovu (ACME/Let's Encrypt nebo interní CA).",
+        "en": "The certificate has expired — renew and set up automatic renewal (ACME/Let's Encrypt or internal CA)."
+      }
+    },
+    "expiring": {
+      "severity": "LOW",
+      "owasp": "A04",
+      "recommendation": {
+        "cs": "Certifikát brzy vyprší — obnovit včas a nasadit automatickou obnovu/monitoring.",
+        "en": "The certificate expires soon — renew in time and set up automatic renewal/monitoring."
+      }
+    },
+    "self_signed": {
+      "severity": "LOW",
+      "owasp": "A04",
+      "recommendation": {
+        "cs": "Self-signed certifikát — nasadit certifikát od důvěryhodné CA, případně řádně distribuovat interní CA.",
+        "en": "Self-signed certificate — deploy a certificate from a trusted CA, or properly distribute an internal CA."
+      }
+    }
   },
-
   "headers": {
-    "Strict-Transport-Security": {"severity": "MEDIUM", "owasp": "A04", "recommended_value": "max-age=63072000; includeSubDomains",
-      "recommendation": {"cs": "Chybí HSTS — riziko downgrade na HTTP / SSL stripping. Nastavit hlavičku 'Strict-Transport-Security: max-age=63072000; includeSubDomains' (po ověření i preload) na HTTPS.", "en": "Missing HSTS — risk of downgrade to HTTP / SSL stripping. Set 'Strict-Transport-Security: max-age=63072000; includeSubDomains' (and preload after verification) on HTTPS."}},
-    "Content-Security-Policy": {"severity": "MEDIUM", "owasp": "A02", "recommended_value": "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'",
-      "recommendation": {"cs": "Chybí CSP — slabší ochrana proti XSS a injektáži obsahu. Nasadit restriktivní politiku, např. \"default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'\" a postupně zpřísňovat (report-only → enforce).", "en": "Missing CSP — weaker protection against XSS and content injection. Deploy a restrictive policy, e.g. \"default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'\", tightening gradually (report-only → enforce)."}},
-    "X-Frame-Options": {"severity": "MEDIUM", "owasp": "A02", "recommended_value": "DENY",
-      "recommendation": {"cs": "Chybí X-Frame-Options — riziko clickjackingu. Nastavit 'X-Frame-Options: DENY' (nebo SAMEORIGIN) a ideálně CSP 'frame-ancestors none'.", "en": "Missing X-Frame-Options — clickjacking risk. Set 'X-Frame-Options: DENY' (or SAMEORIGIN) and ideally CSP 'frame-ancestors none'."}},
-    "X-Content-Type-Options": {"severity": "LOW", "owasp": "A02", "recommended_value": "nosniff",
-      "recommendation": {"cs": "Chybí X-Content-Type-Options — MIME sniffing. Nastavit 'X-Content-Type-Options: nosniff'.", "en": "Missing X-Content-Type-Options — MIME sniffing. Set 'X-Content-Type-Options: nosniff'."}},
-    "Referrer-Policy": {"severity": "LOW", "owasp": "A02", "recommended_value": "no-referrer",
-      "recommendation": {"cs": "Chybí Referrer-Policy — únik referreru. Nastavit 'Referrer-Policy: no-referrer' (nebo strict-origin-when-cross-origin).", "en": "Missing Referrer-Policy — referrer leakage. Set 'Referrer-Policy: no-referrer' (or strict-origin-when-cross-origin)."}},
-    "Permissions-Policy": {"severity": "LOW", "owasp": "A02", "recommended_value": "geolocation=(), camera=(), microphone=()",
-      "recommendation": {"cs": "Chybí Permissions-Policy — bez omezení API prohlížeče. Zakázat nepotřebné funkce, např. 'Permissions-Policy: geolocation=(), camera=(), microphone=()'.", "en": "Missing Permissions-Policy — no browser API restrictions. Disable unneeded features, e.g. 'Permissions-Policy: geolocation=(), camera=(), microphone=()'."}}
+    "Strict-Transport-Security": {
+      "severity": "MEDIUM",
+      "owasp": "A04",
+      "recommended_value": "max-age=63072000; includeSubDomains",
+      "recommendation": {
+        "cs": "Chybí HSTS — riziko downgrade na HTTP / SSL stripping. Nastavit hlavičku 'Strict-Transport-Security: max-age=63072000; includeSubDomains' (po ověření i preload) na HTTPS.",
+        "en": "Missing HSTS — risk of downgrade to HTTP / SSL stripping. Set 'Strict-Transport-Security: max-age=63072000; includeSubDomains' (and preload after verification) on HTTPS."
+      },
+      "impact": {
+        "cs": "Bez HSTS lze uživatele přinutit na HTTP a odposlechnout relaci (SSL stripping).",
+        "en": "Without HSTS a user can be forced to HTTP and the session eavesdropped (SSL stripping)."
+      }
+    },
+    "Content-Security-Policy": {
+      "severity": "MEDIUM",
+      "owasp": "A02",
+      "recommended_value": "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'",
+      "recommendation": {
+        "cs": "Chybí CSP — slabší ochrana proti XSS a injektáži obsahu. Nasadit restriktivní politiku, např. \"default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'\" a postupně zpřísňovat (report-only → enforce).",
+        "en": "Missing CSP — weaker protection against XSS and content injection. Deploy a restrictive policy, e.g. \"default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'\", tightening gradually (report-only → enforce)."
+      }
+    },
+    "X-Frame-Options": {
+      "severity": "MEDIUM",
+      "owasp": "A02",
+      "recommended_value": "DENY",
+      "recommendation": {
+        "cs": "Chybí X-Frame-Options — riziko clickjackingu. Nastavit 'X-Frame-Options: DENY' (nebo SAMEORIGIN) a ideálně CSP 'frame-ancestors none'.",
+        "en": "Missing X-Frame-Options — clickjacking risk. Set 'X-Frame-Options: DENY' (or SAMEORIGIN) and ideally CSP 'frame-ancestors none'."
+      }
+    },
+    "X-Content-Type-Options": {
+      "severity": "LOW",
+      "owasp": "A02",
+      "recommended_value": "nosniff",
+      "recommendation": {
+        "cs": "Chybí X-Content-Type-Options — MIME sniffing. Nastavit 'X-Content-Type-Options: nosniff'.",
+        "en": "Missing X-Content-Type-Options — MIME sniffing. Set 'X-Content-Type-Options: nosniff'."
+      }
+    },
+    "Referrer-Policy": {
+      "severity": "LOW",
+      "owasp": "A02",
+      "recommended_value": "no-referrer",
+      "recommendation": {
+        "cs": "Chybí Referrer-Policy — únik referreru. Nastavit 'Referrer-Policy: no-referrer' (nebo strict-origin-when-cross-origin).",
+        "en": "Missing Referrer-Policy — referrer leakage. Set 'Referrer-Policy: no-referrer' (or strict-origin-when-cross-origin)."
+      }
+    },
+    "Permissions-Policy": {
+      "severity": "LOW",
+      "owasp": "A02",
+      "recommended_value": "geolocation=(), camera=(), microphone=()",
+      "recommendation": {
+        "cs": "Chybí Permissions-Policy — bez omezení API prohlížeče. Zakázat nepotřebné funkce, např. 'Permissions-Policy: geolocation=(), camera=(), microphone=()'.",
+        "en": "Missing Permissions-Policy — no browser API restrictions. Disable unneeded features, e.g. 'Permissions-Policy: geolocation=(), camera=(), microphone=()'."
+      }
+    }
   },
-
   "ffuf": [
-    {"match": ".git", "severity": "CRITICAL", "owasp": "A02", "name": {"cs": "Expozice gitového repozitáře", "en": "Exposed git repository"},
-      "recommendation": {"cs": "Adresář /.git je veřejně přístupný — útočník stáhne zdrojový kód, historii i tajemství. Okamžitě zablokovat přístup (deny v konfiguraci serveru) a odstranit .git z webroot. Rotovat všechny odhalené přihlašovací údaje/klíče.", "en": "The /.git directory is publicly accessible — an attacker can pull source code, history and secrets. Immediately block access (deny in server config) and remove .git from the webroot. Rotate any exposed credentials/keys."}},
-    {"match": ".env", "severity": "CRITICAL", "owasp": "A02", "name": {"cs": "Expozice .env (tajemství)", "en": "Exposed .env (secrets)"},
-      "recommendation": {"cs": "Soubor .env s přístupovými údaji a klíči je veřejně přístupný. Okamžitě zablokovat, přesunout mimo webroot a ROTOVAT všechny odhalené údaje (DB hesla, API klíče, tokeny).", "en": "The .env file with credentials and keys is publicly accessible. Block immediately, move outside the webroot and ROTATE all exposed secrets (DB passwords, API keys, tokens)."}},
-    {"match": ".svn", "severity": "HIGH", "owasp": "A02", "name": {"cs": "Expozice SVN metadat", "en": "Exposed SVN metadata"},
-      "recommendation": {"cs": "Metadata /.svn umožňují rekonstrukci zdrojového kódu. Zablokovat přístup a odstranit z webroot.", "en": "The /.svn metadata allows source reconstruction. Block access and remove from the webroot."}},
-    {"match": "wp-config", "severity": "CRITICAL", "owasp": "A02", "name": {"cs": "wp-config.php přístupný", "en": "wp-config.php accessible"},
-      "recommendation": {"cs": "Konfigurace WordPressu s DB údaji je přístupná. Zablokovat, ROTOVAT DB heslo a klíče (salts).", "en": "WordPress configuration with DB credentials is accessible. Block, ROTATE the DB password and salts."}},
-    {"match": "phpmyadmin", "severity": "HIGH", "owasp": "A01", "name": {"cs": "phpMyAdmin přístupný", "en": "phpMyAdmin accessible"},
-      "recommendation": {"cs": "Administrace databáze je vystavená. Nezpřístupňovat veřejně (jen VPN/IP allowlist), silná hesla + MFA, aktuální verze, zvážit přejmenování cesty.", "en": "Database administration is exposed. Do not expose publicly (VPN/IP allowlist only), strong passwords + MFA, current version, consider renaming the path."}},
-    {"match": "adminer", "severity": "HIGH", "owasp": "A01", "name": {"cs": "Adminer (DB admin) přístupný", "en": "Adminer (DB admin) accessible"},
-      "recommendation": {"cs": "Nástroj pro správu DB je vystavený. Odstranit z produkce nebo omezit na VPN/IP allowlist.", "en": "A DB management tool is exposed. Remove from production or restrict to VPN/IP allowlist."}},
-    {"match": "/backup", "severity": "HIGH", "owasp": "A02", "name": {"cs": "Zálohy přístupné přes web", "en": "Backups accessible over the web"},
-      "recommendation": {"cs": "Zálohy jsou veřejně přístupné — mohou obsahovat zdrojový kód, DB dumpy, hesla. Odstranit z webroot, zablokovat přístup.", "en": "Backups are publicly accessible — may contain source code, DB dumps, passwords. Remove from the webroot, block access."}},
-    {"match": ".sql", "severity": "HIGH", "owasp": "A02", "name": {"cs": "SQL dump přístupný", "en": "SQL dump accessible"},
-      "recommendation": {"cs": "SQL dump je veřejně přístupný — únik dat. Odstranit z webroot, prošetřit únik, rotovat údaje.", "en": "An SQL dump is publicly accessible — data leak. Remove from the webroot, investigate the leak, rotate credentials."}},
-    {"match": ".bak", "severity": "MEDIUM", "owasp": "A02", "name": {"cs": "Záložní soubor přístupný", "en": "Backup file accessible"},
-      "recommendation": {"cs": "Záložní soubor (.bak) může odhalit zdrojový kód/konfiguraci. Odstranit z webroot a zablokovat tyto přípony.", "en": "A backup file (.bak) may reveal source/config. Remove from the webroot and block such extensions."}},
-    {"match": ".old", "severity": "MEDIUM", "owasp": "A02", "name": {"cs": "Záložní soubor (.old)", "en": "Backup file (.old)"},
-      "recommendation": {"cs": "Stará verze souboru může odhalit kód/konfiguraci. Odstranit, blokovat přípony.", "en": "An old file version may reveal code/config. Remove, block such extensions."}},
-    {"match": ".zip", "severity": "MEDIUM", "owasp": "A02", "name": {"cs": "Archiv přístupný", "en": "Archive accessible"},
-      "recommendation": {"cs": "Archiv ve webroot může obsahovat citlivá data. Odstranit, zablokovat výpis a stahování archivů.", "en": "An archive in the webroot may contain sensitive data. Remove, block listing and download of archives."}},
-    {"match": ".tar.gz", "severity": "MEDIUM", "owasp": "A02", "name": {"cs": "Archiv přístupný", "en": "Archive accessible"},
-      "recommendation": {"cs": "Archiv ve webroot může obsahovat citlivá data. Odstranit.", "en": "An archive in the webroot may contain sensitive data. Remove it."}},
-    {"match": "actuator", "severity": "HIGH", "owasp": "A02", "name": {"cs": "Spring Boot Actuator", "en": "Spring Boot Actuator"},
-      "recommendation": {"cs": "Actuator endpointy mohou odhalit konfiguraci, env proměnné i umožnit ovládání aplikace. Zabezpečit (autentizace), vystavit jen nezbytné (např. /health), neexponovat veřejně.", "en": "Actuator endpoints may reveal config, env variables and even allow app control. Secure (authentication), expose only what is necessary (e.g. /health), do not expose publicly."}},
-    {"match": "server-status", "severity": "MEDIUM", "owasp": "A02", "name": {"cs": "Apache server-status", "en": "Apache server-status"},
-      "recommendation": {"cs": "mod_status odhaluje interní informace o serveru a požadavcích. Omezit přístup na localhost/management.", "en": "mod_status reveals internal server and request info. Restrict access to localhost/management."}},
-    {"match": "server-info", "severity": "MEDIUM", "owasp": "A02", "name": {"cs": "Apache server-info", "en": "Apache server-info"},
-      "recommendation": {"cs": "mod_info odhaluje konfiguraci serveru. Vypnout nebo omezit na localhost.", "en": "mod_info reveals server configuration. Disable or restrict to localhost."}},
-    {"match": ".htaccess", "severity": "MEDIUM", "owasp": "A02", "name": {"cs": ".htaccess přístupný", "en": ".htaccess accessible"},
-      "recommendation": {"cs": "Konfigurační soubor .htaccess je čitelný. Zablokovat přístup k souborům začínajícím tečkou.", "en": "The .htaccess config file is readable. Block access to dotfiles."}},
-    {"match": "/admin", "severity": "MEDIUM", "owasp": "A01", "name": {"cs": "Administrační rozhraní", "en": "Administration interface"},
-      "recommendation": {"cs": "Administrační rozhraní je dostupné. Omezit přístup (VPN/IP allowlist), silná autentizace + MFA, ochrana proti brute-force.", "en": "An administration interface is reachable. Restrict access (VPN/IP allowlist), strong authentication + MFA, brute-force protection."}},
-    {"match": "wp-admin", "severity": "MEDIUM", "owasp": "A01", "name": {"cs": "WordPress administrace", "en": "WordPress administration"},
-      "recommendation": {"cs": "WP administrace dostupná — omezit přístup (IP/VPN), MFA, ochrana proti brute-force (wp-login).", "en": "WP admin reachable — restrict access (IP/VPN), MFA, brute-force protection (wp-login)."}},
-    {"match": "wp-login", "severity": "MEDIUM", "owasp": "A07", "name": {"cs": "WordPress přihlášení (brute-force)", "en": "WordPress login (brute-force)"},
-      "recommendation": {"cs": "Přihlašovací stránka je brute-force vektor. Rate-limiting, MFA, silná hesla, případně omezit na VPN/IP.", "en": "The login page is a brute-force vector. Rate-limiting, MFA, strong passwords, optionally restrict to VPN/IP."}},
-    {"match": "rdweb", "severity": "MEDIUM", "owasp": "A07", "name": {"cs": "RD Web Access (vzdálená plocha)", "en": "RD Web Access (remote desktop)"},
-      "recommendation": {"cs": "RD Web Access na veřejném internetu umožňuje hádání jména/hesla a odhaluje doménu/OS. Zpřístupnit jen přes VPN, MFA, ochrana proti brute-force.", "en": "RD Web Access on the public internet enables login guessing and reveals domain/OS. Only via VPN, MFA, brute-force protection."}},
-    {"match": "/rpc", "severity": "MEDIUM", "owasp": "A07", "name": {"cs": "RPC přihlašovací rozhraní", "en": "RPC login interface"},
-      "recommendation": {"cs": "RPC služby vystavené na internetu s možností přihlášení. Nezpřístupňovat veřejně bez VPN.", "en": "RPC services exposed on the internet with login. Do not expose publicly without VPN."}},
-    {"match": "aspnet_client", "severity": "LOW", "owasp": "A02", "name": {"cs": "/aspnet_client/ (odhalení technologie)", "en": "/aspnet_client/ (technology disclosure)"},
-      "recommendation": {"cs": "Existující složka odhaluje použitou technologii (ASP.NET). Konfigurovat server tak, aby místo 403 vracel 404 a neodhaloval strukturu.", "en": "An existing folder reveals the technology (ASP.NET). Configure the server to return 404 instead of 403 and not reveal structure."}},
-    {"match": "trace.axd", "severity": "MEDIUM", "owasp": "A02", "name": {"cs": "ASP.NET Trace (trace.axd)", "en": "ASP.NET Trace (trace.axd)"},
-      "recommendation": {"cs": "Trace.axd může odhalit citlivé informace o aplikaci a požadavcích. Vypnout tracing v produkci (web.config: trace enabled=\"false\").", "en": "Trace.axd may reveal sensitive application/request info. Disable tracing in production (web.config: trace enabled=\"false\")."}},
-    {"match": "phpinfo", "severity": "MEDIUM", "owasp": "A02", "name": {"cs": "phpinfo() odhalen", "en": "phpinfo() exposed"},
-      "recommendation": {"cs": "phpinfo() odhaluje konfiguraci serveru, cesty a moduly. Odstranit z produkce.", "en": "phpinfo() reveals server config, paths and modules. Remove from production."}},
-    {"match": "/config", "severity": "MEDIUM", "owasp": "A02", "name": {"cs": "Konfigurační adresář/soubor", "en": "Configuration directory/file"},
-      "recommendation": {"cs": "Konfigurační cesta je přístupná. Ověřit, že neodhaluje tajemství; zablokovat přístup.", "en": "A configuration path is accessible. Verify it does not reveal secrets; block access."}},
-    {"match": ".ds_store", "severity": "LOW", "owasp": "A02", "name": {"cs": ".DS_Store (struktura adresářů)", "en": ".DS_Store (directory structure)"},
-      "recommendation": {"cs": ".DS_Store odhaluje strukturu adresářů. Odstranit a zablokovat dotfiles.", "en": ".DS_Store reveals the directory structure. Remove and block dotfiles."}},
-    {"match": "robots.txt", "severity": "INFO", "owasp": "A02", "name": {"cs": "robots.txt", "en": "robots.txt"},
-      "recommendation": {"cs": "robots.txt může naznačovat skryté cesty — neukládat do něj citlivé cesty jako tajemství (security by obscurity neplatí).", "en": "robots.txt may hint at hidden paths — do not rely on it to hide sensitive paths (security by obscurity does not work)."}}
+    {
+      "match": ".git",
+      "severity": "CRITICAL",
+      "owasp": "A02",
+      "name": {
+        "cs": "Expozice gitového repozitáře",
+        "en": "Exposed git repository"
+      },
+      "recommendation": {
+        "cs": "Adresář /.git je veřejně přístupný — útočník stáhne zdrojový kód, historii i tajemství. Okamžitě zablokovat přístup (deny v konfiguraci serveru) a odstranit .git z webroot. Rotovat všechny odhalené přihlašovací údaje/klíče.",
+        "en": "The /.git directory is publicly accessible — an attacker can pull source code, history and secrets. Immediately block access (deny in server config) and remove .git from the webroot. Rotate any exposed credentials/keys."
+      },
+      "impact": {
+        "cs": "Stažením /.git lze rekonstruovat kompletní zdrojový kód, historii a odhalit tajemství (hesla, klíče).",
+        "en": "Pulling /.git allows reconstructing the full source code, history and exposing secrets (passwords, keys)."
+      }
+    },
+    {
+      "match": ".env",
+      "severity": "CRITICAL",
+      "owasp": "A02",
+      "name": {
+        "cs": "Expozice .env (tajemství)",
+        "en": "Exposed .env (secrets)"
+      },
+      "recommendation": {
+        "cs": "Soubor .env s přístupovými údaji a klíči je veřejně přístupný. Okamžitě zablokovat, přesunout mimo webroot a ROTOVAT všechny odhalené údaje (DB hesla, API klíče, tokeny).",
+        "en": "The .env file with credentials and keys is publicly accessible. Block immediately, move outside the webroot and ROTATE all exposed secrets (DB passwords, API keys, tokens)."
+      },
+      "impact": {
+        "cs": "Únik .env odhalí přístupové údaje k DB, API klíče a tokeny — přímá cesta k převzetí systémů.",
+        "en": "Leaking .env exposes DB credentials, API keys and tokens — a direct path to taking over systems."
+      }
+    },
+    {
+      "match": ".svn",
+      "severity": "HIGH",
+      "owasp": "A02",
+      "name": {
+        "cs": "Expozice SVN metadat",
+        "en": "Exposed SVN metadata"
+      },
+      "recommendation": {
+        "cs": "Metadata /.svn umožňují rekonstrukci zdrojového kódu. Zablokovat přístup a odstranit z webroot.",
+        "en": "The /.svn metadata allows source reconstruction. Block access and remove from the webroot."
+      }
+    },
+    {
+      "match": "wp-config",
+      "severity": "CRITICAL",
+      "owasp": "A02",
+      "name": {
+        "cs": "wp-config.php přístupný",
+        "en": "wp-config.php accessible"
+      },
+      "recommendation": {
+        "cs": "Konfigurace WordPressu s DB údaji je přístupná. Zablokovat, ROTOVAT DB heslo a klíče (salts).",
+        "en": "WordPress configuration with DB credentials is accessible. Block, ROTATE the DB password and salts."
+      }
+    },
+    {
+      "match": "phpmyadmin",
+      "severity": "HIGH",
+      "owasp": "A01",
+      "name": {
+        "cs": "phpMyAdmin přístupný",
+        "en": "phpMyAdmin accessible"
+      },
+      "recommendation": {
+        "cs": "Administrace databáze je vystavená. Nezpřístupňovat veřejně (jen VPN/IP allowlist), silná hesla + MFA, aktuální verze, zvážit přejmenování cesty.",
+        "en": "Database administration is exposed. Do not expose publicly (VPN/IP allowlist only), strong passwords + MFA, current version, consider renaming the path."
+      }
+    },
+    {
+      "match": "adminer",
+      "severity": "HIGH",
+      "owasp": "A01",
+      "name": {
+        "cs": "Adminer (DB admin) přístupný",
+        "en": "Adminer (DB admin) accessible"
+      },
+      "recommendation": {
+        "cs": "Nástroj pro správu DB je vystavený. Odstranit z produkce nebo omezit na VPN/IP allowlist.",
+        "en": "A DB management tool is exposed. Remove from production or restrict to VPN/IP allowlist."
+      }
+    },
+    {
+      "match": "/backup",
+      "severity": "HIGH",
+      "owasp": "A02",
+      "name": {
+        "cs": "Zálohy přístupné přes web",
+        "en": "Backups accessible over the web"
+      },
+      "recommendation": {
+        "cs": "Zálohy jsou veřejně přístupné — mohou obsahovat zdrojový kód, DB dumpy, hesla. Odstranit z webroot, zablokovat přístup.",
+        "en": "Backups are publicly accessible — may contain source code, DB dumps, passwords. Remove from the webroot, block access."
+      }
+    },
+    {
+      "match": ".sql",
+      "severity": "HIGH",
+      "owasp": "A02",
+      "name": {
+        "cs": "SQL dump přístupný",
+        "en": "SQL dump accessible"
+      },
+      "recommendation": {
+        "cs": "SQL dump je veřejně přístupný — únik dat. Odstranit z webroot, prošetřit únik, rotovat údaje.",
+        "en": "An SQL dump is publicly accessible — data leak. Remove from the webroot, investigate the leak, rotate credentials."
+      }
+    },
+    {
+      "match": ".bak",
+      "severity": "MEDIUM",
+      "owasp": "A02",
+      "name": {
+        "cs": "Záložní soubor přístupný",
+        "en": "Backup file accessible"
+      },
+      "recommendation": {
+        "cs": "Záložní soubor (.bak) může odhalit zdrojový kód/konfiguraci. Odstranit z webroot a zablokovat tyto přípony.",
+        "en": "A backup file (.bak) may reveal source/config. Remove from the webroot and block such extensions."
+      }
+    },
+    {
+      "match": ".old",
+      "severity": "MEDIUM",
+      "owasp": "A02",
+      "name": {
+        "cs": "Záložní soubor (.old)",
+        "en": "Backup file (.old)"
+      },
+      "recommendation": {
+        "cs": "Stará verze souboru může odhalit kód/konfiguraci. Odstranit, blokovat přípony.",
+        "en": "An old file version may reveal code/config. Remove, block such extensions."
+      }
+    },
+    {
+      "match": ".zip",
+      "severity": "MEDIUM",
+      "owasp": "A02",
+      "name": {
+        "cs": "Archiv přístupný",
+        "en": "Archive accessible"
+      },
+      "recommendation": {
+        "cs": "Archiv ve webroot může obsahovat citlivá data. Odstranit, zablokovat výpis a stahování archivů.",
+        "en": "An archive in the webroot may contain sensitive data. Remove, block listing and download of archives."
+      }
+    },
+    {
+      "match": ".tar.gz",
+      "severity": "MEDIUM",
+      "owasp": "A02",
+      "name": {
+        "cs": "Archiv přístupný",
+        "en": "Archive accessible"
+      },
+      "recommendation": {
+        "cs": "Archiv ve webroot může obsahovat citlivá data. Odstranit.",
+        "en": "An archive in the webroot may contain sensitive data. Remove it."
+      }
+    },
+    {
+      "match": "actuator",
+      "severity": "HIGH",
+      "owasp": "A02",
+      "name": {
+        "cs": "Spring Boot Actuator",
+        "en": "Spring Boot Actuator"
+      },
+      "recommendation": {
+        "cs": "Actuator endpointy mohou odhalit konfiguraci, env proměnné i umožnit ovládání aplikace. Zabezpečit (autentizace), vystavit jen nezbytné (např. /health), neexponovat veřejně.",
+        "en": "Actuator endpoints may reveal config, env variables and even allow app control. Secure (authentication), expose only what is necessary (e.g. /health), do not expose publicly."
+      }
+    },
+    {
+      "match": "server-status",
+      "severity": "MEDIUM",
+      "owasp": "A02",
+      "name": {
+        "cs": "Apache server-status",
+        "en": "Apache server-status"
+      },
+      "recommendation": {
+        "cs": "mod_status odhaluje interní informace o serveru a požadavcích. Omezit přístup na localhost/management.",
+        "en": "mod_status reveals internal server and request info. Restrict access to localhost/management."
+      }
+    },
+    {
+      "match": "server-info",
+      "severity": "MEDIUM",
+      "owasp": "A02",
+      "name": {
+        "cs": "Apache server-info",
+        "en": "Apache server-info"
+      },
+      "recommendation": {
+        "cs": "mod_info odhaluje konfiguraci serveru. Vypnout nebo omezit na localhost.",
+        "en": "mod_info reveals server configuration. Disable or restrict to localhost."
+      }
+    },
+    {
+      "match": ".htaccess",
+      "severity": "MEDIUM",
+      "owasp": "A02",
+      "name": {
+        "cs": ".htaccess přístupný",
+        "en": ".htaccess accessible"
+      },
+      "recommendation": {
+        "cs": "Konfigurační soubor .htaccess je čitelný. Zablokovat přístup k souborům začínajícím tečkou.",
+        "en": "The .htaccess config file is readable. Block access to dotfiles."
+      }
+    },
+    {
+      "match": "/admin",
+      "severity": "MEDIUM",
+      "owasp": "A01",
+      "name": {
+        "cs": "Administrační rozhraní",
+        "en": "Administration interface"
+      },
+      "recommendation": {
+        "cs": "Administrační rozhraní je dostupné. Omezit přístup (VPN/IP allowlist), silná autentizace + MFA, ochrana proti brute-force.",
+        "en": "An administration interface is reachable. Restrict access (VPN/IP allowlist), strong authentication + MFA, brute-force protection."
+      }
+    },
+    {
+      "match": "wp-admin",
+      "severity": "MEDIUM",
+      "owasp": "A01",
+      "name": {
+        "cs": "WordPress administrace",
+        "en": "WordPress administration"
+      },
+      "recommendation": {
+        "cs": "WP administrace dostupná — omezit přístup (IP/VPN), MFA, ochrana proti brute-force (wp-login).",
+        "en": "WP admin reachable — restrict access (IP/VPN), MFA, brute-force protection (wp-login)."
+      }
+    },
+    {
+      "match": "wp-login",
+      "severity": "MEDIUM",
+      "owasp": "A07",
+      "name": {
+        "cs": "WordPress přihlášení (brute-force)",
+        "en": "WordPress login (brute-force)"
+      },
+      "recommendation": {
+        "cs": "Přihlašovací stránka je brute-force vektor. Rate-limiting, MFA, silná hesla, případně omezit na VPN/IP.",
+        "en": "The login page is a brute-force vector. Rate-limiting, MFA, strong passwords, optionally restrict to VPN/IP."
+      }
+    },
+    {
+      "match": "rdweb",
+      "severity": "MEDIUM",
+      "owasp": "A07",
+      "name": {
+        "cs": "RD Web Access (vzdálená plocha)",
+        "en": "RD Web Access (remote desktop)"
+      },
+      "recommendation": {
+        "cs": "RD Web Access na veřejném internetu umožňuje hádání jména/hesla a odhaluje doménu/OS. Zpřístupnit jen přes VPN, MFA, ochrana proti brute-force.",
+        "en": "RD Web Access on the public internet enables login guessing and reveals domain/OS. Only via VPN, MFA, brute-force protection."
+      }
+    },
+    {
+      "match": "/rpc",
+      "severity": "MEDIUM",
+      "owasp": "A07",
+      "name": {
+        "cs": "RPC přihlašovací rozhraní",
+        "en": "RPC login interface"
+      },
+      "recommendation": {
+        "cs": "RPC služby vystavené na internetu s možností přihlášení. Nezpřístupňovat veřejně bez VPN.",
+        "en": "RPC services exposed on the internet with login. Do not expose publicly without VPN."
+      }
+    },
+    {
+      "match": "aspnet_client",
+      "severity": "LOW",
+      "owasp": "A02",
+      "name": {
+        "cs": "/aspnet_client/ (odhalení technologie)",
+        "en": "/aspnet_client/ (technology disclosure)"
+      },
+      "recommendation": {
+        "cs": "Existující složka odhaluje použitou technologii (ASP.NET). Konfigurovat server tak, aby místo 403 vracel 404 a neodhaloval strukturu.",
+        "en": "An existing folder reveals the technology (ASP.NET). Configure the server to return 404 instead of 403 and not reveal structure."
+      }
+    },
+    {
+      "match": "trace.axd",
+      "severity": "MEDIUM",
+      "owasp": "A02",
+      "name": {
+        "cs": "ASP.NET Trace (trace.axd)",
+        "en": "ASP.NET Trace (trace.axd)"
+      },
+      "recommendation": {
+        "cs": "Trace.axd může odhalit citlivé informace o aplikaci a požadavcích. Vypnout tracing v produkci (web.config: trace enabled=\"false\").",
+        "en": "Trace.axd may reveal sensitive application/request info. Disable tracing in production (web.config: trace enabled=\"false\")."
+      }
+    },
+    {
+      "match": "phpinfo",
+      "severity": "MEDIUM",
+      "owasp": "A02",
+      "name": {
+        "cs": "phpinfo() odhalen",
+        "en": "phpinfo() exposed"
+      },
+      "recommendation": {
+        "cs": "phpinfo() odhaluje konfiguraci serveru, cesty a moduly. Odstranit z produkce.",
+        "en": "phpinfo() reveals server config, paths and modules. Remove from production."
+      }
+    },
+    {
+      "match": "/config",
+      "severity": "MEDIUM",
+      "owasp": "A02",
+      "name": {
+        "cs": "Konfigurační adresář/soubor",
+        "en": "Configuration directory/file"
+      },
+      "recommendation": {
+        "cs": "Konfigurační cesta je přístupná. Ověřit, že neodhaluje tajemství; zablokovat přístup.",
+        "en": "A configuration path is accessible. Verify it does not reveal secrets; block access."
+      }
+    },
+    {
+      "match": ".ds_store",
+      "severity": "LOW",
+      "owasp": "A02",
+      "name": {
+        "cs": ".DS_Store (struktura adresářů)",
+        "en": ".DS_Store (directory structure)"
+      },
+      "recommendation": {
+        "cs": ".DS_Store odhaluje strukturu adresářů. Odstranit a zablokovat dotfiles.",
+        "en": ".DS_Store reveals the directory structure. Remove and block dotfiles."
+      }
+    },
+    {
+      "match": "robots.txt",
+      "severity": "INFO",
+      "owasp": "A02",
+      "name": {
+        "cs": "robots.txt",
+        "en": "robots.txt"
+      },
+      "recommendation": {
+        "cs": "robots.txt může naznačovat skryté cesty — neukládat do něj citlivé cesty jako tajemství (security by obscurity neplatí).",
+        "en": "robots.txt may hint at hidden paths — do not rely on it to hide sensitive paths (security by obscurity does not work)."
+      }
+    }
   ],
-
   "ffuf_status": {
-    "200": {"note": {"cs": "Dostupné (200 OK)", "en": "Accessible (200 OK)"}},
-    "401": {"downgrade": 1, "note": {"cs": "Existuje, ale vyžaduje autentizaci (401)", "en": "Exists but requires authentication (401)"}},
-    "403": {"downgrade": 1, "note": {"cs": "Existuje, ale zakázáno (403) — zvážit vracení 404 místo 403", "en": "Exists but forbidden (403) — consider returning 404 instead of 403"}}
+    "200": {
+      "note": {
+        "cs": "Dostupné (200 OK)",
+        "en": "Accessible (200 OK)"
+      }
+    },
+    "401": {
+      "downgrade": 1,
+      "note": {
+        "cs": "Existuje, ale vyžaduje autentizaci (401)",
+        "en": "Exists but requires authentication (401)"
+      }
+    },
+    "403": {
+      "downgrade": 1,
+      "note": {
+        "cs": "Existuje, ale zakázáno (403) — zvážit vracení 404 místo 403",
+        "en": "Exists but forbidden (403) — consider returning 404 instead of 403"
+      }
+    }
   },
-
   "webserver": {
-    "version_disclosed": {"severity": "LOW", "owasp": "A02",
-      "recommendation": {"cs": "Webový server prozrazuje typ a verzi, což usnadňuje cílení útoků a hledání CVE. Skrýt/zobecnit hlavičku Server a X-Powered-By, vypnout výchozí stránky, udržovat aktuální.", "en": "The web server discloses type and version, helping attackers target it and look up CVEs. Hide/generalize the Server and X-Powered-By headers, disable default pages, keep it updated."}},
-    "type_disclosed": {"severity": "INFO", "owasp": "A02",
-      "recommendation": {"cs": "Webový server prozrazuje svůj typ. Zvážit skrytí hlavičky Server.", "en": "The web server discloses its type. Consider hiding the Server header."}}
+    "version_disclosed": {
+      "severity": "LOW",
+      "owasp": "A02",
+      "recommendation": {
+        "cs": "Webový server prozrazuje typ a verzi, což usnadňuje cílení útoků a hledání CVE. Skrýt/zobecnit hlavičku Server a X-Powered-By, vypnout výchozí stránky, udržovat aktuální.",
+        "en": "The web server discloses type and version, helping attackers target it and look up CVEs. Hide/generalize the Server and X-Powered-By headers, disable default pages, keep it updated."
+      }
+    },
+    "type_disclosed": {
+      "severity": "INFO",
+      "owasp": "A02",
+      "recommendation": {
+        "cs": "Webový server prozrazuje svůj typ. Zvážit skrytí hlavičky Server.",
+        "en": "The web server discloses its type. Consider hiding the Server header."
+      }
+    }
   },
-
   "vuln": {
-    "confirmed": {"severity": "HIGH", "owasp": "A06",
-      "recommendation": {"cs": "Nmap vuln skript potvrdil zranitelnost. Aktualizovat/patchovat dotčenou komponentu, ověřit exploitovatelnost a dopad, případně nasadit kompenzační opatření.", "en": "An nmap vuln script confirmed a vulnerability. Update/patch the affected component, verify exploitability and impact, apply compensating controls if needed."}},
-    "confirmed_cve": {"severity": "HIGH", "owasp": "A03",
-      "recommendation": {"cs": "Potvrzená zranitelnost se známou CVE / zastaralou komponentou. Aktualizovat na opravenou verzi, ověřit dle NVD (https://nvd.nist.gov/vuln/detail/).", "en": "Confirmed vulnerability with a known CVE / outdated component. Update to a fixed version, verify via NVD (https://nvd.nist.gov/vuln/detail/)."}}
+    "confirmed": {
+      "severity": "HIGH",
+      "owasp": "A06",
+      "recommendation": {
+        "cs": "Nmap vuln skript potvrdil zranitelnost. Aktualizovat/patchovat dotčenou komponentu, ověřit exploitovatelnost a dopad, případně nasadit kompenzační opatření.",
+        "en": "An nmap vuln script confirmed a vulnerability. Update/patch the affected component, verify exploitability and impact, apply compensating controls if needed."
+      }
+    },
+    "confirmed_cve": {
+      "severity": "HIGH",
+      "owasp": "A03",
+      "recommendation": {
+        "cs": "Potvrzená zranitelnost se známou CVE / zastaralou komponentou. Aktualizovat na opravenou verzi, ověřit dle NVD (https://nvd.nist.gov/vuln/detail/).",
+        "en": "Confirmed vulnerability with a known CVE / outdated component. Update to a fixed version, verify via NVD (https://nvd.nist.gov/vuln/detail/)."
+      }
+    }
   },
-
   "cve": {
-    "CVE-2021-44228": {"severity": "CRITICAL", "owasp": "A03", "name": {"cs": "Log4Shell (Apache Log4j RCE)", "en": "Log4Shell (Apache Log4j RCE)"},
-      "recommendation": {"cs": "Kritická RCE v Log4j. Aktualizovat Log4j na 2.17.1+, odstranit JndiLookup, omezit odchozí spojení. Viz https://nvd.nist.gov/vuln/detail/CVE-2021-44228.", "en": "Critical RCE in Log4j. Update Log4j to 2.17.1+, remove JndiLookup, restrict outbound connections. See https://nvd.nist.gov/vuln/detail/CVE-2021-44228."}},
-    "CVE-2017-0143": {"severity": "CRITICAL", "owasp": "A03", "name": {"cs": "EternalBlue (SMBv1 RCE)", "en": "EternalBlue (SMBv1 RCE)"},
-      "recommendation": {"cs": "Kritická RCE v SMBv1. Aplikovat MS17-010, vypnout SMBv1, blokovat 445 na perimetru.", "en": "Critical RCE in SMBv1. Apply MS17-010, disable SMBv1, block 445 at the perimeter."}},
-    "CVE-2019-0708": {"severity": "CRITICAL", "owasp": "A03", "name": {"cs": "BlueKeep (RDP RCE)", "en": "BlueKeep (RDP RCE)"},
-      "recommendation": {"cs": "Kritická RCE v RDP. Patchovat, zapnout NLA, neexponovat RDP do internetu (jen VPN).", "en": "Critical RCE in RDP. Patch, enable NLA, do not expose RDP to the internet (VPN only)."}},
-    "CVE-2014-0160": {"severity": "HIGH", "owasp": "A04", "name": {"cs": "Heartbleed (OpenSSL)", "en": "Heartbleed (OpenSSL)"},
-      "recommendation": {"cs": "Únik paměti přes OpenSSL heartbeat. Aktualizovat OpenSSL, znovu vydat certifikáty a rotovat klíče/hesla.", "en": "Memory leak via OpenSSL heartbeat. Update OpenSSL, reissue certificates and rotate keys/passwords."}}
+    "CVE-2021-44228": {
+      "severity": "CRITICAL",
+      "owasp": "A03",
+      "name": {
+        "cs": "Log4Shell (Apache Log4j RCE)",
+        "en": "Log4Shell (Apache Log4j RCE)"
+      },
+      "recommendation": {
+        "cs": "Kritická RCE v Log4j. Aktualizovat Log4j na 2.17.1+, odstranit JndiLookup, omezit odchozí spojení. Viz https://nvd.nist.gov/vuln/detail/CVE-2021-44228.",
+        "en": "Critical RCE in Log4j. Update Log4j to 2.17.1+, remove JndiLookup, restrict outbound connections. See https://nvd.nist.gov/vuln/detail/CVE-2021-44228."
+      },
+      "impact": {
+        "cs": "Neautentizované vzdálené spuštění kódu — úplný kompromis serveru.",
+        "en": "Unauthenticated remote code execution — full server compromise."
+      }
+    },
+    "CVE-2017-0143": {
+      "severity": "CRITICAL",
+      "owasp": "A03",
+      "name": {
+        "cs": "EternalBlue (SMBv1 RCE)",
+        "en": "EternalBlue (SMBv1 RCE)"
+      },
+      "recommendation": {
+        "cs": "Kritická RCE v SMBv1. Aplikovat MS17-010, vypnout SMBv1, blokovat 445 na perimetru.",
+        "en": "Critical RCE in SMBv1. Apply MS17-010, disable SMBv1, block 445 at the perimeter."
+      }
+    },
+    "CVE-2019-0708": {
+      "severity": "CRITICAL",
+      "owasp": "A03",
+      "name": {
+        "cs": "BlueKeep (RDP RCE)",
+        "en": "BlueKeep (RDP RCE)"
+      },
+      "recommendation": {
+        "cs": "Kritická RCE v RDP. Patchovat, zapnout NLA, neexponovat RDP do internetu (jen VPN).",
+        "en": "Critical RCE in RDP. Patch, enable NLA, do not expose RDP to the internet (VPN only)."
+      }
+    },
+    "CVE-2014-0160": {
+      "severity": "HIGH",
+      "owasp": "A04",
+      "name": {
+        "cs": "Heartbleed (OpenSSL)",
+        "en": "Heartbleed (OpenSSL)"
+      },
+      "recommendation": {
+        "cs": "Únik paměti přes OpenSSL heartbeat. Aktualizovat OpenSSL, znovu vydat certifikáty a rotovat klíče/hesla.",
+        "en": "Memory leak via OpenSSL heartbeat. Update OpenSSL, reissue certificates and rotate keys/passwords."
+      }
+    }
   },
-
   "cve_links": {
     "nvd": "https://nvd.nist.gov/vuln/detail/{id}",
     "mitre": "https://www.cve.org/CVERecord?id={id}",

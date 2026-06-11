@@ -94,7 +94,8 @@ CATEGORY = {
 #  Stavitelé nálezů
 # ===========================================================================
 def _mk(idx, title, severity, owasp, category, target, description,
-        lang, evidence="", recommendation=""):
+        lang, evidence="", recommendation="", impact=""):
+    imp = _t(impact, lang) or lib.impact_for_severity(severity, lang)
     return {
         "id": f"F-{idx:03d}",
         "title": _t(title, lang),
@@ -106,6 +107,7 @@ def _mk(idx, title, severity, owasp, category, target, description,
         "description": _t(description, lang),
         "evidence": evidence,
         "recommendation": _t(recommendation, lang),
+        "impact": imp,
     }
 
 
@@ -155,7 +157,8 @@ def build_ports(scan_results, start_idx=1, lang="cs"):
                      f"Open port {pnum}/{proto} — {name or 'unknown service'}")
             full_desc = (f"Otevřená služba: {label}.", f"Open service: {label}.")
             out.append(_mk(idx, title, sev, owasp, CATEGORY["ports"], f"{ip}:{pnum}",
-                           full_desc, lang, evidence=ev, recommendation=rec))
+                           full_desc, lang, evidence=ev, recommendation=rec,
+                           impact=rule.get("impact", "")))
             idx += 1
     return out, idx
 
@@ -285,7 +288,8 @@ def build_tls(scan_results, start_idx=1, lang="cs"):
               + (", ".join(enabled) if enabled else "—"))
         out.append(_mk(idx, title, rule["severity"], rule["owasp"], CATEGORY["tls"], key,
                        grade_desc.get(grade, ("TLS audit.", "TLS audit.")), lang,
-                       evidence=ev, recommendation=rule["recommendation"]))
+                       evidence=ev, recommendation=rule["recommendation"],
+                       impact=rule.get("impact", "")))
         idx += 1
 
     certs = scan_results.get("certificates", {}) or {}
@@ -400,7 +404,8 @@ def build_ffuf(scan_results, start_idx=1, lang="cs"):
             ev = (f"{url} → HTTP {status}, "
                   + ("délka " if lang != "en" else "length ") + str(data.get("length", "?")))
             out.append(_mk(idx, title, sev, owasp, CATEGORY["ffuf"], base, full_desc, lang,
-                           evidence=ev, recommendation=rule["recommendation"]))
+                           evidence=ev, recommendation=rule["recommendation"],
+                           impact=rule.get("impact", "")))
             idx += 1
         else:
             per_target_generic[base] = per_target_generic.get(base, 0) + 1

@@ -107,8 +107,15 @@ def _resolve_rule(rule, lang, defaults=None):
         "owasp": rule.get("owasp", d.get("owasp", "A02")),
         "name": pick(rule.get("name", d.get("name", "")), lang),
         "recommendation": pick(rule.get("recommendation", d.get("recommendation", "")), lang),
+        "impact": pick(rule.get("impact", d.get("impact", "")), lang),
         "recommended_value": rule.get("recommended_value", d.get("recommended_value", "")),
     }
+
+
+def impact_for_severity(severity, lang="cs"):
+    """Generický dopad dle závažnosti (z knihovny, editovatelné)."""
+    m = (library().get("impact_by_severity", {}) or {}).get(severity, {})
+    return pick(m, lang)
 
 
 # ---------------------------------------------------------------------------
