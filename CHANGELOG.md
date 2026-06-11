@@ -4,6 +4,24 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.13.0] - 2026-06-11
+
+### Přidáno
+- **Obohacení klasifikace z internetu (CVE z NVD + End-of-Life).** Nová kontextová
+  akce nad cíli **„🌐 Obohatit z internetu (CVE z NVD + EOL)"**:
+  - **NVD** — pro nalezené CVE (z nmap vuln i ZAP) stáhne **CVSS skóre** a podle
+    něj nastaví závažnost (přesněji než heuristika) + popis.
+  - **End-of-Life** — pro detekované produkty+verze (nmap `-sV`) zjistí přes
+    endoflife.date, zda je **verze po konci podpory**; neudržovaný software se
+    klasifikuje jako kritický nález (A03 Supply Chain — žádné bezpečnostní opravy).
+    Mapování běžných produktů (nginx, Apache, OpenSSH, PHP, MySQL, Tomcat, …).
+  - Výsledky se ukládají do projektu (`scan_results['enrichment']`) a **cachují**
+    do `~/.nmapscanner/` (CVE natrvalo, EOL s TTL 14 dní). Síť běží na pozadí
+    s progresem; offline degraduje. `core/enrichment.py`, `workers/enrichment.py`,
+    pokryto `tests/test_enrichment.py`.
+  - Nová oblast nálezů **„Konec podpory (EOL)"** v reportu i panelu; EOL pravidlo
+    (severity/OWASP/doporučení/dopad) je editovatelné v knihovně.
+
 ## [5.12.7] - 2026-06-11
 
 ### Změněno

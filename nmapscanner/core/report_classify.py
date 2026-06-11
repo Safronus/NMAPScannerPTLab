@@ -83,6 +83,7 @@ CATEGORY = {
     "headers": ("Bezpečnostní hlavičky", "Security headers"),
     "ffuf": ("Directory fuzzing (ffuf)", "Directory fuzzing (ffuf)"),
     "webserver": ("Webserver", "Web server"),
+    "eol": ("Konec podpory (EOL)", "End-of-Life software"),
     "zap": ("OWASP ZAP", "OWASP ZAP"),
 }
 
@@ -210,10 +211,15 @@ def build_vulns(scan_results, start_idx=1, lang="cs"):
                     rule = lib.vuln_rule(has_cve, lang)
                     sev, owasp, rec = rule["severity"], rule["owasp"], rule["recommendation"]
                     cve_rule = lib.cve_rule(cve_id, lang) if cve_id else None
+                    # Obohacení z NVD (pokud proběhlo) má přednost pro závažnost
+                    enr_cve = ((scan_results.get("enrichment", {}) or {}).get("cve", {})
+                               or {}).get(cve_id, {}) if cve_id else {}
                     if cve_rule:
                         sev, owasp, rec = cve_rule["severity"], cve_rule["owasp"], cve_rule["recommendation"]
                     elif any(k in up for k in ("REMOTE CODE EXECUTION", " RCE", "CRITICAL", "UNAUTHENTICATED")):
                         sev = "CRITICAL"
+                    if enr_cve.get("severity"):
+                        sev = enr_cve["severity"]  # NVD CVSS závažnost
                     snippet = (output or "").strip()
                     if len(snippet) > 600:
                         snippet = snippet[:600] + " …"
@@ -563,6 +569,40 @@ def build_webserver(scan_results, start_idx=1, lang="cs"):
     return out, idx
 
 
+def build_eol(scan_results, start_idx=1, lang="cs"):
+    """Nálezy z obohacení EOL — software po konci podpory (data z enrichment workeru)."""
+    out = []
+    idx = start_idx
+    eol = (scan_results.get("enrichment", {}) or {}).get("eol", {}) or {}
+    rule = lib.eol_rule(lang)
+    for key, info in eol.items():
+        if not isinstance(info, dict) or not info.get("is_eol"):
+            continue
+        product = info.get("product", "?")
+        version = info.get("version", "?")
+        latest = info.get("latest", "")
+        eol_date = info.get("eol_date", "")
+        title = (f"Konec podpory: {product} {version}",
+                 f"End-of-Life: {product} {version}")
+        desc = ("Detekovaná verze software je po konci podpory (EOL) — nedostává "
+                "bezpečnostní opravy.",
+                "The detected software version is End-of-Life (EOL) — it no longer "
+                "receives security patches.")
+        rec = rule["recommendation"]
+        if latest:
+            rec += (f" Nejnovější verze: {latest}." if lang != "en"
+                    else f" Latest version: {latest}.")
+        ev = f"{product} {version}"
+        if eol_date:
+            ev += (f" — EOL od {eol_date}" if lang != "en" else f" — EOL since {eol_date}")
+        if latest:
+            ev += f"; latest {latest}"
+        out.append(_mk(idx, title, rule["severity"], rule["owasp"], CATEGORY["eol"], key,
+                       desc, lang, evidence=ev, recommendation=rec, impact=rule["impact"]))
+        idx += 1
+    return out, idx
+
+
 # Mapování názvu sekce -> stavitel
 SECTION_BUILDERS = {
     "ports": build_ports,
@@ -572,10 +612,11 @@ SECTION_BUILDERS = {
     "headers": build_headers,
     "ffuf": build_ffuf,
     "webserver": build_webserver,
+    "eol": build_eol,
     "zap": build_zap,
 }
 
-ALL_SECTIONS = ["ports", "services", "vulns", "tls", "headers", "ffuf", "webserver", "zap"]
+ALL_SECTIONS = ["ports", "services", "vulns", "tls", "headers", "ffuf", "webserver", "eol", "zap"]
 
 
 def section_title(key, lang="cs"):

@@ -1237,5 +1237,23 @@
     "nvd": "https://nvd.nist.gov/vuln/detail/{id}",
     "mitre": "https://www.cve.org/CVERecord?id={id}",
     "nvd_api": "https://services.nvd.nist.gov/rest/json/cves/2.0?cveId={id}"
+  },
+  "eol": {
+    "default": {
+      "severity": "HIGH",
+      "owasp": "A03",
+      "name": {
+        "cs": "Software po konci podpory (EOL)",
+        "en": "End-of-Life software"
+      },
+      "impact": {
+        "cs": "Neudržovaný software už nedostává bezpečnostní opravy — známé i budoucí zranitelnosti zůstanou neopravené a snadno zneužitelné.",
+        "en": "Unsupported software no longer receives security patches — known and future vulnerabilities remain unpatched and easily exploitable."
+      },
+      "recommendation": {
+        "cs": "Aktualizovat na podporovanou verzi (ideálně nejnovější), případně migrovat na podporovaný produkt. Do té doby omezit expozici (VPN/firewall) a sledovat CVE.",
+        "en": "Upgrade to a supported version (ideally the latest), or migrate to a supported product. Until then, limit exposure (VPN/firewall) and monitor CVEs."
+      }
+    }
   }
 }

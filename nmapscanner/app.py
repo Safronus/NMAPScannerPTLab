@@ -2306,7 +2306,62 @@ class NmapScannerApp(QWidget):
         menu.addSeparator()
         menu.addAction(f"🔎 Reklasifikovat nálezy (z knihovny) — {sfx}",
                        lambda: self.reclassify_targets(targets))
+        menu.addAction(f"🌐 Obohatit z internetu (CVE z NVD + EOL) — {sfx}",
+                       lambda: self.enrich_targets(targets))
         menu.exec(self.status_matrix.viewport().mapToGlobal(pos))
+
+    def enrich_targets(self, targets):
+        """Stáhne z internetu CVSS k nalezeným CVE (NVD) a zjistí End-of-Life software
+        (endoflife.date), uloží do projektu a reklasifikuje. Síť běží na pozadí."""
+        from .workers.enrichment import EnrichmentWorker
+        from PySide6.QtWidgets import QProgressDialog
+        if isinstance(targets, str):
+            targets = [targets]
+        targets = [t for t in dict.fromkeys(targets) if t]
+        if not targets:
+            return
+        self._enrich_worker = EnrichmentWorker(targets, self.scan_results)
+        dlg = QProgressDialog("Obohacuji klasifikaci z internetu (NVD CVE + EOL)…",
+                              "Zrušit", 0, 100, self)
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setMinimumDuration(0)
+        self._enrich_progress = dlg
+
+        def on_prog(desc, d, t):
+            dlg.setMaximum(max(t, 1))
+            dlg.setValue(d)
+            dlg.setLabelText(desc)
+
+        self._enrich_worker.progress.connect(on_prog)
+        self._enrich_worker.log.connect(lambda m: self.worker_signals.log.emit("info", f"🌐 {m}"))
+        self._enrich_worker.finished.connect(lambda res: self._on_enrich_done(targets, res))
+        dlg.canceled.connect(self._enrich_worker.stop)
+        self._enrich_worker.start()
+
+    def _on_enrich_done(self, targets, result):
+        try:
+            self._enrich_progress.close()
+        except Exception:
+            pass
+        enr = self.scan_results.setdefault("enrichment", {})
+        enr.setdefault("cve", {}).update(result.get("cve", {}) or {})
+        enr.setdefault("eol", {}).update(result.get("eol", {}) or {})
+        try:
+            self.auto_save_project()
+        except Exception:
+            pass
+        n_cve = len(result.get("cve", {}) or {})
+        n_eol = sum(1 for v in (result.get("eol", {}) or {}).values()
+                    if isinstance(v, dict) and v.get("is_eol"))
+        self.status_label.setText(
+            f"🌐 Obohaceno: {n_cve} CVE z NVD, {n_eol} EOL nálezů. Klasifikace aktualizována.")
+        ip = getattr(self, "_summary_ip", None) or (targets[0] if targets else None)
+        if ip:
+            try:
+                self.on_matrix_ip_clicked_refresh(ip)
+            except Exception:
+                pass
+        self._enrich_worker = None
 
     def reclassify_targets(self, targets):
         """Znovu klasifikuje nálezy vybraných cílů dle aktuální knihovny (bez nového

@@ -206,6 +206,11 @@ def vuln_rule(has_cve, lang="cs"):
     return _resolve_rule(base, lang, defaults={"severity": "HIGH", "owasp": "A03" if has_cve else "A06"})
 
 
+def eol_rule(lang="cs"):
+    e = (library().get("eol", {}) or {}).get("default", {})
+    return _resolve_rule(e, lang, defaults={"severity": "HIGH", "owasp": "A03"})
+
+
 def cve_rule(cve_id, lang="cs"):
     c = (library().get("cve", {}) or {}).get((cve_id or "").upper())
     return _resolve_rule(c, lang) if c else None
