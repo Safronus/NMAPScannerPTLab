@@ -4,6 +4,14 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.13.4] - 2026-06-11
+
+### Přidáno
+- **NVD API klíč v nastavení** (správce knihovny klasifikací). Volitelné pole
+  pro NVD API klíč — s klíčem je obohacení CVE z NVD rychlejší a bez rate-limitu.
+  Ukládá se do nastavení a používá při obohacování. Bez klíče funguje také
+  (pomaleji).
+
 ## [5.13.3] - 2026-06-11
 
 ### Změněno

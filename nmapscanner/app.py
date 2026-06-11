@@ -2320,7 +2320,9 @@ class NmapScannerApp(QWidget):
         targets = [t for t in dict.fromkeys(targets) if t]
         if not targets:
             return
-        self._enrich_worker = EnrichmentWorker(targets, self.scan_results)
+        from PySide6.QtCore import QSettings
+        nvd_key = QSettings("UTB", "NmapScannerApp").value("nvd_api_key", "") or None
+        self._enrich_worker = EnrichmentWorker(targets, self.scan_results, nvd_api_key=nvd_key)
         dlg = QProgressDialog("Obohacuji klasifikaci z internetu (NVD CVE + EOL)…",
                               "Zrušit", 0, 100, self)
         dlg.setWindowModality(Qt.WindowModal)

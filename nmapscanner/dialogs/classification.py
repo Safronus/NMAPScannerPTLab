@@ -209,6 +209,21 @@ class ClassificationManagerDialog(QDialog):
         self.tree.itemDoubleClicked.connect(self._edit_item)
         v.addWidget(self.tree, 1)
 
+        # NVD API klíč (volitelné) — rychlejší obohacení bez rate-limitu
+        from PySide6.QtCore import QSettings
+        from PySide6.QtWidgets import QLineEdit
+        nvd_row = QHBoxLayout()
+        nvd_row.addWidget(QLabel("NVD API klíč (volitelné, rychlejší obohacení):"))
+        self._nvd_settings = QSettings("UTB", "NmapScannerApp")
+        self.nvd_key_edit = QLineEdit(self._nvd_settings.value("nvd_api_key", "") or "")
+        self.nvd_key_edit.setPlaceholderText("získáš zdarma na nvd.nist.gov/developers/request-an-api-key")
+        self.nvd_key_edit.setEchoMode(QLineEdit.Password)
+        nvd_row.addWidget(self.nvd_key_edit, 1)
+        save_key = QPushButton("Uložit klíč")
+        save_key.clicked.connect(self._save_nvd_key)
+        nvd_row.addWidget(save_key)
+        v.addLayout(nvd_row)
+
         row = QHBoxLayout()
         add = QPushButton("➕ Přidat pravidlo")
         add.clicked.connect(self._add_rule)
@@ -224,6 +239,10 @@ class ClassificationManagerDialog(QDialog):
 
         self._info = info
         self._reload()
+
+    def _save_nvd_key(self):
+        self._nvd_settings.setValue("nvd_api_key", self.nvd_key_edit.text().strip())
+        QMessageBox.information(self, "NVD", "API klíč uložen.")
 
     def _reload(self):
         self.tree.clear()
