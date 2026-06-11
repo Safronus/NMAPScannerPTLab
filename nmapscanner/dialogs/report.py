@@ -85,12 +85,15 @@ class ReportDialog(QDialog):
         line = QFrame(); line.setFrameShape(QFrame.HLine); layout.addWidget(line)
         row = QHBoxLayout()
         prev = QPushButton("👁 Náhled (HTML)"); prev.clicked.connect(self.preview_html)
-        row.addWidget(prev); row.addStretch()
-        self.docx_btn = QPushButton("📝 Vytvořit DOCX")
-        self.docx_btn.clicked.connect(self.generate_docx)
-        row.addWidget(self.docx_btn)
-        self.generate_btn = QPushButton("📄 Vytvořit PDF"); self.generate_btn.setDefault(True)
-        self.generate_btn.clicked.connect(self.generate_pdf)
+        row.addWidget(prev)
+        row.addStretch()
+        # Formát výstupu — obsah je sdílený, vybíráš jen formáty (oba default zaškrtnuté)
+        row.addWidget(QLabel("Formát:"))
+        self.chk_fmt_pdf = QCheckBox("PDF"); self.chk_fmt_pdf.setChecked(True)
+        self.chk_fmt_docx = QCheckBox("DOCX"); self.chk_fmt_docx.setChecked(True)
+        row.addWidget(self.chk_fmt_pdf); row.addWidget(self.chk_fmt_docx)
+        self.generate_btn = QPushButton("📄 Vytvořit report"); self.generate_btn.setDefault(True)
+        self.generate_btn.clicked.connect(self.generate_report)
         row.addWidget(self.generate_btn)
         close = QPushButton("Zavřít"); close.clicked.connect(self.reject)
         row.addWidget(close)
@@ -341,26 +344,27 @@ class ReportDialog(QDialog):
             "tool": self.meta_defaults.get("tool", "NMAP Scanner — PT Lab"),
         }
 
-    def _build_html(self):
+    def _build(self):
+        """Sdílený build pro PDF i DOCX — nálezy + overrides + komentáře + opts + meta."""
+        from ..core.report_classify import apply_overrides
         lang = self._lang()
         sections = self._selected_sections()
         comments_by_key = self._collect_comments()
         result = build_findings(self.scan_results, sections=sections,
                                 min_severity=self.sev_combo.currentData(), lang=lang)
-        # Aplikovat per-případ úpravy klasifikace (z panelu Souhrn IP i odsud)
-        from ..core.report_classify import apply_overrides
-        overrides = (self.scan_results.get("report_config", {}) or {}).get("overrides", {})
-        if overrides:
-            apply_overrides(result, overrides, lang)
-        # přemapovat komentáře na id nálezů aktuálního buildu
-        comments_by_id = {}
+        apply_overrides(result, self._overrides(), lang)
+        # komentáře z tabulky → přímo na nález (čte je HTML i DOCX)
         for f in result["findings"]:
             ck = self._comment_key(f)
-            if ck in comments_by_key:
-                comments_by_id[f["id"]] = comments_by_key[ck]
+            if ck in comments_by_key and not f.get("comment"):
+                f["comment"] = comments_by_key[ck]
         opts = self._options(comments_by_key)
-        opts["comments"] = comments_by_id
-        html = build_report(self._meta(), result, opts)
+        meta = self._meta()
+        html = build_report(meta, result, opts)
+        return html, result, opts, meta
+
+    def _build_html(self):
+        html, result, _, _ = self._build()
         return html, result
 
     def _save_cfg(self, comments_by_key):
@@ -448,97 +452,89 @@ class ReportDialog(QDialog):
         QDesktopServices.openUrl(QUrl.fromLocalFile(path))
         self.status_label.setText(f"Náhled: {path}")
 
-    def generate_docx(self):
-        if not self._selected_sections():
-            QMessageBox.warning(self, "Report", "Vyber alespoň jednu oblast.")
-            return
-        from ..core.report_classify import build_findings, apply_overrides
-        lang = self._lang()
-        result = build_findings(self.scan_results, sections=self._selected_sections(),
-                                min_severity=self.sev_combo.currentData(), lang=lang)
-        apply_overrides(result, self._overrides(), lang)
-        comments_by_key = self._collect_comments()
-        for f in result["findings"]:
-            ck = self._comment_key(f)
-            if ck in comments_by_key and not f.get("comment"):
-                f["comment"] = comments_by_key[ck]
-        self._save_cfg(comments_by_key)
-
-        rtype = self.type_combo.currentData()
-        default_name = report_store.suggested_filename("report_full", rtype, lang, "docx")
-        os.makedirs(self.reports_dir, exist_ok=True)
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Uložit DOCX report", os.path.join(self.reports_dir, default_name),
-            "Word dokument (*.docx)")
-        if not path:
-            return
+    def _register(self, path, rtype, lang, fmt_label):
         try:
-            from ..core.report_docx import build_docx
-            build_docx(self._meta(), result, self._options(comments_by_key), path)
-        except Exception as e:
-            QMessageBox.critical(self, "Report", f"Nepodařilo se vytvořit DOCX: {e}")
-            return
-        try:
-            report_store.register_report(
-                self.reports_dir, path, "report_full", rtype, lang,
-                f"{self.title_edit.text().strip() or 'Pentest Report'} "
-                f"({'manažerský' if rtype == 'management' else 'technický'}, {lang.upper()}, DOCX)")
+            title = (f"{self.title_edit.text().strip() or 'Pentest Report'} "
+                     f"({'manažerský' if rtype == 'management' else 'technický'}, "
+                     f"{lang.upper()}, {fmt_label})")
+            report_store.register_report(self.reports_dir, path, "report_full", rtype, lang, title)
         except Exception:
             pass
-        self.status_label.setText(f"DOCX hotovo: {path}")
-        if QMessageBox.question(self, "Report hotov",
-                                f"DOCX report byl uložen a přidán do projektu:\n{path}\n\nOtevřít?",
-                                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes) == QMessageBox.Yes:
-            from PySide6.QtGui import QDesktopServices
-            from PySide6.QtCore import QUrl
-            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
-    def generate_pdf(self):
+    def generate_report(self):
+        """Sjednocené generování — formáty PDF/DOCX dle zaškrtnutí, sdílený obsah."""
+        fmts = []
+        if self.chk_fmt_pdf.isChecked():
+            fmts.append("pdf")
+        if self.chk_fmt_docx.isChecked():
+            fmts.append("docx")
+        if not fmts:
+            QMessageBox.warning(self, "Report", "Vyber alespoň jeden formát (PDF / DOCX).")
+            return
         if not self._selected_sections():
             QMessageBox.warning(self, "Report", "Vyber alespoň jednu oblast.")
             return
-        html, result = self._build_html()
+        html, result, opts, meta = self._build()
         self._save_cfg(self._collect_comments())
 
         rtype = self.type_combo.currentData()
         lang = self._lang()
-        default_name = report_store.suggested_filename("report_full", rtype, lang, "pdf")
+        primary = "pdf" if "pdf" in fmts else "docx"
+        default_name = report_store.suggested_filename("report_full", rtype, lang, primary)
         os.makedirs(self.reports_dir, exist_ok=True)
         path, _ = QFileDialog.getSaveFileName(
-            self, "Uložit PDF report", os.path.join(self.reports_dir, default_name),
-            "PDF soubory (*.pdf)")
+            self, "Uložit report", os.path.join(self.reports_dir, default_name),
+            "Report (*.pdf *.docx)")
         if not path:
             return
+        base = path
+        for ext in (".pdf", ".docx"):
+            if base.lower().endswith(ext):
+                base = base[:-4]
+                break
 
         self.generate_btn.setEnabled(False)
-        self.status_label.setText(f"Generuji PDF ({result['total']} nálezů)…")
-        # Render do dočasného PDF, pak razítko hlavičky/patičky/čísel stran do finálního.
-        # Okraje MUSÍ být přes QPageLayout — QtWebEngine ignoruje CSS @page margin.
+        self.status_label.setText(f"Generuji report ({result['total']} nálezů)…")
+        self._gen = {"pending": set(fmts), "ok": [], "fail": [], "rtype": rtype, "lang": lang}
+
+        # DOCX (synchronně)
+        if "docx" in fmts:
+            dp = base + ".docx"
+            try:
+                from ..core.report_docx import build_docx
+                build_docx(meta, result, opts, dp)
+                self._register(dp, rtype, lang, "DOCX")
+                self._format_done("docx", True, dp)
+            except Exception as e:  # noqa: BLE001
+                print(f"DEBUG: docx selhalo: {e}")
+                self._format_done("docx", False, dp)
+        # PDF (asynchronně přes QtWebEngine)
+        if "pdf" in fmts:
+            self._start_pdf(html, base + ".pdf", rtype, lang, result)
+
+    def _start_pdf(self, html, path, rtype, lang, result):
         from PySide6.QtGui import QPageLayout, QPageSize
         from PySide6.QtCore import QMarginsF
+        from ..core.report_html import toc_headings, toc_title
         layout = QPageLayout(QPageSize(QPageSize.A4), QPageLayout.Portrait,
                              QMarginsF(16, 30, 16, 18), QPageLayout.Millimeter)
-        # TOC: seznam nadpisů (dohledá se v textu stran při post-processingu)
-        from ..core.report_html import toc_headings, toc_title
         toc_opts = {"report_type": rtype, "include_exec": self.chk_exec.isChecked(),
                     "include_methodology": self.chk_method.isChecked(),
                     "tools": self._tools if self.chk_tools.isChecked() else []}
         headings = toc_headings(result, toc_opts, lang) if self.chk_toc.isChecked() else None
-
         raw_path = path + ".raw.pdf"
         self._pdf_meta = (path, raw_path, rtype, lang, headings, toc_title(lang))
         self._pdf_page = QWebEnginePage(self)
         self._pdf_page.loadFinished.connect(
-            lambda ok: self._pdf_page.printToPdf(raw_path, layout) if ok else self._finish_pdf(False, path))
+            lambda ok: self._pdf_page.printToPdf(raw_path, layout) if ok else self._after_pdf(False, path))
         self._pdf_page.pdfPrintingFinished.connect(lambda p, ok: self._on_raw_pdf(ok))
         self._pdf_page.setHtml(html)
 
     def _on_raw_pdf(self, ok):
         path, raw_path, rtype, lang, headings, toc_title_str = self._pdf_meta
         if not ok:
-            self._finish_pdf(False, path)
+            self._after_pdf(False, path)
             return
-        # 1) volitelně vložit Obsah (TOC), 2) dokreslit hlavičku/patičku/čísla stran
         try:
             from ..core.report_pdf import stamp_report, assemble_with_toc
             src = raw_path
@@ -554,36 +550,42 @@ class ReportDialog(QDialog):
                         os.remove(tmp)
                     except OSError:
                         pass
-        except Exception as e:
-            # Razítkování selhalo → použít aspoň nerazítkovaný render
+        except Exception as e:  # noqa: BLE001
             print(f"DEBUG: stamp_report selhalo: {e}")
             try:
                 os.replace(raw_path, path)
             except OSError:
-                self._finish_pdf(False, path)
+                self._after_pdf(False, path)
                 return
-        self._finish_pdf(True, path)
+        self._after_pdf(True, path)
 
-    def _finish_pdf(self, ok, path):
+    def _after_pdf(self, ok, path):
+        if ok:
+            self._register(path, self._gen["rtype"], self._gen["lang"], "PDF")
+        self._format_done("pdf", ok, path)
+
+    def _format_done(self, fmt, ok, path):
+        self._gen["pending"].discard(fmt)
+        (self._gen["ok"] if ok else self._gen["fail"]).append(path)
+        if not self._gen["pending"]:
+            self._finalize_generate()
+
+    def _finalize_generate(self):
         self.generate_btn.setEnabled(True)
+        ok = self._gen.get("ok", [])
+        fail = self._gen.get("fail", [])
         if not ok:
-            self.status_label.setText("Generování PDF selhalo.")
-            QMessageBox.critical(self, "Report", "Nepodařilo se vytvořit PDF.")
+            self.status_label.setText("Generování reportu selhalo.")
+            QMessageBox.critical(self, "Report", "Nepodařilo se vytvořit report.")
             return
-        # Registrovat do manažeru reportů
-        try:
-            meta_t = getattr(self, "_pdf_meta", (path, "", "technical", "cs", None, ""))
-            rtype, lang = meta_t[2], meta_t[3]
-            title = f"{self.title_edit.text().strip() or 'Pentest Report'} " \
-                    f"({'manažerský' if rtype == 'management' else 'technický'}, {lang.upper()})"
-            report_store.register_report(self.reports_dir, path, "report_full", rtype, lang, title)
-        except Exception:
-            pass
-        self.status_label.setText(f"Hotovo: {path}")
-        reply = QMessageBox.question(
-            self, "Report hotov", f"PDF report byl uložen a přidán do projektu:\n{path}\n\nOtevřít?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-        if reply == QMessageBox.Yes:
+        self.status_label.setText("Hotovo: " + ", ".join(os.path.basename(p) for p in ok))
+        msg = "Report byl uložen a přidán do projektu:\n" + "\n".join(ok)
+        if fail:
+            msg += "\n\nNepodařilo se: " + ", ".join(os.path.basename(p) for p in fail)
+        msg += "\n\nOtevřít?"
+        if QMessageBox.question(self, "Report hotov", msg,
+                                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes) == QMessageBox.Yes:
             from PySide6.QtGui import QDesktopServices
             from PySide6.QtCore import QUrl
-            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+            for p in ok:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(p))

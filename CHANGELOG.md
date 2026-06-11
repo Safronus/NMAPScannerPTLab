@@ -4,6 +4,15 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.13.2] - 2026-06-11
+
+### Změněno
+- **Sjednocené generování reportu — jedno tlačítko, výběr formátů.** Místo dvou
+  tlačítek je teď v dialogu **„Formát: ☑ PDF ☑ DOCX"** (oba zaškrtnuté defaultně)
+  a jedno tlačítko **„Vytvořit report"**. Obsah a všechny volby jsou **sdílené**
+  (DOCX nikdy nebude jiný než PDF) — vygeneruje se vybraný formát/formáty naráz,
+  oba se zaregistrují do manažeru reportů.
+
 ## [5.13.1] - 2026-06-11
 
 ### Přidáno
