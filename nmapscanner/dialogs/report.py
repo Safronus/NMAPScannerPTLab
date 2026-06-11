@@ -86,6 +86,9 @@ class ReportDialog(QDialog):
         row = QHBoxLayout()
         prev = QPushButton("👁 Náhled (HTML)"); prev.clicked.connect(self.preview_html)
         row.addWidget(prev); row.addStretch()
+        self.docx_btn = QPushButton("📝 Vytvořit DOCX")
+        self.docx_btn.clicked.connect(self.generate_docx)
+        row.addWidget(self.docx_btn)
         self.generate_btn = QPushButton("📄 Vytvořit PDF"); self.generate_btn.setDefault(True)
         self.generate_btn.clicked.connect(self.generate_pdf)
         row.addWidget(self.generate_btn)
@@ -444,6 +447,51 @@ class ReportDialog(QDialog):
         from PySide6.QtCore import QUrl
         QDesktopServices.openUrl(QUrl.fromLocalFile(path))
         self.status_label.setText(f"Náhled: {path}")
+
+    def generate_docx(self):
+        if not self._selected_sections():
+            QMessageBox.warning(self, "Report", "Vyber alespoň jednu oblast.")
+            return
+        from ..core.report_classify import build_findings, apply_overrides
+        lang = self._lang()
+        result = build_findings(self.scan_results, sections=self._selected_sections(),
+                                min_severity=self.sev_combo.currentData(), lang=lang)
+        apply_overrides(result, self._overrides(), lang)
+        comments_by_key = self._collect_comments()
+        for f in result["findings"]:
+            ck = self._comment_key(f)
+            if ck in comments_by_key and not f.get("comment"):
+                f["comment"] = comments_by_key[ck]
+        self._save_cfg(comments_by_key)
+
+        rtype = self.type_combo.currentData()
+        default_name = report_store.suggested_filename("report_full", rtype, lang, "docx")
+        os.makedirs(self.reports_dir, exist_ok=True)
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Uložit DOCX report", os.path.join(self.reports_dir, default_name),
+            "Word dokument (*.docx)")
+        if not path:
+            return
+        try:
+            from ..core.report_docx import build_docx
+            build_docx(self._meta(), result, self._options(comments_by_key), path)
+        except Exception as e:
+            QMessageBox.critical(self, "Report", f"Nepodařilo se vytvořit DOCX: {e}")
+            return
+        try:
+            report_store.register_report(
+                self.reports_dir, path, "report_full", rtype, lang,
+                f"{self.title_edit.text().strip() or 'Pentest Report'} "
+                f"({'manažerský' if rtype == 'management' else 'technický'}, {lang.upper()}, DOCX)")
+        except Exception:
+            pass
+        self.status_label.setText(f"DOCX hotovo: {path}")
+        if QMessageBox.question(self, "Report hotov",
+                                f"DOCX report byl uložen a přidán do projektu:\n{path}\n\nOtevřít?",
+                                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes) == QMessageBox.Yes:
+            from PySide6.QtGui import QDesktopServices
+            from PySide6.QtCore import QUrl
+            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def generate_pdf(self):
         if not self._selected_sections():

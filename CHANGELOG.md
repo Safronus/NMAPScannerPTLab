@@ -4,6 +4,18 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.13.1] - 2026-06-11
+
+### Přidáno
+- **Report do Wordu (.docx) vedle PDF.** V dialogu reportu nové tlačítko
+  **„📝 Vytvořit DOCX"** — stejný obsah a struktura jako PDF (titulka, Executive
+  summary s barevnými počty, metodika OWASP/CVSS, cíle, nástroje, nálezy dle typu
+  testu → cíl → závažnost s barevnými buňkami rizika, detail HIGH/CRITICAL s
+  dopadem/doporučením/komentářem, shrnutí/závěr), hlavička s názvem laboratoře a
+  patička „SENSITIVE DATA" + čísla stran. Technický i manažerský, CZ/EN. Per-nález
+  úpravy se promítají i do DOCX. Soubor se registruje do manažeru reportů.
+  `core/report_docx.py` (python-docx).
+
 ## [5.13.0] - 2026-06-11
 
 ### Přidáno
