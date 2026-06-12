@@ -220,6 +220,16 @@ def build_vulns(scan_results, start_idx=1, lang="cs"):
                         sev = "CRITICAL"
                     if enr_cve.get("severity"):
                         sev = enr_cve["severity"]  # NVD CVSS závažnost
+                    # Existence exploitu (CISA KEV / EPSS / ExploitDB) — silný signál priority.
+                    expl = enr_cve.get("exploit") or {}
+                    _SEV_ORDER = {"INFO": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+                    if expl.get("kev"):
+                        # aktivně zneužíváno → minimálně HIGH; ransomware → CRITICAL
+                        floor = "CRITICAL" if expl.get("ransomware") else "HIGH"
+                        if _SEV_ORDER.get(sev, 0) < _SEV_ORDER[floor]:
+                            sev = floor
+                    elif expl.get("has_exploit") and _SEV_ORDER.get(sev, 0) < _SEV_ORDER["HIGH"]:
+                        sev = "HIGH"  # veřejný exploit / vysoká EPSS
                     snippet = (output or "").strip()
                     if len(snippet) > 600:
                         snippet = snippet[:600] + " …"
@@ -237,8 +247,41 @@ def build_vulns(scan_results, start_idx=1, lang="cs"):
                     ev = f"{sname}\n{snippet}"
                     if cve_id:
                         ev += f"\nNVD: {lib.cve_link('nvd', cve_id)}"
-                    out.append(_mk(idx, title, sev, owasp, CATEGORY["vulns"], f"{ip}:{port}",
-                                   desc, lang, evidence=ev, recommendation=rec))
+                    # Štítek a poznámky o existenci exploitu
+                    badge = ""
+                    if expl.get("kev"):
+                        badge = ("🔴 AKTIVNĚ ZNEUŽÍVÁNO (CISA KEV)" if lang == "cs"
+                                 else "🔴 ACTIVELY EXPLOITED (CISA KEV)")
+                    elif expl.get("has_exploit"):
+                        badge = "🟠 EXPLOIT K DISPOZICI" if lang == "cs" else "🟠 EXPLOIT AVAILABLE"
+                    if badge:
+                        title = f"{badge} — {sname}"
+                        parts = []
+                        if expl.get("kev"):
+                            kd = expl.get("kev_date", "")
+                            parts.append((f"V katalogu CISA KEV od {kd}." if lang == "cs"
+                                          else f"In CISA KEV catalog since {kd}."))
+                            if expl.get("ransomware"):
+                                parts.append("Použito v ransomware kampaních." if lang == "cs"
+                                             else "Used in ransomware campaigns.")
+                        if expl.get("epss") is not None:
+                            pct = (expl.get("epss_pct") or 0) * 100
+                            parts.append(
+                                f"EPSS {expl['epss']*100:.1f} % (pravděpodobnost zneužití, percentil {pct:.0f}%)."
+                                if lang == "cs" else
+                                f"EPSS {expl['epss']*100:.1f}% exploit probability (percentile {pct:.0f}%).")
+                        if expl.get("edb_count"):
+                            parts.append(f"ExploitDB: {expl['edb_count']} exploitů." if lang == "cs"
+                                         else f"ExploitDB: {expl['edb_count']} exploit(s).")
+                        ev += "\n⚠️ " + " ".join(parts)
+                        rec = ((("PRIORITNĚ opravit — pro tuto zranitelnost existuje exploit. "
+                                 if lang == "cs" else
+                                 "Patch as PRIORITY — an exploit exists for this vulnerability. ")) + rec)
+                    f = _mk(idx, title, sev, owasp, CATEGORY["vulns"], f"{ip}:{port}",
+                            desc, lang, evidence=ev, recommendation=rec)
+                    if expl:
+                        f["exploit"] = expl
+                    out.append(f)
                     idx += 1
     return out, idx
 

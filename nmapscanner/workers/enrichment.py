@@ -19,11 +19,12 @@ class EnrichmentWorker(QThread):
     finished = Signal(dict)            # {'cve': {...}, 'eol': {...}}
     log = Signal(str)
 
-    def __init__(self, targets, scan_results, nvd_api_key=None):
+    def __init__(self, targets, scan_results, nvd_api_key=None, use_searchsploit=False):
         super().__init__()
         self.targets = list(targets or [])
         self.scan_results = scan_results or {}
         self.nvd_api_key = nvd_api_key
+        self.use_searchsploit = use_searchsploit
         self.is_running = True
 
     def _collect_jobs(self):
@@ -85,13 +86,25 @@ class EnrichmentWorker(QThread):
         for cve in cves:
             if not self.is_running:
                 break
-            self.progress.emit(f"NVD: {cve}", done, total)
+            self.progress.emit(f"NVD + exploity: {cve}", done, total)
+            info = {}
             try:
-                info = enr.nvd_lookup(cve, api_key=self.nvd_api_key)
-                if info:
-                    result["cve"][cve] = info
+                nvd = enr.nvd_lookup(cve, api_key=self.nvd_api_key)
+                if nvd:
+                    info.update(nvd)
             except Exception as e:  # noqa: BLE001
                 self.log.emit(f"NVD {cve}: {e}")
+            try:
+                expl = enr.exploit_lookup(cve, use_searchsploit=self.use_searchsploit)
+                info["exploit"] = expl
+                if expl.get("kev"):
+                    self.log.emit(f"⚠️ {cve}: aktivně zneužíváno (CISA KEV)")
+                elif expl.get("has_exploit"):
+                    self.log.emit(f"⚠️ {cve}: existuje exploit / vysoká EPSS")
+            except Exception as e:  # noqa: BLE001
+                self.log.emit(f"Exploit {cve}: {e}")
+            if info:
+                result["cve"][cve] = info
             done += 1
 
         self.finished.emit(result)

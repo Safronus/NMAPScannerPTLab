@@ -4,6 +4,22 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.13.5] - 2026-06-12
+
+### Přidáno
+- **Detekce existujících exploitů u nálezů.** Obohacení nově u každého CVE zjistí,
+  zda pro něj existuje exploit — aplikace ho nikdy nepoužívá, jen informuje:
+  - **CISA KEV** — je-li CVE v katalogu aktivně zneužívaných zranitelností,
+    nález dostane štítek „🔴 AKTIVNĚ ZNEUŽÍVÁNO (CISA KEV)" a závažnost se zvedne
+    min. na HIGH (u ransomware kampaní na CRITICAL).
+  - **EPSS** (FIRST) — pravděpodobnost zneužití v dalších 30 dnech; u nálezu se
+    zobrazí % a percentil.
+  - **ExploitDB** přes lokální `searchsploit` (je-li nainstalován) — počet
+    dostupných exploitů. Volitelné, degraduje bez nástroje.
+  - Veřejný exploit / vysoká EPSS → štítek „🟠 EXPLOIT K DISPOZICI" a navýšení
+    závažnosti na HIGH; doporučení dostane prefix „PRIORITNĚ opravit".
+  - Vše cachované v `~/.nmapscanner/` (KEV 1 den, EPSS 3 dny), síť degraduje při výpadku.
+
 ## [5.13.4] - 2026-06-11
 
 ### Přidáno

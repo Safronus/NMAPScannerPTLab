@@ -18,10 +18,18 @@ import time
 CACHE_DIR = os.path.join(os.path.expanduser("~"), ".nmapscanner")
 _NVD_CACHE = os.path.join(CACHE_DIR, "nvd_cache.json")
 _EOL_CACHE = os.path.join(CACHE_DIR, "eol_cache.json")
-_EOL_TTL = 14 * 24 * 3600  # 14 dní
+_KEV_CACHE = os.path.join(CACHE_DIR, "kev_cache.json")
+_EPSS_CACHE = os.path.join(CACHE_DIR, "epss_cache.json")
+_EOL_TTL = 14 * 24 * 3600   # 14 dní
+_KEV_TTL = 24 * 3600        # 1 den (katalog se aktualizuje denně)
+_EPSS_TTL = 3 * 24 * 3600   # 3 dny
 
 NVD_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0?cveId={id}"
 EOL_URL = "https://endoflife.date/api/{slug}.json"
+# CISA Known Exploited Vulnerabilities — CVE s potvrzeným zneužitím ve volné přírodě.
+KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+# FIRST EPSS — pravděpodobnost zneužití CVE v následujících 30 dnech (0–1).
+EPSS_URL = "https://api.first.org/data/v1/epss?cve={id}"
 
 # nmap product (lowercase substring) -> endoflife.date slug.
 # Pořadí ZÁLEŽÍ — specifičtější klíče dřív (Tomcat/Coyote před Apache httpd; MariaDB
@@ -221,3 +229,124 @@ def eol_lookup(product_text, version, timeout=12, force=False):
     return {"is_eol": is_eol, "eol_date": eol_date, "latest": cyc.get("latest", ""),
             "cycle": str(cyc.get("cycle", "")), "slug": slug,
             "product": product_text, "version": version}
+
+
+# ---------------------------------------------------------------------------
+#  Existence exploitu — CISA KEV + EPSS + lokální searchsploit (ExploitDB)
+# ---------------------------------------------------------------------------
+def epss_band(score):
+    """Slovní zařazení EPSS pravděpodobnosti (0–1)."""
+    try:
+        s = float(score)
+    except (TypeError, ValueError):
+        return ""
+    if s >= 0.50:
+        return "velmi vysoká"
+    if s >= 0.10:
+        return "vysoká"
+    if s >= 0.01:
+        return "střední"
+    return "nízká"
+
+
+def kev_catalog(timeout=15, force=False):
+    """Vrátí mapu {CVE: {dateAdded, name, ransomware, dueDate}} z CISA KEV (cachované)."""
+    cache = _load(_KEV_CACHE)
+    entry = cache.get("_catalog") if isinstance(cache, dict) else None
+    fresh = entry and (time.time() - entry.get("_ts", 0) < _KEV_TTL)
+    if entry and fresh and not force:
+        return entry.get("data", {})
+    try:
+        data = _http_get_json(KEV_URL, timeout)
+        out = {}
+        for v in data.get("vulnerabilities", []):
+            cid = (v.get("cveID") or "").upper()
+            if cid:
+                out[cid] = {
+                    "dateAdded": v.get("dateAdded", ""),
+                    "name": v.get("vulnerabilityName", ""),
+                    "ransomware": v.get("knownRansomwareCampaignUse", "") == "Known",
+                    "dueDate": v.get("dueDate", ""),
+                }
+        _save(_KEV_CACHE, {"_catalog": {"_ts": time.time(), "data": out}})
+        return out
+    except Exception:
+        return entry.get("data", {}) if entry else {}
+
+
+def kev_lookup(cve_id, timeout=15, force=False):
+    """Je-li CVE v katalogu CISA KEV (aktivně zneužíváno), vrátí jeho záznam, jinak None."""
+    cid = (cve_id or "").upper()
+    if not cid:
+        return None
+    return kev_catalog(timeout=timeout, force=force).get(cid)
+
+
+def epss_lookup(cve_id, timeout=10, force=False):
+    """Vrátí {'epss','percentile','band'} z FIRST EPSS (cachované), nebo None."""
+    cid = (cve_id or "").upper()
+    if not cid:
+        return None
+    cache = _load(_EPSS_CACHE)
+    entry = cache.get(cid)
+    fresh = entry and (time.time() - entry.get("_ts", 0) < _EPSS_TTL)
+    if entry and fresh and not force:
+        return {k: entry[k] for k in ("epss", "percentile", "band") if k in entry}
+    try:
+        data = _http_get_json(EPSS_URL.format(id=cid), timeout)
+        rows = data.get("data", [])
+        if not rows:
+            return None
+        epss = float(rows[0].get("epss") or 0.0)
+        pct = float(rows[0].get("percentile") or 0.0)
+        res = {"epss": epss, "percentile": pct, "band": epss_band(epss)}
+        cache[cid] = {"_ts": time.time(), **res}
+        _save(_EPSS_CACHE, cache)
+        return res
+    except Exception:
+        return None
+
+
+def searchsploit_lookup(cve_id):
+    """Pokud je lokálně nainstalován ``searchsploit`` (ExploitDB), vrátí počet a
+    názvy exploitů pro CVE: {'count', 'titles'}. Bez nástroje vrací None (degraduje)."""
+    import shutil
+    import subprocess
+    if not shutil.which("searchsploit"):
+        return None
+    cid = (cve_id or "").upper()
+    if not cid:
+        return None
+    try:
+        out = subprocess.run(["searchsploit", "--cve", cid, "-j"],
+                             capture_output=True, text=True, timeout=20)
+        data = json.loads(out.stdout or "{}")
+        exploits = data.get("RESULTS_EXPLOIT", []) or []
+        titles = [e.get("Title", "") for e in exploits[:10]]
+        return {"count": len(exploits), "titles": titles}
+    except Exception:
+        return None
+
+
+def exploit_lookup(cve_id, nvd_api_key=None, use_searchsploit=False):
+    """Sloučí signály existence exploitu pro CVE do jednoho slovníku.
+
+    Vrací ``{'kev','kev_date','ransomware','epss','epss_pct','epss_band',
+    'edb_count','has_exploit'}``. ``has_exploit`` = KEV ∨ ExploitDB ∨ EPSS≥0.10."""
+    res = {"kev": False, "kev_date": "", "ransomware": False, "epss": None,
+           "epss_pct": None, "epss_band": "", "edb_count": 0, "has_exploit": False}
+    kev = kev_lookup(cve_id)
+    if kev:
+        res.update(kev=True, kev_date=kev.get("dateAdded", ""),
+                   ransomware=bool(kev.get("ransomware")))
+    epss = epss_lookup(cve_id)
+    if epss:
+        res.update(epss=epss.get("epss"), epss_pct=epss.get("percentile"),
+                   epss_band=epss.get("band", ""))
+    if use_searchsploit:
+        edb = searchsploit_lookup(cve_id)
+        if edb:
+            res["edb_count"] = edb.get("count", 0)
+    res["has_exploit"] = bool(
+        res["kev"] or res["edb_count"] > 0 or (res["epss"] or 0) >= 0.10)
+    return res

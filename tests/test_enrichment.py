@@ -64,6 +64,46 @@ def test_build_eol_skips_supported():
     assert build_findings(sr, sections=["eol"])["total"] == 0
 
 
+def test_epss_band():
+    assert enr.epss_band(0.97) == "velmi vysoká"
+    assert enr.epss_band(0.20) == "vysoká"
+    assert enr.epss_band(0.05) == "střední"
+    assert enr.epss_band(0.001) == "nízká"
+    assert enr.epss_band(None) == ""
+
+
+def test_exploit_kev_bumps_severity_and_badges():
+    sr = {
+        "vuln": {"10.0.0.1": {"tcp": {"445": {"script": {
+            "x": "State: VULNERABLE IDs: CVE:CVE-2099-0002 something"}}}}},
+        "enrichment": {"cve": {"CVE-2099-0002": {
+            "cvss": 5.0, "severity": "MEDIUM",
+            "exploit": {"kev": True, "kev_date": "2024-01-01", "ransomware": True,
+                        "has_exploit": True, "epss": 0.9, "epss_pct": 0.99}}}},
+    }
+    r = build_findings(sr, sections=["vulns"])
+    assert r["total"] == 1
+    f = r["findings"][0]
+    # ransomware KEV → CRITICAL
+    assert f["severity"] == "CRITICAL"
+    assert "KEV" in f["title"]
+    assert f.get("exploit", {}).get("kev") is True
+
+
+def test_exploit_available_bumps_to_high():
+    sr = {
+        "vuln": {"10.0.0.1": {"tcp": {"445": {"script": {
+            "x": "State: VULNERABLE IDs: CVE:CVE-2099-0003 x"}}}}},
+        "enrichment": {"cve": {"CVE-2099-0003": {
+            "cvss": 4.5, "severity": "MEDIUM",
+            "exploit": {"kev": False, "has_exploit": True, "edb_count": 3,
+                        "epss": 0.5, "epss_pct": 0.95}}}},
+    }
+    f = build_findings(sr, sections=["vulns"])["findings"][0]
+    assert f["severity"] == "HIGH"
+    assert "EXPLOIT" in f["title"].upper()
+
+
 def test_cve_severity_from_enrichment():
     sr = {
         "vuln": {"10.0.0.1": {"tcp": {"445": {"script": {
