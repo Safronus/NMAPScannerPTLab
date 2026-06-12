@@ -4,6 +4,14 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.13.8] - 2026-06-12
+
+### Přidáno
+- **Automatické obohacení po skenu** (volitelné, přepínač ve Správci knihovny
+  klasifikací). Po dokončení skenu aplikace sama stáhne CVE z NVD, zjistí
+  End-of-Life software a existenci exploitů pro nalezené cíle. Běží na pozadí,
+  výchozí stav vypnuto.
+
 ## [5.13.7] - 2026-06-12
 
 ### Přidáno

@@ -224,6 +224,15 @@ class ClassificationManagerDialog(QDialog):
         nvd_row.addWidget(save_key)
         v.addLayout(nvd_row)
 
+        from PySide6.QtWidgets import QCheckBox
+        self.auto_enrich_chk = QCheckBox(
+            "Automaticky obohatit z internetu po dokončení skenu (CVE z NVD + EOL + exploity)")
+        self.auto_enrich_chk.setChecked(
+            self._nvd_settings.value("auto_enrich", False, type=bool))
+        self.auto_enrich_chk.toggled.connect(
+            lambda on: self._nvd_settings.setValue("auto_enrich", bool(on)))
+        v.addWidget(self.auto_enrich_chk)
+
         row = QHBoxLayout()
         add = QPushButton("➕ Přidat pravidlo")
         add.clicked.connect(self._add_rule)

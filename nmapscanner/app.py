@@ -3418,6 +3418,28 @@ class NmapScannerApp(QWidget):
         self.auto_save_project()
         self.refresh_runs_combo()
 
+        # Volitelné automatické obohacení z internetu (CVE/EOL/exploity) po skenu.
+        if not aborted:
+            try:
+                self._maybe_auto_enrich()
+            except Exception:
+                pass
+
+    def _maybe_auto_enrich(self):
+        """Je-li v nastavení zapnuto, po dokončení skenu spustí obohacení nalezených
+        cílů z internetu (NVD CVE + EOL + exploity). Běží na pozadí, nemodálně."""
+        from PySide6.QtCore import QSettings
+        if not QSettings("UTB", "NmapScannerApp").value("auto_enrich", False, type=bool):
+            return
+        if getattr(self, "_enrich_worker", None) is not None:
+            return
+        targets = [ip for ip in (self.scan_results.get("tcp", {}) or {})
+                   if isinstance(self.scan_results["tcp"].get(ip), dict)]
+        if not targets:
+            return
+        self.worker_signals.log.emit("info", "🌐 Automatické obohacení po skenu…")
+        self.enrich_targets(targets)
+
     def update_online_display_with_ports(self):
         """Aktualizuje záložku Online s aktuálními stavy (včetně 'online bez pingu')."""
         tree = self.tree_widgets.get('online')
