@@ -187,6 +187,26 @@ def _extract_desc(cve):
     return ""
 
 
+def validate_nvd_key(api_key, timeout=12):
+    """Ověří platnost NVD API klíče drobným dotazem. Vrací (ok: bool, zpráva: str).
+
+    NVD při neplatném klíči vrací 403/404; 200 = klíč přijat. Prázdný klíč = bez klíče."""
+    if not (api_key or "").strip():
+        return False, "Klíč není zadán."
+    try:
+        import requests
+        url = "https://services.nvd.nist.gov/rest/json/cves/2.0?resultsPerPage=1"
+        r = requests.get(url, timeout=timeout, headers={
+            "User-Agent": "NMAPScanner-PTLab", "apiKey": api_key.strip()})
+        if r.status_code == 200:
+            return True, "Klíč je platný — NVD požadavek přijat."
+        if r.status_code in (403, 404):
+            return False, f"Klíč odmítnut (HTTP {r.status_code})."
+        return False, f"Neočekávaná odpověď NVD (HTTP {r.status_code})."
+    except Exception as e:  # noqa: BLE001
+        return False, f"Chyba sítě: {e}"
+
+
 def nvd_lookup(cve_id, timeout=12, api_key=None, force=False):
     """Vrátí {'cvss','severity','description'} pro CVE z NVD (cachované), nebo None."""
     cve_id = (cve_id or "").upper()

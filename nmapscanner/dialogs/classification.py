@@ -8,7 +8,7 @@
   uživatelské override knihovny (``~/.nmapscanner/classification_library.json``).
 """
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QComboBox, QPlainTextEdit,
@@ -222,7 +222,14 @@ class ClassificationManagerDialog(QDialog):
         save_key = QPushButton("Uložit klíč")
         save_key.clicked.connect(self._save_nvd_key)
         nvd_row.addWidget(save_key)
+        self.nvd_test_btn = QPushButton("Otestovat")
+        self.nvd_test_btn.setToolTip("Ověří klíč dotazem na NVD")
+        self.nvd_test_btn.clicked.connect(self._test_nvd_key)
+        nvd_row.addWidget(self.nvd_test_btn)
+        self.nvd_status = QLabel()
+        nvd_row.addWidget(self.nvd_status)
         v.addLayout(nvd_row)
+        self._set_nvd_status(None)
 
         vulners_row = QHBoxLayout()
         vulners_row.addWidget(QLabel("Vulners API klíč (volitelné, CVE dle verze):"))
@@ -271,7 +278,58 @@ class ClassificationManagerDialog(QDialog):
     def _save_nvd_key(self):
         self._nvd_settings.setValue("nvd_api_key", self.nvd_key_edit.text().strip())
         self._nvd_settings.setValue("nvd_key_prompted", True)
+        self._set_nvd_status(None)
         QMessageBox.information(self, "NVD", "API klíč uložen.")
+
+    def _set_nvd_status(self, ok, msg=""):
+        """ok=None → neověřeno/nezadáno; True → platný; False → chyba."""
+        key = self.nvd_key_edit.text().strip()
+        if ok is True:
+            self.nvd_status.setText("✅ platný")
+            self.nvd_status.setStyleSheet("color: #1F9E4F; font-weight: bold;")
+        elif ok is False:
+            self.nvd_status.setText("❌ neplatný")
+            self.nvd_status.setStyleSheet("color: #C00000; font-weight: bold;")
+        elif not key:
+            self.nvd_status.setText("○ nezadán")
+            self.nvd_status.setStyleSheet("color: #888;")
+        else:
+            self.nvd_status.setText("● neověřeno")
+            self.nvd_status.setStyleSheet("color: #BF9000;")
+        if msg:
+            self.nvd_status.setToolTip(msg)
+
+    def _test_nvd_key(self):
+        key = self.nvd_key_edit.text().strip()
+        if not key:
+            self._set_nvd_status(None)
+            QMessageBox.information(self, "NVD", "Nejprve zadej API klíč.")
+            return
+        self.nvd_test_btn.setEnabled(False)
+        self.nvd_status.setText("⏳ ověřuji…")
+        self.nvd_status.setStyleSheet("color: #888;")
+
+        class _Check(QThread):
+            done = Signal(bool, str)
+
+            def __init__(self, k):
+                super().__init__()
+                self.k = k
+
+            def run(self):
+                from ..core.enrichment import validate_nvd_key
+                ok, m = validate_nvd_key(self.k)
+                self.done.emit(ok, m)
+
+        self._nvd_check = _Check(key)
+        self._nvd_check.done.connect(self._on_nvd_checked)
+        self._nvd_check.start()
+
+    def _on_nvd_checked(self, ok, msg):
+        self.nvd_test_btn.setEnabled(True)
+        self._set_nvd_status(ok, msg)
+        if not ok:
+            QMessageBox.warning(self, "NVD", msg)
 
     def _save_vulners_key(self):
         self._nvd_settings.setValue("vulners_api_key", self.vulners_key_edit.text().strip())

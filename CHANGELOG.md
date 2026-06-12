@@ -4,6 +4,14 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.14.1] - 2026-06-12
+
+### Přidáno
+- **Indikátor platnosti NVD API klíče** ve Správci knihovny klasifikací. Vedle
+  pole pro klíč je stav (○ nezadán / ● neověřeno / ✅ platný / ❌ neplatný) a
+  tlačítko **Otestovat**, které klíč ověří reálným dotazem na NVD (na pozadí,
+  nemrazí UI). Detail výsledku je v tooltipu i hlášce.
+
 ## [5.14.0] - 2026-06-12
 
 ### Přidáno
