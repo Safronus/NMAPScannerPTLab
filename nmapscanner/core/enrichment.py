@@ -207,6 +207,28 @@ def validate_nvd_key(api_key, timeout=12):
         return False, f"Chyba sítě: {e}"
 
 
+def validate_vulners_key(api_key, timeout=12):
+    """Ověří platnost Vulners API klíče drobným dotazem. Vrací (ok: bool, zpráva: str)."""
+    if not (api_key or "").strip():
+        return False, "Klíč není zadán."
+    try:
+        import requests
+        url = ("https://vulners.com/api/v3/burp/software/"
+               f"?software=nginx&version=1.0.0&type=software&apiKey={api_key.strip()}")
+        r = requests.get(url, timeout=timeout, headers={"User-Agent": "NMAPScanner-PTLab"})
+        try:
+            data = r.json()
+        except Exception:
+            return False, f"Neočekávaná odpověď Vulners (HTTP {r.status_code})."
+        if data.get("result") == "OK":
+            return True, "Klíč je platný — Vulners požadavek přijat."
+        err = ((data.get("data", {}) or {}).get("error")
+               or data.get("data") or data.get("result") or "neznámá chyba")
+        return False, f"Vulners klíč odmítnut: {err}"
+    except Exception as e:  # noqa: BLE001
+        return False, f"Chyba sítě: {e}"
+
+
 def nvd_lookup(cve_id, timeout=12, api_key=None, force=False):
     """Vrátí {'cvss','severity','description'} pro CVE z NVD (cachované), nebo None."""
     cve_id = (cve_id or "").upper()

@@ -170,6 +170,22 @@ class RuleEditDialog(QDialog):
         return out
 
 
+class _KeyCheckWorker(QThread):
+    """Na pozadí ověří API klíč (NVD/Vulners) bez zamrznutí UI."""
+    done = Signal(bool, str)
+
+    def __init__(self, kind, key):
+        super().__init__()
+        self.kind = kind
+        self.key = key
+
+    def run(self):
+        from ..core import enrichment as enr
+        fn = enr.validate_vulners_key if self.kind == "vulners" else enr.validate_nvd_key
+        ok, msg = fn(self.key)
+        self.done.emit(ok, msg)
+
+
 class ClassificationManagerDialog(QDialog):
     """Správce knihovny klasifikací — editace pravidel (ukládá do user override)."""
 
@@ -246,7 +262,14 @@ class ClassificationManagerDialog(QDialog):
         save_vk = QPushButton("Uložit klíč")
         save_vk.clicked.connect(self._save_vulners_key)
         vulners_row.addWidget(save_vk)
+        self.vulners_test_btn = QPushButton("Otestovat")
+        self.vulners_test_btn.setToolTip("Ověří klíč dotazem na Vulners")
+        self.vulners_test_btn.clicked.connect(self._test_vulners_key)
+        vulners_row.addWidget(self.vulners_test_btn)
+        self.vulners_status = QLabel()
+        vulners_row.addWidget(self.vulners_status)
         v.addLayout(vulners_row)
+        self._set_vulners_status(None)
 
         from PySide6.QtWidgets import QCheckBox
         self.discover_cve_chk = QCheckBox(
@@ -314,20 +337,7 @@ class ClassificationManagerDialog(QDialog):
         self.nvd_test_btn.setEnabled(False)
         self.nvd_status.setText("⏳ ověřuji…")
         self.nvd_status.setStyleSheet("color: #888;")
-
-        class _Check(QThread):
-            done = Signal(bool, str)
-
-            def __init__(self, k):
-                super().__init__()
-                self.k = k
-
-            def run(self):
-                from ..core.enrichment import validate_nvd_key
-                ok, m = validate_nvd_key(self.k)
-                self.done.emit(ok, m)
-
-        self._nvd_check = _Check(key)
+        self._nvd_check = _KeyCheckWorker("nvd", key)
         self._nvd_check.done.connect(self._on_nvd_checked)
         self._nvd_check.start()
 
@@ -337,9 +347,72 @@ class ClassificationManagerDialog(QDialog):
         if not ok:
             QMessageBox.warning(self, "NVD", msg)
 
+    def _set_vulners_status(self, ok, msg=""):
+        key = self.vulners_key_edit.text().strip()
+        if ok is True:
+            self.vulners_status.setText("✅ platný")
+            self.vulners_status.setStyleSheet("color: #1F9E4F; font-weight: bold;")
+        elif ok is False:
+            self.vulners_status.setText("❌ neplatný")
+            self.vulners_status.setStyleSheet("color: #C00000; font-weight: bold;")
+        elif not key:
+            self.vulners_status.setText("○ nezadán")
+            self.vulners_status.setStyleSheet("color: #888;")
+        else:
+            self.vulners_status.setText("● neověřeno")
+            self.vulners_status.setStyleSheet("color: #BF9000;")
+        if msg:
+            self.vulners_status.setToolTip(msg)
+
+    def _test_vulners_key(self):
+        key = self.vulners_key_edit.text().strip()
+        if not key:
+            self._set_vulners_status(None)
+            QMessageBox.information(self, "Vulners", "Nejprve zadej API klíč.")
+            return
+        self.vulners_test_btn.setEnabled(False)
+        self.vulners_status.setText("⏳ ověřuji…")
+        self.vulners_status.setStyleSheet("color: #888;")
+        self._vulners_check = _KeyCheckWorker("vulners", key)
+        self._vulners_check.done.connect(self._on_vulners_checked)
+        self._vulners_check.start()
+
+    def _on_vulners_checked(self, ok, msg):
+        self.vulners_test_btn.setEnabled(True)
+        self._set_vulners_status(ok, msg)
+        if not ok:
+            QMessageBox.warning(self, "Vulners", msg)
+
     def _save_vulners_key(self):
         self._nvd_settings.setValue("vulners_api_key", self.vulners_key_edit.text().strip())
+        self._set_vulners_status(None)
         QMessageBox.information(self, "Vulners", "API klíč uložen.")
+
+    def _keys_dirty(self):
+        """Vrátí True, pokud se některý API klíč liší od uloženého (neuložená změna)."""
+        nvd_now = self.nvd_key_edit.text().strip()
+        vul_now = self.vulners_key_edit.text().strip()
+        nvd_saved = (self._nvd_settings.value("nvd_api_key", "") or "").strip()
+        vul_saved = (self._nvd_settings.value("vulners_api_key", "") or "").strip()
+        return nvd_now != nvd_saved or vul_now != vul_saved
+
+    def done(self, result):
+        # Univerzální hook pro zavření (Zavřít / Esc / křížek). Zeptat se na uložení
+        # klíčů JEN když došlo ke skutečné změně.
+        if self._keys_dirty():
+            res = QMessageBox.question(
+                self, "Neuložené API klíče",
+                "Změnil(a) jsi API klíč (NVD/Vulners). Uložit změny?",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                QMessageBox.Save)
+            if res == QMessageBox.Cancel:
+                return  # zrušit zavření
+            if res == QMessageBox.Save:
+                self._nvd_settings.setValue("nvd_api_key", self.nvd_key_edit.text().strip())
+                self._nvd_settings.setValue("nvd_key_prompted", True)
+                self._nvd_settings.setValue(
+                    "vulners_api_key", self.vulners_key_edit.text().strip())
+        super().done(result)
 
     def _reload(self):
         self.tree.clear()

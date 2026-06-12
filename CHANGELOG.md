@@ -4,6 +4,18 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.14.3] - 2026-06-12
+
+### Přidáno
+- **Ověření Vulners API klíče** ve Správci knihovny klasifikací — stejně jako u
+  NVD: indikátor stavu (○ nezadán / ● neověřeno / ✅ platný / ❌ neplatný) a
+  tlačítko **Otestovat** (ověří klíč reálným dotazem na Vulners, na pozadí).
+
+### Změněno
+- **Dotaz na uložení API klíčů při zavírání Správce knihovny** se zobrazí jen
+  když opravdu došlo ke změně klíče (NVD/Vulners) — bez změn se okno zavře bez
+  ptaní. Funguje pro Zavřít, Esc i křížek; chrání před ztrátou napsaného klíče.
+
 ## [5.14.2] - 2026-06-12
 
 ### Opraveno
