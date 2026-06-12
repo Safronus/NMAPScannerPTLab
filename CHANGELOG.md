@@ -4,6 +4,18 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.14.2] - 2026-06-12
+
+### Opraveno
+- **Sloupec „Doporučení" ve Správci knihovny klasifikací se ořezával na 90 znaků**
+  — i po rozšíření okna nebyl vidět celý text. Nově se zobrazuje plné doporučení
+  se zalamováním, plný text je i v tooltipu a sloupec „Klíč / pravidlo" je ručně
+  zúžitelný (nežere šířku).
+
+### Změněno
+- **Souhrn počtu klasifikací** je přehlednější: celkový počet pravidel, počet
+  oblastí a rozpad podle závažnosti (CRITICAL/HIGH/MEDIUM/LOW/INFO).
+
 ## [5.14.1] - 2026-06-12
 
 ### Přidáno

@@ -204,8 +204,14 @@ class ClassificationManagerDialog(QDialog):
 
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Klíč / pravidlo", "Závažnost", "OWASP", "Doporučení"])
-        self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.tree.header().setSectionResizeMode(3, QHeaderView.Stretch)
+        hdr = self.tree.header()
+        hdr.setSectionResizeMode(0, QHeaderView.Interactive)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(3, QHeaderView.Stretch)
+        self.tree.setColumnWidth(0, 240)
+        self.tree.setWordWrap(True)          # zalomit dlouhé doporučení místo oříznutí
+        self.tree.setTextElideMode(Qt.ElideNone)
         self.tree.itemDoubleClicked.connect(self._edit_item)
         v.addWidget(self.tree, 1)
 
@@ -339,11 +345,23 @@ class ClassificationManagerDialog(QDialog):
         self.tree.clear()
         data = lib.library(force_reload=True)
         total = sum(len(data.get(cat, {}) or {}) for cat, _ in self.DICT_CATEGORIES)
+        # rozpad dle závažnosti napříč všemi pravidly
+        sev_counts = {}
+        for cat, _ in self.DICT_CATEGORIES:
+            for rule in (data.get(cat, {}) or {}).values():
+                s = (rule or {}).get("severity", "")
+                if s:
+                    sev_counts[s] = sev_counts.get(s, 0) + 1
+        order = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
+        breakdown = "  ".join(f"{s}: {sev_counts[s]}" for s in order if sev_counts.get(s))
         if getattr(self, "_info", None):
-            self._info.setText(f"Pravidla referenční knihovny — celkem {total}. "
-                               "Severity + OWASP + doporučení + dopad. Změny se ukládají do "
-                               "uživatelské knihovny a překrývají výchozí. Dvojklik = editace, "
-                               "➕ přidá vlastní pravidlo.")
+            self._info.setText(
+                f"Klasifikační pravidla celkem: {total}   "
+                f"({len(self.DICT_CATEGORIES)} oblastí)   "
+                + (f"[{breakdown}]" if breakdown else "")
+                + "\nSeverity + OWASP + doporučení + dopad. Změny se ukládají do "
+                "uživatelské knihovny a překrývají výchozí. Dvojklik = editace, "
+                "➕ přidá vlastní pravidlo.")
         for cat, label in self.DICT_CATEGORIES:
             rules = data.get(cat, {}) or {}
             if not rules:
@@ -360,11 +378,14 @@ class ClassificationManagerDialog(QDialog):
             for key in sorted(rules.keys(), key=lambda k: (len(k), k)):
                 rule = rules[key]
                 sev = rule.get("severity", "")
+                rec_full = lib.pick(rule.get("recommendation", ""), "cs")
                 child = QTreeWidgetItem(head, [
-                    str(key), sev, rule.get("owasp", ""),
-                    lib.pick(rule.get("recommendation", ""), "cs")[:90]])
+                    str(key), sev, rule.get("owasp", ""), rec_full])
                 if sev in SEVERITY_COLOR:
                     child.setForeground(1, QColor(SEVERITY_COLOR[sev]))
+                # plný text i v tooltipu (rychlé přečtení bez rozšiřování sloupce)
+                child.setToolTip(3, rec_full)
+                child.setToolTip(0, str(key))
                 child.setData(0, Qt.UserRole, (cat, str(key)))
 
     def _edit_item(self, item, col):
