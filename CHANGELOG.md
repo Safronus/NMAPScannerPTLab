@@ -4,6 +4,20 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.15.0] - 2026-06-12
+
+### Přidáno
+- **Soft-lock nad projektovou složkou.** Při otevření projektu, který právě
+  (nebo nedávno) používá někdo jiný z jiného místa, se zobrazí **varování**
+  s identitou druhého uživatele (uživatel@stroj, PID, čas poslední aktivity).
+  Nejde o tvrdé zamčení — práci to nezablokuje, jen upozorní na riziko
+  souběžných úprav, které se mohou přepsat.
+  - Do složky se zapisuje malý soubor `.nmapproj.lock` s identitou a časem.
+  - **Heartbeat** každých 60 s značí aktivitu; po výpadku/pádu zámek do 3 minut
+    „zestárne" a přestane varovat (považuje se za opuštěný).
+  - Zámek se uvolní při přepnutí projektu i při zavření aplikace; cizí zámek se
+    nikdy nepřepíše ani nemaže. Vše best-effort (I/O chyba nikdy nezablokuje práci).
+
 ## [5.14.3] - 2026-06-12
 
 ### Přidáno

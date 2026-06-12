@@ -28,6 +28,7 @@ from .core.project import ProjectPaths, default_projects_dir, safe_name
 from .core import run_history as rh
 from .core.run_history import RunHistory, ScanRun, run_id_from_timestamp
 from .core import project_store as pstore
+from .core import projectlock
 from .core.vuln_classify import classify_vuln_output
 from .core.webserver_detect import detect_server
 from .workers.screenshot import ScreenshotManager
@@ -2044,6 +2045,8 @@ class NmapScannerApp(QWidget):
         paths = ProjectPaths.create(base_dir, name)
         self.current_project_path = str(paths.project_file)
         self.worker_signals.log.emit("info", f"🔄 Vytvořena projektová složka: {paths.root}")
+        # Nová složka = náš zámek (soft-lock) + heartbeat.
+        self._acquire_project_lock()
         return paths
 
     # ====================== SUDO HESLO (jen v RAM) ======================
@@ -2731,6 +2734,72 @@ class NmapScannerApp(QWidget):
             self.project_path_label.setText("📁 Projekt zatím neuložen (založí se při spuštění skenu)")
             self.project_path_label.setToolTip("")
 
+    # ----------------------------------------------------------- soft-lock
+    def _project_dir(self):
+        """Složka aktuálního projektu (kde je lock soubor), nebo None."""
+        if not getattr(self, "current_project_path", None):
+            return None
+        d = os.path.dirname(self.current_project_path)
+        return d if os.path.isdir(d) else None
+
+    def _warn_if_locked(self, project_dir):
+        """Soft-lock: když složku drží čerstvý zámek JINÉ instance, varuj
+        (nezamyká — uživatel může pokračovat). Vrací True, pokud byl zámek cizí."""
+        try:
+            other = projectlock.held_by_other(project_dir)
+        except Exception:
+            other = None
+        if not other:
+            return False
+        QMessageBox.warning(
+            self, "⚠️ Projekt už někdo používá",
+            "Nad touto projektovou složkou pracuje (nebo nedávno pracoval) "
+            "někdo jiný z jiného místa:\n\n"
+            f"    {projectlock.describe(other)}\n\n"
+            "Jde o tzv. soft-lock — můžeš pokračovat, ale POZOR: souběžné úpravy "
+            "se mohou navzájem přepsat. Doporučení: domluv se, kdo složku právě "
+            "edituje, nebo počkej, až druhý skončí.")
+        return True
+
+    def _acquire_project_lock(self):
+        """Získá/obnoví náš zámek nad aktuální složkou a nastartuje heartbeat."""
+        d = self._project_dir()
+        if not d:
+            return
+        try:
+            from . import VERSION as ver
+        except Exception:
+            ver = ""
+        projectlock.acquire(d, app_version=ver)
+        self._start_lock_heartbeat()
+
+    def _start_lock_heartbeat(self):
+        """Periodicky obnovuje časové razítko zámku, ať druzí vidí aktivitu."""
+        from PySide6.QtCore import QTimer
+        if getattr(self, "_lock_timer", None) is None:
+            self._lock_timer = QTimer(self)
+            self._lock_timer.setInterval(60_000)  # 60 s
+            self._lock_timer.timeout.connect(self._heartbeat_lock)
+        if not self._lock_timer.isActive():
+            self._lock_timer.start()
+
+    def _heartbeat_lock(self):
+        d = self._project_dir()
+        if d:
+            try:
+                projectlock.refresh(d)
+            except Exception:
+                pass
+
+    def _release_project_lock(self):
+        """Uvolní náš zámek (při přepnutí/zavření projektu)."""
+        d = self._project_dir()
+        if d:
+            try:
+                projectlock.release(d)
+            except Exception:
+                pass
+
     def _update_run_controls(self):
         running = self.scan_manager.is_running
         active = self.run_history.active()
@@ -2912,6 +2981,7 @@ class NmapScannerApp(QWidget):
             return
         if self.current_project_path:
             self.auto_save_project()
+            self._release_project_lock()  # uvolnit zámek staré složky před přepnutím
         recent = self.settings.value("recent_projects", [])
         if not isinstance(recent, list):
             recent = []
@@ -2925,6 +2995,7 @@ class NmapScannerApp(QWidget):
                 self.import_project(dlg.choice)
 
     def _reset_to_empty_project(self):
+        self._release_project_lock()  # uvolnit zámek předchozí složky
         self.current_project_path = None
         self.run_history = RunHistory()
         self.viewing_run_id = None
@@ -2980,6 +3051,9 @@ class NmapScannerApp(QWidget):
             self.add_to_recent_projects(self.current_project_path)
             self.settings.setValue("last_project_path", self.current_project_path)
             self._update_project_path_label()
+            # Soft-lock nad novou složkou (varuj, pokud ji už drží někdo jiný).
+            self._warn_if_locked(str(paths.root))
+            self._acquire_project_lock()
             self.status_label.setText(f"Projekt uložen do {paths.root}")
             self.worker_signals.log.emit("export", f"Projekt úspěšně uložen do složky {paths.root}.")
         except Exception as e:
@@ -3073,6 +3147,11 @@ class NmapScannerApp(QWidget):
 
             progress.setValue(total_steps)
             progress.close()
+
+            # Soft-lock: varovat, pokud složku drží čerstvý zámek jiné instance,
+            # a převzít/obnovit vlastní zámek + heartbeat.
+            self._warn_if_locked(os.path.dirname(path))
+            self._acquire_project_lock()
 
             # Hned ověřit, že do složky projektu lze zapisovat — když ne (Plocha/
             # iCloud blokované macOS TCC), varovat DŘÍV, než uživatel přijde o data.
@@ -4973,6 +5052,14 @@ class NmapScannerApp(QWidget):
                     event.ignore()
                     return
         # (dont_save_btn → save_fn zůstává None, jen se zavře)
+
+        # Soft-lock: zastavit heartbeat a uvolnit náš zámek nad složkou.
+        try:
+            if getattr(self, "_lock_timer", None) is not None:
+                self._lock_timer.stop()
+            self._release_project_lock()
+        except Exception:
+            pass
 
         # --- Zavírací sekvence s progress dialogem ---
         prog = QProgressDialog("Zavírám aplikaci…", None, 0, 3, self)
