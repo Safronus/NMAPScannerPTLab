@@ -55,10 +55,11 @@ class _FeedWorker(QThread):
                 except Exception as e:  # noqa: BLE001
                     self.line.emit(f"⚠️ {e}")
             elif self.action == "nvd":
-                self.line.emit("Mažu cache NVD CVE…")
+                self.line.emit("Mažu cache NVD CVE a CVE-dle-verze…")
                 try:
-                    if os.path.exists(enr._NVD_CACHE):
-                        os.remove(enr._NVD_CACHE)
+                    for p in (enr._NVD_CACHE, enr._VCVE_CACHE):
+                        if os.path.exists(p):
+                            os.remove(p)
                     self.line.emit("✅ NVD cache vyprázdněna (nové dotazy půjdou znovu na NVD).")
                 except Exception as e:  # noqa: BLE001
                     self.line.emit(f"⚠️ {e}")

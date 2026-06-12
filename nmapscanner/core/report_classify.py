@@ -84,6 +84,7 @@ CATEGORY = {
     "ffuf": ("Directory fuzzing (ffuf)", "Directory fuzzing (ffuf)"),
     "webserver": ("Webserver", "Web server"),
     "eol": ("Konec podpory (EOL)", "End-of-Life software"),
+    "known_cve": ("Známé CVE dle verze", "Known CVEs by version"),
     "zap": ("OWASP ZAP", "OWASP ZAP"),
 }
 
@@ -646,6 +647,83 @@ def build_eol(scan_results, start_idx=1, lang="cs"):
     return out, idx
 
 
+def build_known_cves(scan_results, start_idx=1, lang="cs"):
+    """Nálezy z CVE objevených dle verze služby (NVD CPE + Vulners) — i bez vuln
+    skriptu. Data z ``enrichment.version_cve`` (key=ip:port → [CVE]) a
+    ``enrichment.cve`` (CVE → {cvss,severity,description,exploit})."""
+    out = []
+    idx = start_idx
+    enr = scan_results.get("enrichment", {}) or {}
+    vmap = enr.get("version_cve", {}) or {}
+    cmap = enr.get("cve", {}) or {}
+    if not vmap:
+        return out, idx
+    # mapování ip:port → banner služby (pro popis)
+    banners = {}
+    for proto in ("tcp", "udp"):
+        for ip, pnum, info in _iter_open_ports(scan_results, proto):
+            b = " ".join(x for x in [info.get("product", ""), info.get("version", "")] if x).strip()
+            banners[f"{ip}:{pnum}"] = b
+    _SEV_ORDER = {"INFO": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+    for key, cve_ids in vmap.items():
+        banner = banners.get(key, "")
+        for cve_id in cve_ids:
+            cd = cmap.get(cve_id, {}) or {}
+            sev = cd.get("severity") or "MEDIUM"
+            cvss = cd.get("cvss")
+            expl = cd.get("exploit") or {}
+            # OWASP A06 — zranitelné a zastaralé komponenty
+            owasp = "A06"
+            badge = ""
+            if expl.get("kev"):
+                badge = ("🔴 AKTIVNĚ ZNEUŽÍVÁNO (CISA KEV)" if lang == "cs"
+                         else "🔴 ACTIVELY EXPLOITED (CISA KEV)")
+                floor = "CRITICAL" if expl.get("ransomware") else "HIGH"
+                if _SEV_ORDER.get(sev, 0) < _SEV_ORDER[floor]:
+                    sev = floor
+            elif expl.get("has_exploit"):
+                badge = "🟠 EXPLOIT K DISPOZICI" if lang == "cs" else "🟠 EXPLOIT AVAILABLE"
+                if _SEV_ORDER.get(sev, 0) < _SEV_ORDER["HIGH"]:
+                    sev = "HIGH"
+            head = f"{badge} — " if badge else ""
+            title = (f"{head}{cve_id} — {banner or 'služba'}",
+                     f"{head}{cve_id} — {banner or 'service'}")
+            desc = ("Pro detekovanou verzi služby je evidováno známé CVE. Nález je "
+                    "odvozen z verze (CPE/NVD), ne z aktivního ověření — doporučujeme "
+                    "potvrdit a opravit.",
+                    "A known CVE is recorded for the detected service version. This finding "
+                    "is derived from the version (CPE/NVD), not active verification — "
+                    "confirm and remediate.")
+            ev = f"{cve_id}"
+            if cvss is not None:
+                ev += f" | CVSS {cvss}"
+            if cd.get("description"):
+                ev += f"\n{cd['description']}"
+            ev += f"\nNVD: {lib.cve_link('nvd', cve_id)}"
+            parts = []
+            if expl.get("kev"):
+                parts.append((f"CISA KEV od {expl.get('kev_date','')}." if lang == "cs"
+                              else f"In CISA KEV since {expl.get('kev_date','')}."))
+            if expl.get("epss") is not None:
+                parts.append(f"EPSS {expl['epss']*100:.1f} %." if lang == "cs"
+                             else f"EPSS {expl['epss']*100:.1f}%.")
+            if parts:
+                ev += "\n⚠️ " + " ".join(parts)
+            rec = (("Aktualizujte komponentu na opravenou verzi; ověřte zranitelnost a "
+                    "sledujte NVD." if lang == "cs" else
+                    "Update the component to a fixed version; verify and track NVD."))
+            if badge:
+                rec = (("PRIORITNĚ opravit — existuje exploit. " if lang == "cs"
+                        else "Patch as PRIORITY — an exploit exists. ") + rec)
+            f = _mk(idx, title, sev, owasp, CATEGORY["known_cve"], key, desc, lang,
+                    evidence=ev, recommendation=rec)
+            if expl:
+                f["exploit"] = expl
+            out.append(f)
+            idx += 1
+    return out, idx
+
+
 # Mapování názvu sekce -> stavitel
 SECTION_BUILDERS = {
     "ports": build_ports,
@@ -656,10 +734,12 @@ SECTION_BUILDERS = {
     "ffuf": build_ffuf,
     "webserver": build_webserver,
     "eol": build_eol,
+    "known_cve": build_known_cves,
     "zap": build_zap,
 }
 
-ALL_SECTIONS = ["ports", "services", "vulns", "tls", "headers", "ffuf", "webserver", "eol", "zap"]
+ALL_SECTIONS = ["ports", "services", "vulns", "tls", "headers", "ffuf", "webserver",
+                "eol", "known_cve", "zap"]
 
 
 def section_title(key, lang="cs"):
@@ -698,6 +778,19 @@ def _filter_scan_results_for_ip(scan_results, ip):
         zsub = {k: v for k, v in zap.items() if ip in str(k)}
         if zsub:
             out["zap"] = zsub
+    # enrichment: eol/version_cve klíčováno "ip:port" → filtrovat; cve mapa celá
+    enr = scan_results.get("enrichment", {}) or {}
+    if enr:
+        sub = {}
+        for ek in ("eol", "version_cve"):
+            d = enr.get(ek, {}) or {}
+            fd = {k: v for k, v in d.items() if str(k).split(":")[0] == ip}
+            if fd:
+                sub[ek] = fd
+        if enr.get("cve"):
+            sub["cve"] = enr["cve"]  # globální mapa CVE→{cvss,severity,exploit}
+        if sub:
+            out["enrichment"] = sub
     return out
 
 

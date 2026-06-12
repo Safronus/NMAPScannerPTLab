@@ -20,9 +20,11 @@ _NVD_CACHE = os.path.join(CACHE_DIR, "nvd_cache.json")
 _EOL_CACHE = os.path.join(CACHE_DIR, "eol_cache.json")
 _KEV_CACHE = os.path.join(CACHE_DIR, "kev_cache.json")
 _EPSS_CACHE = os.path.join(CACHE_DIR, "epss_cache.json")
+_VCVE_CACHE = os.path.join(CACHE_DIR, "version_cve_cache.json")
 _EOL_TTL = 14 * 24 * 3600   # 14 dní
 _KEV_TTL = 24 * 3600        # 1 den (katalog se aktualizuje denně)
 _EPSS_TTL = 3 * 24 * 3600   # 3 dny
+_VCVE_TTL = 3 * 24 * 3600   # 3 dny (CVE dle verze)
 
 NVD_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0?cveId={id}"
 EOL_URL = "https://endoflife.date/api/{slug}.json"
@@ -169,6 +171,22 @@ def _http_get_json(url, timeout=10, api_key=None):
     return r.json()
 
 
+def _extract_cvss(cve):
+    """Z NVD CVE objektu vytáhne nejlepší dostupné base score (v4 → v3.1 → v3 → v2)."""
+    metrics = cve.get("metrics", {})
+    for key in ("cvssMetricV40", "cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
+        if key in metrics and metrics[key]:
+            return metrics[key][0].get("cvssData", {}).get("baseScore")
+    return None
+
+
+def _extract_desc(cve):
+    for d in cve.get("descriptions", []):
+        if d.get("lang") == "en":
+            return d.get("value", "")
+    return ""
+
+
 def nvd_lookup(cve_id, timeout=12, api_key=None, force=False):
     """Vrátí {'cvss','severity','description'} pro CVE z NVD (cachované), nebo None."""
     cve_id = (cve_id or "").upper()
@@ -183,24 +201,166 @@ def nvd_lookup(cve_id, timeout=12, api_key=None, force=False):
         if not vulns:
             return None
         cve = vulns[0]["cve"]
-        metrics = cve.get("metrics", {})
-        score = None
-        for key in ("cvssMetricV40", "cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
-            if key in metrics and metrics[key]:
-                score = metrics[key][0].get("cvssData", {}).get("baseScore")
-                break
-        desc = ""
-        for d in cve.get("descriptions", []):
-            if d.get("lang") == "en":
-                desc = d.get("value", "")
-                break
+        score = _extract_cvss(cve)
         result = {"cvss": score, "severity": cvss_to_severity(score),
-                  "description": desc[:500]}
+                  "description": _extract_desc(cve)[:500]}
         cache[cve_id] = result
         _save(_NVD_CACHE, cache)
         return result
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+#  CVE podle verze služby (NVD CPE match + Vulners fallback)
+# ---------------------------------------------------------------------------
+# nmap produkt (lowercase substring) -> CPE 2.3 prefix "cpe:2.3:a:vendor:product".
+# Pořadí záleží — specifičtější klíče dřív (řešeno tříděním dle délky).
+CPE_MAP = {
+    "apache tomcat": "cpe:2.3:a:apache:tomcat", "coyote": "cpe:2.3:a:apache:tomcat",
+    "tomcat": "cpe:2.3:a:apache:tomcat",
+    "apache httpd": "cpe:2.3:a:apache:http_server",
+    "apache http": "cpe:2.3:a:apache:http_server",
+    "nginx": "cpe:2.3:a:nginx:nginx", "openssh": "cpe:2.3:a:openbsd:openssh",
+    "openssl": "cpe:2.3:a:openssl:openssl",
+    "proftpd": "cpe:2.3:a:proftpd:proftpd", "vsftpd": "cpe:2.3:a:vsftpd_project:vsftpd",
+    "pure-ftpd": "cpe:2.3:a:pureftpd:pure-ftpd",
+    "postfix": "cpe:2.3:a:postfix:postfix", "exim": "cpe:2.3:a:exim:exim",
+    "dovecot": "cpe:2.3:a:dovecot:dovecot", "sendmail": "cpe:2.3:a:proofpoint:sendmail",
+    "mariadb": "cpe:2.3:a:mariadb:mariadb", "mysql": "cpe:2.3:a:oracle:mysql",
+    "postgresql": "cpe:2.3:a:postgresql:postgresql",
+    "mongodb": "cpe:2.3:a:mongodb:mongodb", "redis": "cpe:2.3:a:redis:redis",
+    "memcached": "cpe:2.3:a:memcached:memcached",
+    "elasticsearch": "cpe:2.3:a:elastic:elasticsearch",
+    "microsoft iis": "cpe:2.3:a:microsoft:internet_information_services",
+    "iis": "cpe:2.3:a:microsoft:internet_information_services",
+    "php": "cpe:2.3:a:php:php", "wordpress": "cpe:2.3:a:wordpress:wordpress",
+    "drupal": "cpe:2.3:a:drupal:drupal", "joomla": "cpe:2.3:a:joomla:joomla",
+    "jenkins": "cpe:2.3:a:jenkins:jenkins", "grafana": "cpe:2.3:a:grafana:grafana",
+    "jira": "cpe:2.3:a:atlassian:jira", "confluence": "cpe:2.3:a:atlassian:confluence",
+    "samba": "cpe:2.3:a:samba:samba", "isc bind": "cpe:2.3:a:isc:bind",
+    "bind": "cpe:2.3:a:isc:bind", "lighttpd": "cpe:2.3:a:lighttpd:lighttpd",
+    "squid": "cpe:2.3:a:squid-cache:squid", "haproxy": "cpe:2.3:a:haproxy:haproxy",
+    "node.js": "cpe:2.3:a:nodejs:node.js", "nodejs": "cpe:2.3:a:nodejs:node.js",
+}
+
+
+def cpe_for(product_text):
+    """Vrátí CPE 2.3 prefix (cpe:2.3:a:vendor:product) pro produkt, nebo None."""
+    low = (product_text or "").lower()
+    for kw in sorted(CPE_MAP, key=len, reverse=True):
+        if kw in low:
+            return CPE_MAP[kw]
+    return None
+
+
+def _clean_version(version):
+    """Z banneru verze vytáhne čisté X.Y.Z (NVD CPE nesnáší přípony typu '-ubuntu')."""
+    m = __import__("re").match(r"\d+(?:\.\d+){0,3}", str(version or "").strip())
+    return m.group(0) if m else ""
+
+
+def nvd_cves_for_version(product_text, version, api_key=None, max_results=12,
+                         timeout=20, force=False):
+    """Najde CVE platná pro daný produkt+verzi přes NVD CPE match (cachované).
+
+    Vrací list ``[{'cve','cvss','severity'}]`` seřazený dle CVSS sestupně (cap
+    ``max_results``), nebo None. Šum se omezuje přesnou shodou verze (CPE)."""
+    cpe = cpe_for(product_text)
+    ver = _clean_version(version)
+    if not cpe or not ver:
+        return None
+    vms = f"{cpe}:{ver}"
+    cache = _load(_VCVE_CACHE)
+    key = "nvd:" + vms
+    entry = cache.get(key)
+    fresh = entry and (time.time() - entry.get("_ts", 0) < _VCVE_TTL)
+    if entry and fresh and not force:
+        return entry.get("data")
+    try:
+        url = ("https://services.nvd.nist.gov/rest/json/cves/2.0"
+               f"?virtualMatchString={vms}&resultsPerPage=200")
+        data = _http_get_json(url, timeout, api_key)
+        out = []
+        for v in data.get("vulnerabilities", []):
+            cve = v.get("cve", {})
+            cid = cve.get("id")
+            if not cid:
+                continue
+            score = _extract_cvss(cve)
+            out.append({"cve": cid.upper(), "cvss": score,
+                        "severity": cvss_to_severity(score),
+                        "description": _extract_desc(cve)[:300]})
+        out.sort(key=lambda x: (x["cvss"] or 0), reverse=True)
+        out = out[:max_results]
+        cache[key] = {"_ts": time.time(), "data": out}
+        _save(_VCVE_CACHE, cache)
+        return out
+    except Exception:
+        return entry.get("data") if entry else None
+
+
+def vulners_cves_for_version(product_text, version, api_key, timeout=20, force=False):
+    """Fallback/augmentace přes Vulners (vyžaduje API klíč). Best-effort: při jakékoli
+    chybě vrací None. Vrací list ``[{'cve','cvss','severity'}]`` nebo None."""
+    if not api_key:
+        return None
+    ver = _clean_version(version)
+    low = (product_text or "").lower()
+    # vezmeme první „slovo" produktu jako název software pro Vulners
+    soft = ""
+    for kw in sorted(CPE_MAP, key=len, reverse=True):
+        if kw in low:
+            soft = kw.split()[-1]
+            break
+    if not soft or not ver:
+        return None
+    cache = _load(_VCVE_CACHE)
+    key = f"vulners:{soft}:{ver}"
+    entry = cache.get(key)
+    fresh = entry and (time.time() - entry.get("_ts", 0) < _VCVE_TTL)
+    if entry and fresh and not force:
+        return entry.get("data")
+    try:
+        url = ("https://vulners.com/api/v3/burp/software/"
+               f"?software={soft}&version={ver}&type=software&apiKey={api_key}")
+        data = _http_get_json(url, timeout)
+        if data.get("result") != "OK":
+            return None
+        out = []
+        for item in (data.get("data", {}) or {}).get("search", []):
+            src = item.get("_source", {}) or {}
+            score = (src.get("cvss", {}) or {}).get("score")
+            for cid in src.get("cvelist", []) or []:
+                out.append({"cve": str(cid).upper(), "cvss": score,
+                            "severity": cvss_to_severity(score)})
+        # dedup dle CVE, ponech nejvyšší skóre
+        best = {}
+        for r in out:
+            cur = best.get(r["cve"])
+            if not cur or (r["cvss"] or 0) > (cur["cvss"] or 0):
+                best[r["cve"]] = r
+        res = sorted(best.values(), key=lambda x: (x["cvss"] or 0), reverse=True)[:12]
+        cache[key] = {"_ts": time.time(), "data": res}
+        _save(_VCVE_CACHE, cache)
+        return res
+    except Exception:
+        return None
+
+
+def version_cve_lookup(product_text, version, nvd_api_key=None, vulners_api_key=None,
+                       max_results=12):
+    """Sloučí CVE z NVD (CPE) a Vulners (fallback) pro produkt+verzi. Vrací list
+    ``[{'cve','cvss','severity'}]`` seřazený dle CVSS, dedup, cap, nebo []."""
+    merged = {}
+    for src in (nvd_cves_for_version(product_text, version, api_key=nvd_api_key),
+                vulners_cves_for_version(product_text, version, vulners_api_key)):
+        for r in (src or []):
+            cur = merged.get(r["cve"])
+            if not cur or (r.get("cvss") or 0) > (cur.get("cvss") or 0):
+                merged[r["cve"]] = r
+    return sorted(merged.values(), key=lambda x: (x.get("cvss") or 0),
+                  reverse=True)[:max_results]
 
 
 def eol_lookup(product_text, version, timeout=12, force=False):

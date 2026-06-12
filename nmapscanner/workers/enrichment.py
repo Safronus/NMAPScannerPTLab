@@ -19,11 +19,14 @@ class EnrichmentWorker(QThread):
     finished = Signal(dict)            # {'cve': {...}, 'eol': {...}}
     log = Signal(str)
 
-    def __init__(self, targets, scan_results, nvd_api_key=None, use_searchsploit=False):
+    def __init__(self, targets, scan_results, nvd_api_key=None, use_searchsploit=False,
+                 vulners_api_key=None, discover_version_cves=True):
         super().__init__()
         self.targets = list(targets or [])
         self.scan_results = scan_results or {}
         self.nvd_api_key = nvd_api_key
+        self.vulners_api_key = vulners_api_key
+        self.discover_version_cves = discover_version_cves
         self.use_searchsploit = use_searchsploit
         self.is_running = True
 
@@ -63,8 +66,9 @@ class EnrichmentWorker(QThread):
 
     def run(self):
         services, cves = self._collect_jobs()
+        cves = set(cves)
         total = len(services) + len(cves)
-        result = {"cve": {}, "eol": {}}
+        result = {"cve": {}, "eol": {}, "version_cve": {}}
         done = 0
         if total == 0:
             self.log.emit("Žádné služby s verzí ani CVE k obohacení.")
@@ -81,17 +85,39 @@ class EnrichmentWorker(QThread):
                     result["eol"][key] = info
             except Exception as e:  # noqa: BLE001
                 self.log.emit(f"EOL {product}: {e}")
+            # CVE podle verze služby (NVD CPE + Vulners) — i bez vuln skriptu
+            if self.discover_version_cves:
+                try:
+                    found = enr.version_cve_lookup(
+                        product, version, nvd_api_key=self.nvd_api_key,
+                        vulners_api_key=self.vulners_api_key)
+                    if found:
+                        result["version_cve"][key] = []
+                        for r in found:
+                            cid = r["cve"]
+                            result["version_cve"][key].append(cid)
+                            # přednačíst severity/cvss do mapy CVE
+                            result["cve"].setdefault(cid, {}).update(
+                                {k: r[k] for k in ("cvss", "severity", "description")
+                                 if k in r})
+                            cves.add(cid)
+                        self.log.emit(
+                            f"🔎 {product} {version}: nalezeno {len(found)} CVE dle verze")
+                except Exception as e:  # noqa: BLE001
+                    self.log.emit(f"CVE dle verze {product}: {e}")
             done += 1
 
-        for cve in cves:
+        total = len(services) + len(cves)  # přepočet (přibyly CVE z verzí)
+        for cve in sorted(cves):
             if not self.is_running:
                 break
             self.progress.emit(f"NVD + exploity: {cve}", done, total)
-            info = {}
+            info = dict(result["cve"].get(cve, {}))  # zachovat data z verze
             try:
-                nvd = enr.nvd_lookup(cve, api_key=self.nvd_api_key)
-                if nvd:
-                    info.update(nvd)
+                if not info.get("severity"):
+                    nvd = enr.nvd_lookup(cve, api_key=self.nvd_api_key)
+                    if nvd:
+                        info.update(nvd)
             except Exception as e:  # noqa: BLE001
                 self.log.emit(f"NVD {cve}: {e}")
             try:

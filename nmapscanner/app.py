@@ -2383,8 +2383,14 @@ class NmapScannerApp(QWidget):
         targets = [t for t in dict.fromkeys(targets) if t]
         if not targets:
             return
+        from PySide6.QtCore import QSettings
         nvd_key = self._ensure_nvd_key()
-        self._enrich_worker = EnrichmentWorker(targets, self.scan_results, nvd_api_key=nvd_key)
+        st = QSettings("UTB", "NmapScannerApp")
+        vulners_key = (st.value("vulners_api_key", "") or "").strip() or None
+        discover = st.value("discover_version_cves", True, type=bool)
+        self._enrich_worker = EnrichmentWorker(
+            targets, self.scan_results, nvd_api_key=nvd_key,
+            vulners_api_key=vulners_key, discover_version_cves=discover)
         dlg = QProgressDialog("Obohacuji klasifikaci z internetu (NVD CVE + EOL)…",
                               "Zrušit", 0, 100, self)
         dlg.setWindowModality(Qt.WindowModal)
@@ -2410,6 +2416,7 @@ class NmapScannerApp(QWidget):
         enr = self.scan_results.setdefault("enrichment", {})
         enr.setdefault("cve", {}).update(result.get("cve", {}) or {})
         enr.setdefault("eol", {}).update(result.get("eol", {}) or {})
+        enr.setdefault("version_cve", {}).update(result.get("version_cve", {}) or {})
         try:
             self.auto_save_project()
         except Exception:
@@ -2417,8 +2424,10 @@ class NmapScannerApp(QWidget):
         n_cve = len(result.get("cve", {}) or {})
         n_eol = sum(1 for v in (result.get("eol", {}) or {}).values()
                     if isinstance(v, dict) and v.get("is_eol"))
+        n_ver = sum(len(v or []) for v in (result.get("version_cve", {}) or {}).values())
         self.status_label.setText(
-            f"🌐 Obohaceno: {n_cve} CVE z NVD, {n_eol} EOL nálezů. Klasifikace aktualizována.")
+            f"🌐 Obohaceno: {n_cve} CVE (z toho {n_ver} dle verze), {n_eol} EOL nálezů. "
+            "Klasifikace aktualizována.")
         ip = getattr(self, "_summary_ip", None) or (targets[0] if targets else None)
         if ip:
             try:

@@ -4,6 +4,23 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.14.0] - 2026-06-12
+
+### Přidáno
+- **Klasifikace zranitelností podle verze služby (real-time z internetu).** Při
+  obohacení se pro každou detekovanou službu (produkt + verze) vyhledají známá
+  CVE i bez nmap vuln skriptu:
+  - **NVD CPE match** — přesná shoda verze přes CPE 2.3 (mapa ~35 produktů:
+    nginx, Apache, Tomcat, OpenSSH, OpenSSL, MySQL/MariaDB, PHP, WordPress…),
+    bez klíče (rychlejší s NVD klíčem).
+  - **Vulners** (volitelně, vyžaduje API klíč) — doplňkový zdroj jako fallback.
+  - Nálezy jdou do nové oblasti **„Známé CVE dle verze"** (OWASP A06 — zranitelné
+    a zastaralé komponenty), s CVSS, popisem, odkazem na NVD a — díky 5.13.5 —
+    štítky existence exploitu (CISA KEV / EPSS) a navýšením závažnosti.
+  - Zapínatelné ve Správci knihovny klasifikací; výsledky cachované (TTL 3 dny),
+    omezené na top 12 CVE/službu dle CVSS (bez tichého ořezu — počet se loguje).
+- **Vulners API klíč** v nastavení (vedle NVD klíče), ukládá se lokálně mimo git.
+
 ## [5.13.8] - 2026-06-12
 
 ### Přidáno

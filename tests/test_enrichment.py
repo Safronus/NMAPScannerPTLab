@@ -104,6 +104,42 @@ def test_exploit_available_bumps_to_high():
     assert "EXPLOIT" in f["title"].upper()
 
 
+def test_cpe_for_and_clean_version():
+    assert enr.cpe_for("nginx 1.14.0") == "cpe:2.3:a:nginx:nginx"
+    assert enr.cpe_for("Apache httpd 2.4.41") == "cpe:2.3:a:apache:http_server"
+    assert enr.cpe_for("Apache Tomcat 8.5") == "cpe:2.3:a:apache:tomcat"  # delší klíč napřed
+    assert enr.cpe_for("Neznámý") is None
+    assert enr._clean_version("1.14.0-ubuntu1") == "1.14.0"
+    assert enr._clean_version("8.5p1") == "8.5"
+    assert enr._clean_version("nope") == ""
+
+
+def test_build_known_cves_from_version():
+    sr = {
+        "tcp": {"10.0.0.1": {"tcp": {"80": {"state": "open", "name": "http",
+                                            "product": "nginx", "version": "1.14.0"}}}},
+        "enrichment": {
+            "version_cve": {"10.0.0.1:80": ["CVE-2099-1", "CVE-2099-2"]},
+            "cve": {
+                "CVE-2099-1": {"cvss": 9.8, "severity": "CRITICAL",
+                               "exploit": {"kev": True, "kev_date": "2024-01-01",
+                                           "ransomware": True, "has_exploit": True, "epss": 0.9}},
+                "CVE-2099-2": {"cvss": 5.0, "severity": "MEDIUM", "exploit": {"has_exploit": False}},
+            }},
+    }
+    r = build_findings(sr, sections=["known_cve"])
+    assert r["total"] == 2
+    crit = [f for f in r["findings"] if "CVE-2099-1" in f["title"]][0]
+    assert crit["severity"] == "CRITICAL" and crit["owasp"] == "A06"
+    assert "KEV" in crit["title"]
+    med = [f for f in r["findings"] if "CVE-2099-2" in f["title"]][0]
+    assert med["severity"] == "MEDIUM"
+
+
+def test_build_known_cves_empty():
+    assert build_findings({"enrichment": {}}, sections=["known_cve"])["total"] == 0
+
+
 def test_cve_severity_from_enrichment():
     sr = {
         "vuln": {"10.0.0.1": {"tcp": {"445": {"script": {

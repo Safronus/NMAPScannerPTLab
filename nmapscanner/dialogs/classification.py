@@ -224,7 +224,26 @@ class ClassificationManagerDialog(QDialog):
         nvd_row.addWidget(save_key)
         v.addLayout(nvd_row)
 
+        vulners_row = QHBoxLayout()
+        vulners_row.addWidget(QLabel("Vulners API klíč (volitelné, CVE dle verze):"))
+        self.vulners_key_edit = QLineEdit(self._nvd_settings.value("vulners_api_key", "") or "")
+        self.vulners_key_edit.setPlaceholderText("získáš na vulners.com (free tier)")
+        self.vulners_key_edit.setEchoMode(QLineEdit.Password)
+        vulners_row.addWidget(self.vulners_key_edit, 1)
+        save_vk = QPushButton("Uložit klíč")
+        save_vk.clicked.connect(self._save_vulners_key)
+        vulners_row.addWidget(save_vk)
+        v.addLayout(vulners_row)
+
         from PySide6.QtWidgets import QCheckBox
+        self.discover_cve_chk = QCheckBox(
+            "Hledat známá CVE i podle verze služby (NVD CPE + Vulners) — i bez vuln skriptu")
+        self.discover_cve_chk.setChecked(
+            self._nvd_settings.value("discover_version_cves", True, type=bool))
+        self.discover_cve_chk.toggled.connect(
+            lambda on: self._nvd_settings.setValue("discover_version_cves", bool(on)))
+        v.addWidget(self.discover_cve_chk)
+
         self.auto_enrich_chk = QCheckBox(
             "Automaticky obohatit z internetu po dokončení skenu (CVE z NVD + EOL + exploity)")
         self.auto_enrich_chk.setChecked(
@@ -251,7 +270,12 @@ class ClassificationManagerDialog(QDialog):
 
     def _save_nvd_key(self):
         self._nvd_settings.setValue("nvd_api_key", self.nvd_key_edit.text().strip())
+        self._nvd_settings.setValue("nvd_key_prompted", True)
         QMessageBox.information(self, "NVD", "API klíč uložen.")
+
+    def _save_vulners_key(self):
+        self._nvd_settings.setValue("vulners_api_key", self.vulners_key_edit.text().strip())
+        QMessageBox.information(self, "Vulners", "API klíč uložen.")
 
     def _reload(self):
         self.tree.clear()
