@@ -4,6 +4,15 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.13.6] - 2026-06-12
+
+### Přidáno
+- **Vyžádání NVD API klíče, když chybí.** Při prvním obohacení bez nastaveného
+  klíče se zobrazí jednorázový dialog s odkazem na bezplatnou registraci a
+  možností „Uložit a pokračovat" nebo „Pokračovat bez klíče" + „Příště se neptat".
+  Klíč se ukládá persistentně jen lokálně na daném PC (QSettings →
+  `~/Library/Preferences` na macOS), nikdy se nezapisuje do projektu ani do gitu.
+
 ## [5.13.5] - 2026-06-12
 
 ### Přidáno

@@ -2310,6 +2310,54 @@ class NmapScannerApp(QWidget):
                        lambda: self.enrich_targets(targets))
         menu.exec(self.status_matrix.viewport().mapToGlobal(pos))
 
+    def _ensure_nvd_key(self):
+        """Vrátí uložený NVD API klíč. Pokud žádný není a uživatel se ještě nerozhodl,
+        jednorázově ho vyžádá. Klíč se ukládá do QSettings (persistentně na tomto PC,
+        macOS: ~/Library/Preferences, mimo git), nikdy se nezapisuje do projektu/repa."""
+        from PySide6.QtCore import QSettings
+        st = QSettings("UTB", "NmapScannerApp")
+        key = (st.value("nvd_api_key", "") or "").strip()
+        if key:
+            return key
+        if st.value("nvd_key_prompted", False, type=bool):
+            return None  # uživatel se už rozhodl pokračovat bez klíče
+        # Jednorázový dialog
+        from PySide6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QLineEdit,
+                                       QCheckBox, QDialogButtonBox)
+        from PySide6.QtCore import Qt
+        dlg = QDialog(self)
+        dlg.setWindowTitle("NVD API klíč (volitelné)")
+        lay = QVBoxLayout(dlg)
+        info = QLabel(
+            "Pro obohacení CVE z NVD doporučujeme API klíč — bez něj funguje také,\n"
+            "ale pomaleji (rate-limit ~5 dotazů/30 s; s klíčem ~50/30 s).\n\n"
+            "Klíč získáš zdarma na:\n"
+            "https://nvd.nist.gov/developers/request-an-api-key\n\n"
+            "Uloží se jen lokálně na tomto počítači (mimo git/projekt).")
+        info.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        lay.addWidget(info)
+        edit = QLineEdit()
+        edit.setEchoMode(QLineEdit.Password)
+        edit.setPlaceholderText("vlož NVD API klíč (nebo nech prázdné a pokračuj)")
+        lay.addWidget(edit)
+        dont = QCheckBox("Příště se neptat (pokračovat bez klíče)")
+        lay.addWidget(dont)
+        bb = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Save).setText("Uložit a pokračovat")
+        bb.button(QDialogButtonBox.Cancel).setText("Pokračovat bez klíče")
+        lay.addWidget(bb)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        dlg.exec()
+        entered = edit.text().strip()
+        if entered:
+            st.setValue("nvd_api_key", entered)
+            st.setValue("nvd_key_prompted", True)
+            return entered
+        if dont.isChecked():
+            st.setValue("nvd_key_prompted", True)
+        return None
+
     def enrich_targets(self, targets):
         """Stáhne z internetu CVSS k nalezeným CVE (NVD) a zjistí End-of-Life software
         (endoflife.date), uloží do projektu a reklasifikuje. Síť běží na pozadí."""
@@ -2320,8 +2368,7 @@ class NmapScannerApp(QWidget):
         targets = [t for t in dict.fromkeys(targets) if t]
         if not targets:
             return
-        from PySide6.QtCore import QSettings
-        nvd_key = QSettings("UTB", "NmapScannerApp").value("nvd_api_key", "") or None
+        nvd_key = self._ensure_nvd_key()
         self._enrich_worker = EnrichmentWorker(targets, self.scan_results, nvd_api_key=nvd_key)
         dlg = QProgressDialog("Obohacuji klasifikaci z internetu (NVD CVE + EOL)…",
                               "Zrušit", 0, 100, self)
