@@ -606,6 +606,16 @@ class NmapScannerApp(QWidget):
         self.classlib_btn.clicked.connect(self.open_classification_manager)
         actions_layout.addWidget(self.classlib_btn)
 
+        self.updates_btn = QPushButton("⬆️")
+        self.updates_btn.setToolTip("Správce aktualizací — nástroje (nmap/ffuf/ZAP/TLS), datové zdroje a knihovna")
+        self.updates_btn.setFixedSize(35, 35)
+        self.updates_btn.setStyleSheet("""
+            QPushButton { font-size: 18px; border: 1px solid #CCCCCC; border-radius: 5px; background-color: #F9F9F9; color: #16233f; }
+            QPushButton:hover { background-color: #E8E8E8; }
+        """)
+        self.updates_btn.clicked.connect(self.open_update_manager)
+        actions_layout.addWidget(self.updates_btn)
+
         # Přidat stretch aby akce byly vlevo
         actions_layout.addStretch()
         
@@ -983,6 +993,11 @@ class NmapScannerApp(QWidget):
                 self.on_matrix_ip_clicked_refresh(ip)
             except Exception:
                 pass
+
+    def open_update_manager(self):
+        """Otevře správce aktualizací (nástroje, datové zdroje, knihovna/aplikace)."""
+        from .dialogs.updates import UpdateManagerDialog
+        UpdateManagerDialog(self).exec()
 
     def open_report_manager(self):
         """Otevře manažer reportů (přehled všech reportů v projektu)."""

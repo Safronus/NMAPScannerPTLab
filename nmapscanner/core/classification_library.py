@@ -69,6 +69,20 @@ def reload():
     return library()
 
 
+def rule_count():
+    """Počet klasifikačních pravidel v efektivní knihovně (napříč kategoriemi)."""
+    lib = library()
+    total = 0
+    for key, val in lib.items():
+        if key in ("impact_by_severity", "cve_links"):
+            continue
+        if isinstance(val, dict):
+            total += len(val)
+        elif isinstance(val, list):
+            total += len(val)
+    return total
+
+
 def save_user_library(data):
     """Uloží uživatelskou override knihovnu (a invaliduje cache)."""
     p = user_library_path()

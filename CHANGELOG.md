@@ -4,6 +4,20 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.13.7] - 2026-06-12
+
+### Přidáno
+- **Správce aktualizací** (nové tlačítko ⬆️ v toolbaru) — tři záložky:
+  - **Nástroje** — detekce nainstalované verze nmap, ffuf, OWASP ZAP,
+    testssl.sh, sslscan, SSLyze a searchsploit (ExploitDB) + tlačítko
+    Instalovat/Aktualizovat (brew/apt/pip dle platformy) s živým výstupem,
+    nebo zkopírování příkazu. Nic se nespouští automaticky.
+  - **Datové zdroje** — obnova online cache klasifikace: stažení aktuálního
+    katalogu CISA KEV a vyprázdnění cache EOL / NVD / EPSS (nové zranitelnosti
+    a konce podpory se tak natáhnou čerstvé při dalším obohacení).
+  - **Aplikace & knihovna** — kontrola novější verze aplikace i referenční
+    knihovny klasifikací přes git (fetch/pull) a počet pravidel knihovny.
+
 ## [5.13.6] - 2026-06-12
 
 ### Přidáno
