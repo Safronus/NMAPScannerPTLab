@@ -207,24 +207,42 @@ def validate_nvd_key(api_key, timeout=12):
         return False, f"Chyba sítě: {e}"
 
 
+_VULNERS_HEADERS = {"Content-Type": "application/json", "User-Agent": "NMAPScanner-PTLab"}
+VULNERS_SEARCH_URL = "https://vulners.com/api/v3/search/lucene/"
+VULNERS_AUDIT_URL = "https://vulners.com/api/v4/audit/software"
+
+
 def validate_vulners_key(api_key, timeout=12):
-    """Ověří platnost Vulners API klíče drobným dotazem. Vrací (ok: bool, zpráva: str)."""
-    if not (api_key or "").strip():
+    """Ověří platnost Vulners API klíče drobným dotazem. Vrací (ok: bool, zpráva: str).
+
+    Vulners v3/v4 vyžaduje klíč v hlavičce ``X-Api-Key`` a metodu POST — starý
+    způsob (``apiKey`` v URL přes GET) vrací HTTP 403."""
+    key = (api_key or "").strip()
+    if not key:
         return False, "Klíč není zadán."
     try:
         import requests
-        url = ("https://vulners.com/api/v3/burp/software/"
-               f"?software=nginx&version=1.0.0&type=software&apiKey={api_key.strip()}")
-        r = requests.get(url, timeout=timeout, headers={"User-Agent": "NMAPScanner-PTLab"})
-        try:
-            data = r.json()
-        except Exception:
-            return False, f"Neočekávaná odpověď Vulners (HTTP {r.status_code})."
-        if data.get("result") == "OK":
-            return True, "Klíč je platný — Vulners požadavek přijat."
-        err = ((data.get("data", {}) or {}).get("error")
-               or data.get("data") or data.get("result") or "neznámá chyba")
-        return False, f"Vulners klíč odmítnut: {err}"
+        headers = dict(_VULNERS_HEADERS, **{"X-Api-Key": key})
+        r = requests.post(VULNERS_SEARCH_URL, json={"query": "cvss:9", "size": 1},
+                          headers=headers, timeout=timeout)
+        if r.status_code == 200:
+            try:
+                data = r.json()
+            except Exception:
+                return True, "Klíč přijat (HTTP 200)."
+            if data.get("result") == "OK":
+                return True, "Klíč je platný — Vulners požadavek přijat."
+            err = ((data.get("data", {}) or {}).get("error")
+                   or data.get("result") or "neznámá chyba")
+            return False, f"Vulners klíč odmítnut: {err}"
+        if r.status_code == 401:
+            return False, "Klíč odmítnut (HTTP 401 — neplatný API klíč)."
+        if r.status_code == 403:
+            return False, ("Přístup odepřen (HTTP 403) — klíč je neplatný, nebo tvůj "
+                           "tarif nemá přístup k tomuto API.")
+        if r.status_code == 429:
+            return False, "Překročen limit dotazů (HTTP 429) — zkus to za chvíli."
+        return False, f"Neočekávaná odpověď Vulners (HTTP {r.status_code})."
     except Exception as e:  # noqa: BLE001
         return False, f"Chyba sítě: {e}"
 
@@ -342,52 +360,75 @@ def nvd_cves_for_version(product_text, version, api_key=None, max_results=12,
         return entry.get("data") if entry else None
 
 
+def _deep_find_cvss(obj):
+    """Rekurzivně najde první rozumné CVSS base score (0–10) ve vnořené struktuře."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k in ("score", "baseScore") and isinstance(v, (int, float)):
+                if 0 <= v <= 10:
+                    return float(v)
+            found = _deep_find_cvss(v)
+            if found is not None:
+                return found
+    elif isinstance(obj, list):
+        for v in obj:
+            found = _deep_find_cvss(v)
+            if found is not None:
+                return found
+    return None
+
+
 def vulners_cves_for_version(product_text, version, api_key, timeout=20, force=False):
-    """Fallback/augmentace přes Vulners (vyžaduje API klíč). Best-effort: při jakékoli
-    chybě vrací None. Vrací list ``[{'cve','cvss','severity'}]`` nebo None."""
+    """Fallback/augmentace přes Vulners audit (v4, vyžaduje API klíč v hlavičce
+    ``X-Api-Key``). Best-effort: při jakékoli chybě vrací None. Vrací list
+    ``[{'cve','cvss','severity'}]`` nebo None."""
     if not api_key:
         return None
+    cpe = cpe_for(product_text)
     ver = _clean_version(version)
-    low = (product_text or "").lower()
-    # vezmeme první „slovo" produktu jako název software pro Vulners
-    soft = ""
-    for kw in sorted(CPE_MAP, key=len, reverse=True):
-        if kw in low:
-            soft = kw.split()[-1]
-            break
-    if not soft or not ver:
+    if not cpe or not ver:
         return None
+    cpe_full = f"{cpe}:{ver}"
     cache = _load(_VCVE_CACHE)
-    key = f"vulners:{soft}:{ver}"
+    key = f"vulners:{cpe_full}"
     entry = cache.get(key)
     fresh = entry and (time.time() - entry.get("_ts", 0) < _VCVE_TTL)
     if entry and fresh and not force:
         return entry.get("data")
     try:
-        url = ("https://vulners.com/api/v3/burp/software/"
-               f"?software={soft}&version={ver}&type=software&apiKey={api_key}")
-        data = _http_get_json(url, timeout)
-        if data.get("result") != "OK":
-            return None
-        out = []
-        for item in (data.get("data", {}) or {}).get("search", []):
-            src = item.get("_source", {}) or {}
-            score = (src.get("cvss", {}) or {}).get("score")
-            for cid in src.get("cvelist", []) or []:
-                out.append({"cve": str(cid).upper(), "cvss": score,
-                            "severity": cvss_to_severity(score)})
-        # dedup dle CVE, ponech nejvyšší skóre
+        import requests
+        headers = dict(_VULNERS_HEADERS, **{"X-Api-Key": api_key.strip()})
+        body = {"software": [cpe_full], "fields": ["cvelistMetrics"]}
+        r = requests.post(VULNERS_AUDIT_URL, json=body, headers=headers, timeout=timeout)
+        if r.status_code != 200:
+            return entry.get("data") if entry else None
+        data = r.json()
+        # najít seznam zranitelností (v4 zabaluje do 'data'/'result' různě)
+        vulns = None
+        for container in (data, data.get("data") if isinstance(data, dict) else None,
+                          data.get("result") if isinstance(data, dict) else None):
+            if isinstance(container, dict) and isinstance(container.get("vulnerabilities"), list):
+                vulns = container["vulnerabilities"]
+                break
+        if vulns is None:
+            return entry.get("data") if entry else None
         best = {}
-        for r in out:
-            cur = best.get(r["cve"])
-            if not cur or (r["cvss"] or 0) > (cur["cvss"] or 0):
-                best[r["cve"]] = r
-        res = sorted(best.values(), key=lambda x: (x["cvss"] or 0), reverse=True)[:12]
+        for v in vulns:
+            if not isinstance(v, dict):
+                continue
+            cid = str(v.get("id", "")).upper()
+            if not cid.startswith("CVE-"):
+                continue
+            score = _deep_find_cvss(v.get("cvelistMetrics")) or _deep_find_cvss(v)
+            cur = best.get(cid)
+            if not cur or (score or 0) > (cur.get("cvss") or 0):
+                best[cid] = {"cve": cid, "cvss": score, "severity": cvss_to_severity(score)}
+        res = sorted(best.values(), key=lambda x: (x.get("cvss") or 0), reverse=True)[:12]
         cache[key] = {"_ts": time.time(), "data": res}
         _save(_VCVE_CACHE, cache)
         return res
     except Exception:
-        return None
+        return entry.get("data") if entry else None
 
 
 def version_cve_lookup(product_text, version, nvd_api_key=None, vulners_api_key=None,

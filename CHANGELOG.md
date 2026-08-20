@@ -4,6 +4,16 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.15.2] - 2026-06-12
+
+### Opraveno
+- **Ověření Vulners klíče vracelo HTTP 403.** Vulners v3/v4 vyžaduje API klíč
+  v hlavičce `X-Api-Key` a metodu POST — původní volání posílalo `apiKey` v URL
+  přes GET, což API odmítá. Ověření nyní volá POST `…/api/v3/search/lucene/`
+  s hlavičkou `X-Api-Key` a hlásí konkrétní příčinu (401/403/429/síť).
+- **Vyhledávání CVE dle verze přes Vulners** převedeno na správný endpoint
+  `POST …/api/v4/audit/software` (CPE + `X-Api-Key`), s odolným parsováním CVSS.
+
 ## [5.15.1] - 2026-06-12
 
 ### Přidáno
