@@ -248,6 +248,10 @@ class ClassificationManagerDialog(QDialog):
         self.nvd_test_btn.setToolTip("Ověří klíč dotazem na NVD")
         self.nvd_test_btn.clicked.connect(self._test_nvd_key)
         nvd_row.addWidget(self.nvd_test_btn)
+        nvd_copy = QPushButton("⧉ Kopírovat")
+        nvd_copy.setToolTip("Zkopíruje NVD API klíč do schránky")
+        nvd_copy.clicked.connect(lambda: self._copy_key(self.nvd_key_edit, "NVD"))
+        nvd_row.addWidget(nvd_copy)
         self.nvd_status = QLabel()
         nvd_row.addWidget(self.nvd_status)
         v.addLayout(nvd_row)
@@ -266,6 +270,10 @@ class ClassificationManagerDialog(QDialog):
         self.vulners_test_btn.setToolTip("Ověří klíč dotazem na Vulners")
         self.vulners_test_btn.clicked.connect(self._test_vulners_key)
         vulners_row.addWidget(self.vulners_test_btn)
+        vk_copy = QPushButton("⧉ Kopírovat")
+        vk_copy.setToolTip("Zkopíruje Vulners API klíč do schránky")
+        vk_copy.clicked.connect(lambda: self._copy_key(self.vulners_key_edit, "Vulners"))
+        vulners_row.addWidget(vk_copy)
         self.vulners_status = QLabel()
         vulners_row.addWidget(self.vulners_status)
         v.addLayout(vulners_row)
@@ -303,6 +311,17 @@ class ClassificationManagerDialog(QDialog):
 
         self._info = info
         self._reload()
+
+    def _copy_key(self, edit, name):
+        """Zkopíruje obsah pole klíče do schránky (pole je maskované heslem)."""
+        from PySide6.QtWidgets import QApplication, QToolTip
+        from PySide6.QtGui import QCursor
+        key = edit.text().strip()
+        if not key:
+            QMessageBox.information(self, name, f"{name} API klíč není zadaný.")
+            return
+        QApplication.clipboard().setText(key)
+        QToolTip.showText(QCursor.pos(), f"✅ {name} API klíč zkopírován do schránky", edit)
 
     def _save_nvd_key(self):
         self._nvd_settings.setValue("nvd_api_key", self.nvd_key_edit.text().strip())

@@ -4,6 +4,13 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.15.1] - 2026-06-12
+
+### Přidáno
+- **Kopírování API klíčů do schránky** ve Správci knihovny klasifikací —
+  tlačítko „⧉ Kopírovat" u pole NVD i Vulners klíče (pole jsou maskovaná
+  heslem, takže ruční výběr nešel). Po zkopírování krátké potvrzení v tooltipu.
+
 ## [5.15.0] - 2026-06-12
 
 ### Přidáno
