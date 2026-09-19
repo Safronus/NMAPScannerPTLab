@@ -4,6 +4,14 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.17.9] - 2026-09-19
+
+### Změněno
+- **ffuf: rozbitý winget symlink (bez cíle) se už nepovažuje za nalezený** —
+  vrací se jen skutečně spustitelný soubor, takže při rozbité winget instalaci
+  appka jasně řekne „ffuf není" (a poradí) místo záhadné WinError 2. Řešení:
+  položit reálný `ffuf.exe` do složky aplikace (viz 5.17.8).
+
 ## [5.17.8] - 2026-09-19
 
 ### Přidáno

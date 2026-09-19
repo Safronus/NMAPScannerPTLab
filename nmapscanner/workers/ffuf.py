@@ -51,14 +51,11 @@ def find_ffuf():
     # Windows: sdílené hledání s toolcheck + rozresolvení symlinku na SPUSTITELNÝ
     # soubor (winget Links\ffuf.exe je symlink → Popen ho neumí spustit, WinError 2)
     try:
-        from ..core.toolcheck import _windows_bin_candidates, _resolve_real_exe, _path_present
+        from ..core.toolcheck import _windows_bin_candidates, _resolve_real_exe
         wcands = _windows_bin_candidates("ffuf", "ffuf.ffuf")
-        real = _resolve_real_exe(wcands)
-        if real:
-            return real
-        for c in wcands:
-            if _path_present(c):
-                return c
+        # Vrátit JEN skutečně spustitelný soubor — rozbitý symlink (winget bez
+        # cíle) nevracíme, ať pre-check jasně řekne „ffuf není" místo WinError 2.
+        return _resolve_real_exe(wcands)
     except Exception:
         pass
     return None
