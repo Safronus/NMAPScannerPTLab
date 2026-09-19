@@ -27,11 +27,8 @@ class _StartupCheckWorker(QThread):
             local = "?"
         remote = None
         try:
-            import requests
-            from .updates import GH_RAW_VER, _parse_version
-            txt = requests.get(GH_RAW_VER, timeout=12,
-                               headers={"User-Agent": "NMAPScanner-PTLab"}).text
-            remote = _parse_version(txt) or None
+            from .updates import fetch_remote_version
+            remote = fetch_remote_version(timeout=12)
         except Exception:
             remote = None
         res["app"] = {"local": local, "remote": remote}

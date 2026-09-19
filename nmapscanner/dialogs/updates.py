@@ -36,7 +36,29 @@ GH_OWNER = "Safronus"
 GH_REPO = "NMAPScannerPTLab"
 GH_BRANCH = "main"
 GH_RAW_VER = f"https://raw.githubusercontent.com/{GH_OWNER}/{GH_REPO}/{GH_BRANCH}/nmapscanner/__init__.py"
+GH_API_VER = f"https://api.github.com/repos/{GH_OWNER}/{GH_REPO}/contents/nmapscanner/__init__.py?ref={GH_BRANCH}"
 GH_ZIP = f"https://github.com/{GH_OWNER}/{GH_REPO}/archive/refs/heads/{GH_BRANCH}.zip"
+
+
+def fetch_remote_version(timeout=15):
+    """Zjistí nejnovější verzi z GitHubu. Zkusí raw (rychlé) a jako fallback
+    GitHub API contents (funguje i hned po zveřejnění repa, kdy raw ještě 404).
+    Vrací verzi ('X.Y.Z') nebo None."""
+    import requests
+    headers = {"User-Agent": "NMAPScanner-PTLab"}
+    try:
+        v = _parse_version(requests.get(GH_RAW_VER, timeout=timeout, headers=headers).text)
+        if v:
+            return v
+    except Exception:
+        pass
+    try:
+        import base64
+        j = requests.get(GH_API_VER, timeout=timeout, headers=headers).json()
+        txt = base64.b64decode(j.get("content", "") or "").decode("utf-8", "ignore")
+        return _parse_version(txt) or None
+    except Exception:
+        return None
 # Co při aktualizaci nikdy nepřepisovat (uživatelské / vygenerované / prostředí)
 _UPDATE_SKIP_DIRS = {".venv", ".git", "windows-package", "NMAPScannerPTLab.app",
                      "__pycache__", ".preview"}
@@ -62,16 +84,10 @@ class _AppUpdateWorker(QThread):
 
     def run(self):
         import requests
-        try:
-            self.line.emit("Zjišťuji nejnovější verzi na GitHubu…")
-            remote = _parse_version(
-                requests.get(GH_RAW_VER, timeout=20,
-                             headers={"User-Agent": "NMAPScanner-PTLab"}).text)
-        except Exception as e:  # noqa: BLE001
-            self.done.emit(False, f"Nepodařilo se zjistit verzi: {e}")
-            return
+        self.line.emit("Zjišťuji nejnovější verzi na GitHubu…")
+        remote = fetch_remote_version(timeout=20)
         if not remote:
-            self.done.emit(False, "Nepodařilo se přečíst vzdálenou verzi.")
+            self.done.emit(False, "Nepodařilo se zjistit verzi z GitHubu (offline?).")
             return
         self.line.emit(f"Lokální: {self.local_version}   GitHub: {remote}")
         if remote == self.local_version:

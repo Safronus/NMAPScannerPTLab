@@ -4,6 +4,22 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.17.2] - 2026-09-19
+
+### Opraveno (detekce nástrojů + aktualizace aplikace)
+- **Kontrola verze aplikace z GitHubu** — repozitář zveřejněn (public), takže
+  `raw`/`archive` jsou přístupné. Navíc fallback přes **GitHub API** (funguje i
+  během CDN prodlevy `raw` po zveřejnění). Startup kontrola i „Aplikace" ve
+  Správci aktualizací teď verzi zjistí.
+- **ffuf/nmap/ZAP na Windows nenalezené i po instalaci a restartu** — detekce
+  hledá nástroj i v obvyklých instalačních cestách mimo PATH (winget Links i
+  Packages, scoop, choco), takže se ukáže jako nainstalovaný bez „restartuj app".
+- **SSLyze se hlásil jako chybějící, i když je nainstalovaný** — SSLyze je Python
+  knihovna, kterou appka používá ze svého `.venv`, ne systémový příkaz. Detekuje
+  se teď importem v běžícím Pythonu; aktualizace míří do `.venv`
+  (`sys.executable -m pip`), ne do systémového `python3` (to na Windows mířilo
+  na úplně jiný Python).
+
 ## [5.17.1] - 2026-09-19
 
 ### Opraveno (ffuf na Windows)

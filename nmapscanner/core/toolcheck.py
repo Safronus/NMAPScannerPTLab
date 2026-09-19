@@ -70,6 +70,10 @@ TOOLS = [
         "bins": ["sslyze"], "version_arg": "--version",
         "version_re": r"([\d.]+)",
         "brew": None, "apt": None,
+        # SSLyze je Python knihovna, kterou appka používá ze svého .venv
+        # (instaluje ji requirements.txt). Detekuje se importem v běžícím Pythonu,
+        # NE hledáním sslyze.exe v PATH. Aktualizace míří do venv (sys.executable).
+        "python_module": "sslyze", "pip_pkg": "sslyze",
         "pip": "python3 -m pip install --upgrade sslyze",
         "homepage": "https://github.com/nabla-c0d3/sslyze",
     },
@@ -93,6 +97,28 @@ def _platform():
     return "linux"
 
 
+def _windows_bin_candidates(name, winget_id):
+    """Obvyklá umístění spustitelných souborů na Windows (mimo PATH) — winget
+    (Links i Packages), scoop, choco. Řeší situaci, kdy nástroj je nainstalován,
+    ale běžící proces ho ještě nemá v PATH."""
+    import glob
+    cands = []
+    exe = name if name.lower().endswith(".exe") else name + ".exe"
+    la = os.environ.get("LOCALAPPDATA", "")
+    home = os.path.expanduser("~")
+    if la:
+        cands.append(os.path.join(la, "Microsoft", "WinGet", "Links", exe))
+        pat = os.path.join(la, "Microsoft", "WinGet", "Packages",
+                           (winget_id or "") + "*", "**", exe)
+        if winget_id:
+            cands += glob.glob(pat, recursive=True)
+    cands.append(os.path.join(home, "scoop", "shims", exe))
+    pd = os.environ.get("ProgramData", "")
+    if pd:
+        cands.append(os.path.join(pd, "chocolatey", "bin", exe))
+    return cands
+
+
 def _find_bin(spec):
     # ZAP má speciální vyhledávání (i mimo PATH, např. /Applications)
     if spec["key"] == "zap":
@@ -107,7 +133,40 @@ def _find_bin(spec):
         p = shutil.which(name)
         if p:
             return p
+        if sys.platform.startswith("win"):
+            p = shutil.which(name + ".exe")
+            if p:
+                return p
+    # Windows: hledat i v obvyklých instalačních cestách mimo PATH
+    if sys.platform.startswith("win"):
+        for name in spec["bins"]:
+            for c in _windows_bin_candidates(name, spec.get("winget_id")):
+                try:
+                    if c and os.path.exists(c):
+                        return c
+                except Exception:
+                    pass
     return None
+
+
+def _detect_python_module(spec):
+    """Detekce nástroje, který je Python knihovnou v aktuálním (venv) Pythonu."""
+    mod = spec.get("python_module")
+    if not mod:
+        return None
+    try:
+        import importlib.util
+        if importlib.util.find_spec(mod) is None:
+            return {"installed": False, "version": "", "path": "", "needs_restart": False}
+        ver = ""
+        try:
+            import importlib.metadata
+            ver = importlib.metadata.version(spec.get("pip_pkg") or mod)
+        except Exception:
+            ver = ""
+        return {"installed": True, "version": ver, "path": "(python)", "needs_restart": False}
+    except Exception:
+        return None
 
 
 def _winget_installed(winget_id, timeout=20):
@@ -127,6 +186,10 @@ def _winget_installed(winget_id, timeout=20):
 
 def detect(spec):
     """Vrátí {'installed','version','path','needs_restart'} pro daný nástroj."""
+    # Python knihovna (např. SSLyze) — importem v běžícím Pythonu (venv aplikace)
+    pyres = _detect_python_module(spec)
+    if pyres is not None:
+        return pyres
     path = _find_bin(spec)
     if not path:
         # Windows fallback: nástroj může být nainstalován přes winget, ale běžící
@@ -175,6 +238,10 @@ def update_command(spec, platform=None):
         return spec["apt"]
     if plat == "windows" and spec.get("winget"):
         return spec["winget"]           # Windows: winget (NE brew — ten na Win není)
+    if spec.get("pip_pkg"):
+        # pip balíček instalovat do TOHOTO Pythonu (venv aplikace), ne systémového
+        py = sys.executable or "python3"
+        return f'"{py}" -m pip install --upgrade {spec["pip_pkg"]}'
     if spec.get("pip"):
         return spec["pip"]
     # Fallback brew jen mimo Windows (na Windows brew neexistuje → radši homepage)
