@@ -4,6 +4,20 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.17.4] - 2026-09-19
+
+### Opraveno / Přidáno
+- **ffuf na Windows nenalezen i po restartu** — hledání rozšířeno na **celý
+  winget strom** (uživatelský i strojový root), scoop apps i choco; sdíleno mezi
+  detekcí ve Správci aktualizací a spouštěním fuzzingu. (Změna PATH z wingetu se
+  projeví až po novém přihlášení, proto se hledá přímo na disku.)
+- **Vulners CVE dle verze nevracelo nic** — parser opraven na skutečný tvar v4
+  audit odpovědi (`result` je seznam software-záznamů; CVE jsou v `cvelist`,
+  CVSS v `cvelistMetrics[].cvss.score`). Ověřeno: nginx 1.14.0 → 3 CVE se skóre.
+- **Kontrola formátu API klíčů** — pole Vulners (i NVD) hlásí špatný formát bez
+  volání sítě (délka, povolené znaky, u NVD tvar UUID). U chyby 401 „Unknown api
+  key" se navíc vypíše délka zadaného klíče (odhalí ořezaný/špatně vložený klíč).
+
 ## [5.17.3] - 2026-09-19
 
 ### Opraveno

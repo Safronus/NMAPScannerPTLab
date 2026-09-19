@@ -64,6 +64,22 @@ def test_build_eol_skips_supported():
     assert build_findings(sr, sections=["eol"])["total"] == 0
 
 
+def test_vulners_key_format():
+    ok, _ = enr.vulners_key_format_ok("602MDDJ06FAL4L0XEYEBYQ9COAZUEAI298DEOK89BSK9MWNDLRSJL0VYSD78E3WI")
+    assert ok is True
+    assert enr.vulners_key_format_ok("")[0] is False
+    assert enr.vulners_key_format_ok("ABC123")[0] is False          # krátký
+    assert enr.vulners_key_format_ok("602MDD JL0abc")[0] is False   # po očištění krátký
+    assert enr.vulners_key_format_ok("KEY_WITH-bad!chars" + "A" * 50)[0] is False
+
+
+def test_nvd_key_format():
+    assert enr.nvd_key_format_ok("12345678-1234-1234-1234-123456789012")[0] is True
+    assert enr.nvd_key_format_ok("abcdef00-0000-0000-0000-000000000000")[0] is True
+    assert enr.nvd_key_format_ok("not-a-uuid")[0] is False
+    assert enr.nvd_key_format_ok("")[0] is False
+
+
 def test_cache_status_structure():
     cs = enr.cache_status()
     for k in ("kev", "eol", "nvd", "epss"):

@@ -22,18 +22,12 @@ def find_ffuf():
         return p
     cands = ["/usr/local/bin/ffuf", "/opt/homebrew/bin/ffuf", "/opt/local/bin/ffuf",
              "/usr/bin/ffuf"]
-    la = os.environ.get("LOCALAPPDATA", "")
-    home = os.path.expanduser("~")
-    if la:
-        cands.append(os.path.join(la, "Microsoft", "WinGet", "Links", "ffuf.exe"))
-        cands += glob.glob(os.path.join(la, "Microsoft", "WinGet", "Packages",
-                                        "ffuf.ffuf*", "**", "ffuf.exe"), recursive=True)
-        cands.append(os.path.join(la, "Microsoft", "WinGet", "Packages", "ffuf.exe"))
-    # scoop / choco
-    cands.append(os.path.join(home, "scoop", "shims", "ffuf.exe"))
-    pd = os.environ.get("ProgramData", "")
-    if pd:
-        cands.append(os.path.join(pd, "chocolatey", "bin", "ffuf.exe"))
+    # Windows: sdílené hledání s toolcheck (winget Links + celý strom, scoop, choco)
+    try:
+        from ..core.toolcheck import _windows_bin_candidates
+        cands += _windows_bin_candidates("ffuf", "ffuf.ffuf")
+    except Exception:
+        pass
     for c in cands:
         try:
             if c and os.path.exists(c):

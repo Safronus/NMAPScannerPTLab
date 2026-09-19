@@ -99,20 +99,30 @@ def _platform():
 
 def _windows_bin_candidates(name, winget_id):
     """Obvyklá umístění spustitelných souborů na Windows (mimo PATH) — winget
-    (Links i Packages), scoop, choco. Řeší situaci, kdy nástroj je nainstalován,
-    ale běžící proces ho ještě nemá v PATH."""
+    (Links i celý strom Packages), scoop, choco, Program Files. Řeší situaci, kdy
+    je nástroj nainstalován, ale běžící proces ho nemá v PATH (změna PATH z wingetu
+    se projeví až po novém přihlášení)."""
     import glob
     cands = []
     exe = name if name.lower().endswith(".exe") else name + ".exe"
-    la = os.environ.get("LOCALAPPDATA", "")
     home = os.path.expanduser("~")
-    if la:
-        cands.append(os.path.join(la, "Microsoft", "WinGet", "Links", exe))
-        pat = os.path.join(la, "Microsoft", "WinGet", "Packages",
-                           (winget_id or "") + "*", "**", exe)
+    # winget: uživatelský i strojový root
+    winget_roots = []
+    for env in ("LOCALAPPDATA", "PROGRAMFILES", "ProgramW6432"):
+        base = os.environ.get(env, "")
+        if base:
+            winget_roots.append(os.path.join(base, "Microsoft", "WinGet"))
+    for wroot in winget_roots:
+        cands.append(os.path.join(wroot, "Links", exe))
+        # Cílená shoda dle winget_id + široké hledání v celém stromu (nezávislé na názvu složky)
         if winget_id:
-            cands += glob.glob(pat, recursive=True)
+            cands += glob.glob(os.path.join(wroot, "Packages", winget_id + "*", "**", exe),
+                               recursive=True)
+        cands += glob.glob(os.path.join(wroot, "**", exe), recursive=True)
+    # scoop
     cands.append(os.path.join(home, "scoop", "shims", exe))
+    cands += glob.glob(os.path.join(home, "scoop", "apps", "*", "current", exe))
+    # choco
     pd = os.environ.get("ProgramData", "")
     if pd:
         cands.append(os.path.join(pd, "chocolatey", "bin", exe))

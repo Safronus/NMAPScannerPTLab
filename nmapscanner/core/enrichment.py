@@ -268,6 +268,33 @@ VULNERS_SEARCH_URL = "https://vulners.com/api/v3/search/lucene/"
 VULNERS_AUDIT_URL = "https://vulners.com/api/v4/audit/software"
 
 
+def vulners_key_format_ok(api_key):
+    """Rychlá kontrola formátu Vulners klíče (bez sítě). Vrací (ok, hint).
+    Vulners klíče jsou dlouhé alfanumerické řetězce (~60 znaků, jen A–Z 0–9)."""
+    import re
+    k = _clean_key(api_key)
+    if not k:
+        return False, "Klíč není zadán."
+    if not re.fullmatch(r"[A-Za-z0-9]+", k):
+        return False, "Klíč obsahuje nepovolené znaky (očekává se jen A–Z, a–z, 0–9)."
+    if len(k) < 40:
+        return False, f"Klíč je krátký ({len(k)} znaků) — Vulners klíč mívá ~60. Nezkrátil se při vložení?"
+    if len(k) > 100:
+        return False, f"Klíč je neobvykle dlouhý ({len(k)} znaků) — nevložil se dvakrát?"
+    return True, f"Formát vypadá v pořádku ({len(k)} znaků)."
+
+
+def nvd_key_format_ok(api_key):
+    """Kontrola formátu NVD klíče (UUID: 8-4-4-4-12 hex). Vrací (ok, hint)."""
+    import re
+    k = _clean_key(api_key)
+    if not k:
+        return False, "Klíč není zadán."
+    if re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", k):
+        return True, "Formát UUID vypadá v pořádku."
+    return False, "NVD klíč má mít formát UUID (např. xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)."
+
+
 def validate_vulners_key(api_key, timeout=15):
     """Ověří platnost Vulners API klíče. Vrací (ok: bool, zpráva: str).
 
@@ -307,9 +334,9 @@ def validate_vulners_key(api_key, timeout=15):
                 msg = "Klíč odmítnut (HTTP 401"
                 msg += f" — {detail})." if detail else ")."
                 if "unknown" in detail.lower() or not detail:
-                    msg += (" Vulners klíč nezná — zkontroluj, že je přesně zkopírovaný "
-                            "(bez mezer navíc) a že trial klíč je už aktivovaný na "
-                            "vulners.com (aktivace může chvíli trvat).")
+                    msg += (f" Vulners klíč nezná. Délka zadaného klíče: {len(key)} znaků "
+                            "(Vulners klíč mívá ~60). Zkontroluj, že je přesně a celý "
+                            "zkopírovaný a že trial klíč je už aktivovaný na vulners.com.")
                 return False, msg
             return False, (f"Přístup odepřen (HTTP 403{' — ' + detail if detail else ''}) "
                            "— klíč platí, ale tvůj tarif nemá přístup k audit/search API.")
@@ -477,26 +504,54 @@ def vulners_cves_for_version(product_text, version, api_key, timeout=20, force=F
         if r.status_code != 200:
             return entry.get("data") if entry else None
         data = r.json()
-        # najít seznam zranitelností (v4 zabaluje do 'data'/'result' různě)
-        vulns = None
-        for container in (data, data.get("data") if isinstance(data, dict) else None,
-                          data.get("result") if isinstance(data, dict) else None):
-            if isinstance(container, dict) and isinstance(container.get("vulnerabilities"), list):
-                vulns = container["vulnerabilities"]
-                break
-        if vulns is None:
+        # Vulners v4 audit: {"result":[{"input","fixed_version","vulnerabilities":[...]}]}
+        # (result je SEZNAM software-záznamů; někdy zabaleno i jako dict/data)
+        vulns = []
+
+        def _add(c):
+            if isinstance(c, dict) and isinstance(c.get("vulnerabilities"), list):
+                vulns.extend(c["vulnerabilities"])
+
+        if isinstance(data, dict):
+            res = data.get("result")
+            if isinstance(res, list):
+                for e in res:
+                    _add(e)
+            elif isinstance(res, dict):
+                _add(res)
+            _add(data)
+            _add(data.get("data") if isinstance(data.get("data"), dict) else None)
+        elif isinstance(data, list):
+            for e in data:
+                _add(e)
+        if not vulns:
             return entry.get("data") if entry else None
         best = {}
         for v in vulns:
             if not isinstance(v, dict):
                 continue
-            cid = str(v.get("id", "")).upper()
-            if not cid.startswith("CVE-"):
-                continue
-            score = _deep_find_cvss(v.get("cvelistMetrics")) or _deep_find_cvss(v)
-            cur = best.get(cid)
-            if not cur or (score or 0) > (cur.get("cvss") or 0):
-                best[cid] = {"cve": cid, "cvss": score, "severity": cvss_to_severity(score)}
+            # Per-CVE CVSS z cvelistMetrics (cve -> score)
+            metric_score = {}
+            for m in (v.get("cvelistMetrics") or []):
+                if isinstance(m, dict):
+                    mc = str(m.get("cve", "")).upper()
+                    cvss = m.get("cvss") if isinstance(m.get("cvss"), dict) else {}
+                    if mc:
+                        metric_score[mc] = cvss.get("score")
+            # CVE identifikátory: primárně z 'cvelist' (id bývá bulletin CNVD/…)
+            cves = [str(c).upper() for c in (v.get("cvelist") or [])]
+            if not cves and str(v.get("id", "")).upper().startswith("CVE-"):
+                cves = [str(v["id"]).upper()]
+            for cid in cves:
+                if not cid.startswith("CVE-"):
+                    continue
+                score = metric_score.get(cid)
+                if score is None:
+                    score = _deep_find_cvss(v.get("cvelistMetrics")) or _deep_find_cvss(v)
+                cur = best.get(cid)
+                if not cur or (score or 0) > (cur.get("cvss") or 0):
+                    best[cid] = {"cve": cid, "cvss": score,
+                                 "severity": cvss_to_severity(score)}
         res = sorted(best.values(), key=lambda x: (x.get("cvss") or 0), reverse=True)[:12]
         cache[key] = {"_ts": time.time(), "data": res}
         _save(_VCVE_CACHE, cache)

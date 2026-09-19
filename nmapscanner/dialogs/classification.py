@@ -262,6 +262,7 @@ class ClassificationManagerDialog(QDialog):
         self.vulners_key_edit = QLineEdit(self._nvd_settings.value("vulners_api_key", "") or "")
         self.vulners_key_edit.setPlaceholderText("získáš na vulners.com (free tier)")
         self.vulners_key_edit.setEchoMode(QLineEdit.Password)
+        self.vulners_key_edit.textChanged.connect(self._vulners_format_hint)
         vulners_row.addWidget(self.vulners_key_edit, 1)
         save_vk = QPushButton("Uložit klíč")
         save_vk.clicked.connect(self._save_vulners_key)
@@ -383,11 +384,33 @@ class ClassificationManagerDialog(QDialog):
         if msg:
             self.vulners_status.setToolTip(msg)
 
+    def _vulners_format_hint(self):
+        """Živá kontrola formátu Vulners klíče při psaní (bez sítě)."""
+        from ..core.enrichment import vulners_key_format_ok
+        txt = self.vulners_key_edit.text().strip()
+        if not txt:
+            self._set_vulners_status(None)
+            return
+        okf, hint = vulners_key_format_ok(txt)
+        self.vulners_status.setToolTip(hint)
+        if not okf:
+            self.vulners_status.setText("⚠ formát")
+            self.vulners_status.setStyleSheet("color:#BF9000; font-weight:bold;")
+        else:
+            self._set_vulners_status(None)  # formát OK → neověřeno
+
     def _test_vulners_key(self):
         key = self.vulners_key_edit.text().strip()
         if not key:
             self._set_vulners_status(None)
             QMessageBox.information(self, "Vulners", "Nejprve zadej API klíč.")
+            return
+        # Rychlá kontrola formátu (bez sítě) — chytí ořezaný/špatně vložený klíč
+        from ..core.enrichment import vulners_key_format_ok
+        okf, hint = vulners_key_format_ok(key)
+        if not okf:
+            self._set_vulners_status(False, hint)
+            QMessageBox.warning(self, "Vulners — formát klíče", hint)
             return
         self.vulners_test_btn.setEnabled(False)
         self.vulners_status.setText("⏳ ověřuji…")
