@@ -17,6 +17,25 @@ def find_ffuf():
 
     Na Windows winget nainstaluje ffuf, ale běžící aplikace má ještě starou PATH —
     proto se hledá i v obvyklých instalačních cestách (winget/scoop/choco) a mac/linux."""
+    # 0) Nejdřív lokálně u aplikace — když sem uživatel prostě hodí ffuf(.exe),
+    #    appka ho použije bez ohledu na winget/PATH/symlinky (nejspolehlivější).
+    exe = "ffuf.exe" if os.name == "nt" else "ffuf"
+    local_dirs = []
+    try:
+        local_dirs.append(os.getcwd())
+        app_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        local_dirs += [app_root, os.path.join(app_root, "tools"),
+                       os.path.join(os.getcwd(), "tools")]
+    except Exception:
+        pass
+    for d in local_dirs:
+        c = os.path.join(d, exe)
+        try:
+            if os.path.isfile(c):
+                return c
+        except Exception:
+            pass
+
     p = shutil.which("ffuf") or shutil.which("ffuf.exe")
     if p:
         return p

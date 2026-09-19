@@ -106,6 +106,15 @@ def _windows_bin_candidates(name, winget_id):
     cands = []
     exe = name if name.lower().endswith(".exe") else name + ".exe"
     home = os.path.expanduser("~")
+    # 0) Lokálně u aplikace (uživatel může nástroj prostě položit vedle appky)
+    try:
+        app_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        app_root = os.path.dirname(app_root)  # …/nmapscanner/core -> repo root
+        for d in (os.getcwd(), app_root, os.path.join(app_root, "tools"),
+                  os.path.join(os.getcwd(), "tools")):
+            cands.append(os.path.join(d, exe))
+    except Exception:
+        pass
     # winget: uživatelský i strojový root (+ fallback přes ~ kdyby chyběl env)
     winget_roots = []
     for env in ("LOCALAPPDATA", "PROGRAMFILES", "ProgramW6432"):

@@ -4,6 +4,13 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.17.8] - 2026-09-19
+
+### Přidáno
+- **ffuf (a nástroje) se hledají i přímo u aplikace** — stačí `ffuf.exe` položit
+  do složky aplikace (nebo do podsložky `tools\`) a appka ho použije bez ohledu
+  na winget/PATH/symlinky. Nejspolehlivější řešení, když winget symlink zlobí.
+
 ## [5.17.7] - 2026-09-19
 
 ### Opraveno
