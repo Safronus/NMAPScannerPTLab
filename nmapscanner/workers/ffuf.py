@@ -4,11 +4,43 @@ import json
 import re
 import shutil
 import subprocess
+import glob
 
 import requests
 
 
 from PySide6.QtCore import Signal, QThread
+
+
+def find_ffuf():
+    """Robustně najde ffuf i tam, kam ho nedá PATH běžícího procesu.
+
+    Na Windows winget nainstaluje ffuf, ale běžící aplikace má ještě starou PATH —
+    proto se hledá i v obvyklých instalačních cestách (winget/scoop/choco) a mac/linux."""
+    p = shutil.which("ffuf") or shutil.which("ffuf.exe")
+    if p:
+        return p
+    cands = ["/usr/local/bin/ffuf", "/opt/homebrew/bin/ffuf", "/opt/local/bin/ffuf",
+             "/usr/bin/ffuf"]
+    la = os.environ.get("LOCALAPPDATA", "")
+    home = os.path.expanduser("~")
+    if la:
+        cands.append(os.path.join(la, "Microsoft", "WinGet", "Links", "ffuf.exe"))
+        cands += glob.glob(os.path.join(la, "Microsoft", "WinGet", "Packages",
+                                        "ffuf.ffuf*", "**", "ffuf.exe"), recursive=True)
+        cands.append(os.path.join(la, "Microsoft", "WinGet", "Packages", "ffuf.exe"))
+    # scoop / choco
+    cands.append(os.path.join(home, "scoop", "shims", "ffuf.exe"))
+    pd = os.environ.get("ProgramData", "")
+    if pd:
+        cands.append(os.path.join(pd, "chocolatey", "bin", "ffuf.exe"))
+    for c in cands:
+        try:
+            if c and os.path.exists(c):
+                return c
+        except Exception:
+            pass
+    return None
 
 
 class BatchDownloadWorker(QThread):
@@ -160,17 +192,11 @@ class FfufWorker(QThread):
     def run(self):
         print(f"DEBUG: [FfufWorker] Spouštím pro {self.target_url}")
         command = []
-        
-        ffuf_path = shutil.which("ffuf")
+
+        ffuf_path = find_ffuf()
         if not ffuf_path:
-            possible_paths = ["/usr/local/bin/ffuf", "/opt/homebrew/bin/ffuf"]
-            for p in possible_paths:
-                if os.path.exists(p):
-                    ffuf_path = p
-                    break
-        
-        if not ffuf_path:
-            self.log.emit("❌ Chyba: Nástroj 'ffuf' nebyl nalezen.")
+            self.log.emit("❌ Chyba: Nástroj 'ffuf' nebyl nalezen (nainstaluj přes "
+                          "Správce aktualizací a restartuj aplikaci).")
             self.finished.emit()
             return
 

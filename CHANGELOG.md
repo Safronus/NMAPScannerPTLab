@@ -4,6 +4,21 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.17.1] - 2026-09-19
+
+### Opraveno (ffuf na Windows)
+- **Fuzzing na Windows „skončil za 2 s" / nic nedělal** — ffuf worker hledal
+  nástroj jen přes PATH (`shutil.which`), ale winget-instalovaný ffuf běžící
+  proces v PATH nevidí, takže se každý cíl okamžitě ukončil jako „nenalezen".
+  Nový `find_ffuf()` hledá ffuf i ve winget/scoop/choco cestách (+ mac/linux),
+  takže fuzzing funguje i bez restartu. Před spuštěním navíc **pre-check**: když
+  ffuf chybí, jasná hláška místo tiché instantní chyby.
+- **„Vybrat vše" označovalo i oddělovače** v seznamu cílů (a ty se pak dostaly do
+  fronty jako neplatné cíle). Nově se zaškrtávají jen skutečné cíle a oddělovače
+  se do fronty nikdy nezařadí.
+- **Odhad requestů byl matoucí** — počítal jen na 1 cíl. Nově ukazuje i počet
+  cílů a celkový odhad (na 1 cíl × počet cílů) a přepočítá se i při změně výběru.
+
 ## [5.17.0] - 2026-09-19
 
 ### Přidáno

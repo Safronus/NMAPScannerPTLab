@@ -833,6 +833,8 @@ class FfufDialog(QDialog):
         left_layout.addWidget(QLabel("<b>Webové služby:</b>"))
         self.targets_list = QListWidget()
         self.targets_list.setSelectionMode(QListWidget.MultiSelection)
+        # Přepočítat odhad requestů i při změně výběru cílů
+        self.targets_list.itemChanged.connect(lambda *_: self.update_stats())
         left_layout.addWidget(self.targets_list)
         
         target_btns_layout = QHBoxLayout()
@@ -1141,6 +1143,17 @@ class FfufDialog(QDialog):
         """
         self.export_json_btn.setEnabled(False)
 
+        # Pre-check: je ffuf vůbec k dispozici? (na Windows častá PATH staleness)
+        from ..workers.ffuf import find_ffuf
+        if not find_ffuf():
+            QMessageBox.critical(
+                self, "ffuf nenalezen",
+                "Nástroj ffuf nebyl nalezen, fuzzing nelze spustit.\n\n"
+                "Nainstaluj ho ve Správci aktualizací (⬆️). Pokud jsi ho právě "
+                "nainstaloval přes winget, ZAVŘI a spusť aplikaci znovu — nová "
+                "PATH se načte až v novém procesu.")
+            return
+
         # Sjednocení slovníků
         selected_paths = []
         model = self.wordlist_combo.model
@@ -1175,9 +1188,11 @@ class FfufDialog(QDialog):
         self.queue = []
         for i in range(self.targets_list.count()):
             item = self.targets_list.item(i)
-            if item.checkState() == Qt.Checked:
-                self.queue.append(item.data(Qt.UserRole))
-        
+            if item.checkState() == Qt.Checked and (item.flags() & Qt.ItemIsUserCheckable):
+                url = item.data(Qt.UserRole)
+                if url:  # nikdy nezařadit oddělovač / prázdný cíl
+                    self.queue.append(url)
+
         if not self.queue:
             QMessageBox.warning(self, "Chyba", "Vyberte alespoň jeden cíl.")
             return
@@ -1286,12 +1301,29 @@ class FfufDialog(QDialog):
         # Tedy multiplier je počet přípon + 1 (pro původní slovo bez přípony)
         multiplier = (len(extensions) + 1) if extensions else 1
         
-        total_requests = word_count * multiplier
-        
-        # 4. Výpis
-        wc_str = f"{word_count:,}".replace(",", " ")
-        req_str = f"{total_requests:,}".replace(",", " ")
-        self.stats_label.setText(f"Slov: {wc_str} | Mult: x{multiplier}\nCelkem: {req_str} reqs")
+        per_target = word_count * multiplier
+
+        # 4. Počet zaškrtnutých cílů (bez oddělovačů) — pro celkový odhad
+        target_count = 0
+        if hasattr(self, "targets_list"):
+            for i in range(self.targets_list.count()):
+                it = self.targets_list.item(i)
+                if it.checkState() == Qt.Checked and (it.flags() & Qt.ItemIsUserCheckable):
+                    target_count += 1
+
+        # 5. Výpis
+        def _fmt(n):
+            return f"{n:,}".replace(",", " ")
+        wc_str = _fmt(word_count)
+        pt_str = _fmt(per_target)
+        if target_count > 1:
+            total = per_target * target_count
+            self.stats_label.setText(
+                f"Slov: {wc_str} | Mult: x{multiplier} | Na 1 cíl: {pt_str} reqs\n"
+                f"Cílů: {target_count} → Celkem: {_fmt(total)} reqs")
+        else:
+            self.stats_label.setText(
+                f"Slov: {wc_str} | Mult: x{multiplier}\nNa 1 cíl: {pt_str} reqs")
         
     def show_context_menu(self, position):
         """
@@ -1518,7 +1550,10 @@ class FfufDialog(QDialog):
 
     def select_all_targets(self):
         for i in range(self.targets_list.count()):
-            self.targets_list.item(i).setCheckState(Qt.Checked)
+            it = self.targets_list.item(i)
+            # Jen skutečné cíle (oddělovače mají NoItemFlags a nejsou zaškrtávatelné)
+            if it.flags() & Qt.ItemIsUserCheckable:
+                it.setCheckState(Qt.Checked)
 
     def _fill_slots(self):
         """Spustí cíle z fronty, dokud nejsou obsazené všechny paralelní sloty."""
