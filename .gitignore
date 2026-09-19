@@ -96,3 +96,6 @@ Thumbs.db
 
 # vygenerovany prenosny Windows balik (skripty na jeho vyrobu jsou v repu)
 windows-package/
+
+# vygenerovany macOS spousteci .app (generuje make_macos_app.command)
+NMAPScannerPTLab.app/

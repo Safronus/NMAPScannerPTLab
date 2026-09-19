@@ -4,6 +4,19 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.16.1] - 2026-09-19
+
+### Přidáno
+- **macOS spouštěče na dvojklik (bez terminálu).**
+  - `NMAPScannerPTLab.app` — spouštěcí `.app` (dvojklik ve Finderu, žádný
+    terminál); doplní PATH o brew/MacPorts (aby se našel nmap) a spustí aplikaci
+    z `.venv`. Generuje ho `make_macos_app.command` (ikona z `assets/icon.png`).
+  - `install_macos.command` — vytvoří `.venv`, nainstaluje závislosti a rovnou
+    vyrobí `.app`.
+  - `run_macos.command` — spuštění z Finderu jako alternativa k `.app`.
+  Generovaný `.app` je v `.gitignore` (skript na jeho výrobu je v repu, obdoba
+  Windows `build_exe_windows.bat`).
+
 ## [5.16.0] - 2026-09-19
 
 ### Přidáno
