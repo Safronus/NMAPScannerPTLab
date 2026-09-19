@@ -93,3 +93,6 @@ Thumbs.db
 
 # nahled reportu (lokalni, neverzovat)
 .preview/
+
+# vygenerovany prenosny Windows balik (skripty na jeho vyrobu jsou v repu)
+windows-package/
