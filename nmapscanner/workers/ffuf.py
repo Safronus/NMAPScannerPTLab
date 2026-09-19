@@ -23,14 +23,16 @@ def find_ffuf():
     cands = ["/usr/local/bin/ffuf", "/opt/homebrew/bin/ffuf", "/opt/local/bin/ffuf",
              "/usr/bin/ffuf"]
     # Windows: sdílené hledání s toolcheck (winget Links + celý strom, scoop, choco)
+    present = os.path.exists
     try:
-        from ..core.toolcheck import _windows_bin_candidates
+        from ..core.toolcheck import _windows_bin_candidates, _path_present
         cands += _windows_bin_candidates("ffuf", "ffuf.ffuf")
+        present = _path_present
     except Exception:
         pass
     for c in cands:
         try:
-            if c and os.path.exists(c):
+            if c and present(c):
                 return c
         except Exception:
             pass

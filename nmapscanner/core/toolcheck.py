@@ -106,12 +106,13 @@ def _windows_bin_candidates(name, winget_id):
     cands = []
     exe = name if name.lower().endswith(".exe") else name + ".exe"
     home = os.path.expanduser("~")
-    # winget: uživatelský i strojový root
+    # winget: uživatelský i strojový root (+ fallback přes ~ kdyby chyběl env)
     winget_roots = []
     for env in ("LOCALAPPDATA", "PROGRAMFILES", "ProgramW6432"):
         base = os.environ.get(env, "")
         if base:
             winget_roots.append(os.path.join(base, "Microsoft", "WinGet"))
+    winget_roots.append(os.path.join(home, "AppData", "Local", "Microsoft", "WinGet"))
     for wroot in winget_roots:
         cands.append(os.path.join(wroot, "Links", exe))
         # Cílená shoda dle winget_id + široké hledání v celém stromu (nezávislé na názvu složky)
@@ -127,6 +128,15 @@ def _windows_bin_candidates(name, winget_id):
     if pd:
         cands.append(os.path.join(pd, "chocolatey", "bin", exe))
     return cands
+
+
+def _path_present(p):
+    """True, pokud soubor existuje — včetně winget symlinků/reparse pointů, kde
+    ``os.path.exists`` může vrátit False (kontroluje se i ``os.path.lexists``)."""
+    try:
+        return bool(p) and (os.path.isfile(p) or os.path.exists(p) or os.path.lexists(p))
+    except Exception:
+        return False
 
 
 def _find_bin(spec):
@@ -151,11 +161,8 @@ def _find_bin(spec):
     if sys.platform.startswith("win"):
         for name in spec["bins"]:
             for c in _windows_bin_candidates(name, spec.get("winget_id")):
-                try:
-                    if c and os.path.exists(c):
-                        return c
-                except Exception:
-                    pass
+                if _path_present(c):
+                    return c
     return None
 
 

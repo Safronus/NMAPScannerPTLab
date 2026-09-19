@@ -4,6 +4,16 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.17.5] - 2026-09-19
+
+### Opraveno
+- **ffuf (a další winget nástroje) hlásily „restartuj app" i když jsou k
+  dispozici** — winget vytváří `...\WinGet\Links\<tool>.exe` jako **symlink**, na
+  který `os.path.exists()` umí vrátit False, takže detekce nástroj „neviděla".
+  Nově se kontroluje i `os.path.lexists` (samotný symlink), takže se nástroj
+  najde přímo na disku bez ohledu na PATH i typ odkazu. Přidán i fallback root
+  `~\AppData\Local\Microsoft\WinGet`.
+
 ## [5.17.4] - 2026-09-19
 
 ### Opraveno / Přidáno
