@@ -4,6 +4,15 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.16.5] - 2026-09-19
+
+### Opraveno
+- **Světlé téma na Windows → nečitelné prvky.** Aplikace je navržena pro tmavé
+  pozadí (macOS dark); na systému ve světlém režimu (typicky Windows) se teď
+  **vynutí konzistentní tmavé téma** (Fusion + tmavá paleta), takže vypadá stejně
+  a čitelně jako na macOS. Když je systém už tmavý, nechá nativní vzhled.
+  Vypnout lze proměnnou `NMAPSCANNER_LIGHT=1`. (`nmapscanner/core/theme.py`)
+
 ## [5.16.4] - 2026-09-19
 
 ### Změněno / Opraveno

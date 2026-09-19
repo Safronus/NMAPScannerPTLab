@@ -125,6 +125,13 @@ def main():
     from PySide6.QtWidgets import QApplication
 
     app = QApplication(sys.argv)
+    # Konzistentní tmavý vzhled (na světlém systému, typicky Windows, vynutí tmavé
+    # téma — aplikace je navržena pro tmavé pozadí). Vypnout: NMAPSCANNER_LIGHT=1.
+    try:
+        from nmapscanner.core.theme import apply_theme
+        apply_theme(app)
+    except Exception:
+        pass
     icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.png")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))  # okna + Dock (macOS) / taskbar (Linux)
