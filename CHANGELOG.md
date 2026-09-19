@@ -4,6 +4,20 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.16.7] - 2026-09-19
+
+### Přidáno
+- **Aktualizace aplikace z GitHubu (konec ručního přenášení ZIPu).** Přenosná
+  kopie (Windows) se umí aktualizovat sama:
+  - **V aplikaci** — Správce aktualizací → záložka „Aplikace": „Zkontrolovat
+    aktualizaci" porovná lokální verzi s GitHubem, „Stáhnout a nainstalovat
+    aktualizaci" stáhne ZIP hlavní větve a přepíše programové soubory
+    (zachová `.venv` i nastavení). Běží na pozadí.
+  - **`update_windows.bat`** (+ `update_windows.ps1`) — dvojklik mimo běžící
+    aplikaci: zjistí verzi a je-li novější, stáhne a přepíše soubory.
+  - Vývojová kopie (git) má dál tlačítka git fetch/pull; přenosná kopie ta
+    stažení z GitHubu.
+
 ## [5.16.6] - 2026-09-19
 
 ### Změněno / Opraveno (Správce aktualizací — chytřejší na Windows)

@@ -31,6 +31,22 @@ POUZE PRO AUTORIZOVANE TESTOVANI.
 Priste uz staci jen krok 4.
 
 --------------------------------------------------------------------
+ AKTUALIZACE APLIKACE (uz nemusis prenaset ZIP rucne)
+--------------------------------------------------------------------
+   Dve moznosti, obe stahnou nejnovejsi verzi primo z GitHubu:
+
+   A) Z aplikace: tlacitko Spravce aktualizaci -> zalozka "Aplikace"
+      -> "Zkontrolovat aktualizaci" / "Stahnout a nainstalovat
+      aktualizaci". Zachova .venv i nastaveni. Po dokonceni appku
+      restartuj.
+
+   B) Dvojklik na  update_windows.bat  (mimo bezici aplikaci).
+      Zjisti verzi, a je-li novejsi, stahne a prepise soubory.
+
+   Obe varianty nechavaji .venv a tva nastaveni (klice, volby) na
+   miste - meni jen programove soubory.
+
+--------------------------------------------------------------------
  OPRAVNENI (Windows) - misto sudo
 --------------------------------------------------------------------
    Na Windows se sudo nepouziva. Privilegia se resi spustenim jako

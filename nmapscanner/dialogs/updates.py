@@ -31,6 +31,91 @@ def _repo_root():
     return os.path.dirname(os.path.dirname(os.path.dirname(here)))
 
 
+# GitHub zdroj pro aktualizaci aplikace (přenosný port bez gitu — např. Windows)
+GH_OWNER = "Safronus"
+GH_REPO = "NMAPScannerPTLab"
+GH_BRANCH = "main"
+GH_RAW_VER = f"https://raw.githubusercontent.com/{GH_OWNER}/{GH_REPO}/{GH_BRANCH}/nmapscanner/__init__.py"
+GH_ZIP = f"https://github.com/{GH_OWNER}/{GH_REPO}/archive/refs/heads/{GH_BRANCH}.zip"
+# Co při aktualizaci nikdy nepřepisovat (uživatelské / vygenerované / prostředí)
+_UPDATE_SKIP_DIRS = {".venv", ".git", "windows-package", "NMAPScannerPTLab.app",
+                     "__pycache__", ".preview"}
+
+
+def _parse_version(text):
+    import re
+    m = re.search(r'VERSION\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"', text or "")
+    return m.group(1) if m else ""
+
+
+class _AppUpdateWorker(QThread):
+    """Zkontroluje/aktualizuje aplikaci z GitHubu (pro port bez gitu). Stáhne ZIP
+    hlavní větve, rozbalí a přepíše zdrojové soubory (mimo .venv/.git/data)."""
+    line = Signal(str)
+    done = Signal(bool, str)   # (změněno?, hláška)
+
+    def __init__(self, repo_root, mode, local_version, parent=None):
+        super().__init__(parent)
+        self.repo_root = repo_root
+        self.mode = mode            # "check" | "download"
+        self.local_version = local_version
+
+    def run(self):
+        import requests
+        try:
+            self.line.emit("Zjišťuji nejnovější verzi na GitHubu…")
+            remote = _parse_version(
+                requests.get(GH_RAW_VER, timeout=20,
+                             headers={"User-Agent": "NMAPScanner-PTLab"}).text)
+        except Exception as e:  # noqa: BLE001
+            self.done.emit(False, f"Nepodařilo se zjistit verzi: {e}")
+            return
+        if not remote:
+            self.done.emit(False, "Nepodařilo se přečíst vzdálenou verzi.")
+            return
+        self.line.emit(f"Lokální: {self.local_version}   GitHub: {remote}")
+        if remote == self.local_version:
+            self.done.emit(False, f"✅ Máš nejnovější verzi ({remote}).")
+            return
+        if self.mode == "check":
+            self.done.emit(False, f"⬇️ K dispozici je novější verze {remote} "
+                                  "— použij „Stáhnout a nainstalovat aktualizaci“.")
+            return
+        # --- stáhnout a nainstalovat ---
+        import io, zipfile, shutil, tempfile
+        try:
+            self.line.emit(f"Stahuji verzi {remote}…")
+            blob = requests.get(GH_ZIP, timeout=120,
+                                headers={"User-Agent": "NMAPScanner-PTLab"}).content
+            tmp = tempfile.mkdtemp(prefix="nmapscanner_upd_")
+            with zipfile.ZipFile(io.BytesIO(blob)) as z:
+                z.extractall(tmp)
+            roots = [os.path.join(tmp, d) for d in os.listdir(tmp)
+                     if os.path.isdir(os.path.join(tmp, d))]
+            if not roots:
+                self.done.emit(False, "Rozbalení selhalo (prázdný archiv).")
+                return
+            src = roots[0]
+            self.line.emit("Kopíruji nové soubory (zachovávám .venv a data)…")
+            count = 0
+            for dirpath, dirnames, filenames in os.walk(src):
+                dirnames[:] = [d for d in dirnames if d not in _UPDATE_SKIP_DIRS]
+                rel = os.path.relpath(dirpath, src)
+                dest_dir = self.repo_root if rel == "." else os.path.join(self.repo_root, rel)
+                os.makedirs(dest_dir, exist_ok=True)
+                for fn in filenames:
+                    try:
+                        shutil.copy2(os.path.join(dirpath, fn), os.path.join(dest_dir, fn))
+                        count += 1
+                    except Exception:
+                        pass
+            shutil.rmtree(tmp, ignore_errors=True)
+            self.done.emit(True, f"✅ Aktualizováno na verzi {remote} "
+                                 f"({count} souborů). Restartuj aplikaci.")
+        except Exception as e:  # noqa: BLE001
+            self.done.emit(False, f"Aktualizace selhala: {e}")
+
+
 class _FeedWorker(QThread):
     """Obnova online cache (KEV/EPSS/EOL/NVD) na pozadí."""
     line = Signal(str)
@@ -82,6 +167,7 @@ class UpdateManagerDialog(QDialog):
         self.resize(820, 620)
         self._worker = None
         self._feed = None
+        self._appupd = None
 
         root = QVBoxLayout(self)
         tabs = QTabWidget()
@@ -269,19 +355,30 @@ class UpdateManagerDialog(QDialog):
             n_rules = None
         rules_txt = f"{n_rules} pravidel" if n_rules is not None else "knihovna načtena"
 
-        app_box = QGroupBox("Aplikace (git)")
+        self._is_git = os.path.isdir(os.path.join(_repo_root(), ".git"))
+        app_box = QGroupBox("Aplikace")
         al = QVBoxLayout(app_box)
         al.addWidget(QLabel(f"Aktuální verze: <b>{VERSION}</b>"))
-        al.addWidget(QLabel(
-            "Aktualizace aplikace i referenční knihovny klasifikací se distribuují "
-            "přes git (knihovna je součástí repozitáře)."))
         brow = QHBoxLayout()
-        chk = QPushButton("🔍 Zkontrolovat aktualizaci (git fetch)")
-        chk.clicked.connect(self._check_app_update)
-        pull = QPushButton("⬇️ Stáhnout aktualizaci (git pull)")
-        pull.clicked.connect(self._pull_app_update)
-        brow.addWidget(chk)
-        brow.addWidget(pull)
+        if self._is_git:
+            al.addWidget(QLabel("Vývojová kopie (git) — aktualizace přes git."))
+            chk = QPushButton("🔍 Zkontrolovat aktualizaci (git fetch)")
+            chk.clicked.connect(self._check_app_update)
+            pull = QPushButton("⬇️ Stáhnout aktualizaci (git pull)")
+            pull.clicked.connect(self._pull_app_update)
+            brow.addWidget(chk)
+            brow.addWidget(pull)
+        else:
+            al.addWidget(QLabel(
+                "Přenosná kopie — aktualizace se stáhne přímo z GitHubu "
+                "(zachová .venv i tvá nastavení)."))
+            chk = QPushButton("🔍 Zkontrolovat aktualizaci")
+            chk.clicked.connect(self._check_web_update)
+            get = QPushButton("⬇️ Stáhnout a nainstalovat aktualizaci")
+            get.clicked.connect(self._download_web_update)
+            self._web_get_btn = get
+            brow.addWidget(chk)
+            brow.addWidget(get)
         brow.addStretch(1)
         al.addLayout(brow)
         lay.addWidget(app_box)
@@ -316,6 +413,41 @@ class UpdateManagerDialog(QDialog):
                 QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
             return
         self._run_cmd(f'git -C "{repo}" pull --ff-only', "Aktualizace aplikace")
+
+    # --- Web aktualizace (přenosná kopie bez gitu, např. Windows) ---
+    def _start_app_update(self, mode):
+        if getattr(self, "_appupd", None) is not None:
+            return
+        from .. import VERSION
+        self._log(f"\n=== Aktualizace aplikace ({'kontrola' if mode=='check' else 'stažení'}) ===")
+        self._appupd = _AppUpdateWorker(_repo_root(), mode, VERSION, self)
+        self._appupd.line.connect(self._log)
+        self._appupd.done.connect(self._app_update_done)
+        if hasattr(self, "_web_get_btn"):
+            self._web_get_btn.setEnabled(False)
+        QGuiApplication.setOverrideCursor(Qt.BusyCursor)
+        self._appupd.start()
+
+    def _check_web_update(self):
+        self._start_app_update("check")
+
+    def _download_web_update(self):
+        if QMessageBox.question(
+                self, "Aktualizovat aplikaci",
+                "Stáhnout nejnovější verzi z GitHubu a přepsat programové soubory?\n"
+                "Tvoje .venv i nastavení zůstanou. Po dokončení aplikaci restartuj.",
+                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+            return
+        self._start_app_update("download")
+
+    def _app_update_done(self, changed, msg):
+        QGuiApplication.restoreOverrideCursor()
+        self._appupd = None
+        if hasattr(self, "_web_get_btn"):
+            self._web_get_btn.setEnabled(True)
+        self._log(msg)
+        if changed:
+            QMessageBox.information(self, "Aktualizace", msg + "\n\nZavři a spusť aplikaci znovu.")
 
     # ----------------------------------------------------------------- common
     def _run_cmd(self, command, name):

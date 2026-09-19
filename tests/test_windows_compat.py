@@ -76,6 +76,13 @@ def test_tools_have_winget_id():
         assert specs[key].get("winget_id"), f"{key} nemá winget_id"
 
 
+def test_app_update_version_parse():
+    from nmapscanner.dialogs.updates import _parse_version
+    assert _parse_version('VERSION = "5.16.7"') == "5.16.7"
+    assert _parse_version('x\nVERSION="1.2.3"\ny') == "1.2.3"
+    assert _parse_version("nic") == ""
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     fails = []
