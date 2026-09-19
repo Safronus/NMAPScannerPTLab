@@ -25,7 +25,7 @@ TOOLS = [
         "bins": ["nmap"], "version_arg": "--version",
         "version_re": r"Nmap version ([\d.]+)",
         "brew": "brew install nmap", "apt": "sudo apt-get install -y nmap",
-        "winget": "winget install -e --id Insecure.Nmap",
+        "winget": "winget install -e --id Insecure.Nmap --accept-source-agreements --accept-package-agreements",
         "pip": None, "homepage": "https://nmap.org/download",
     },
     {
@@ -34,7 +34,7 @@ TOOLS = [
         "version_re": r"v?([\d.]+)",
         "brew": "brew install ffuf",
         "apt": "sudo apt-get install -y ffuf",
-        "winget": "winget install -e --id ffuf.ffuf",
+        "winget": "winget install -e --id ffuf.ffuf --accept-source-agreements --accept-package-agreements",
         "pip": None, "homepage": "https://github.com/ffuf/ffuf",
     },
     {
@@ -43,7 +43,7 @@ TOOLS = [
         "version_re": r"([\d]+\.[\d.]+)",
         "brew": "brew install --cask zap",
         "apt": "sudo snap install zaproxy --classic",
-        "winget": "winget install -e --id ZAP.ZAP",
+        "winget": "winget install -e --id ZAP.ZAP --accept-source-agreements --accept-package-agreements",
         "pip": None, "homepage": "https://www.zaproxy.org/download/",
     },
     {

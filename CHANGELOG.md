@@ -4,6 +4,16 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.16.4] - 2026-09-19
+
+### Změněno / Opraveno
+- **Winget instalace přímo z aplikace na Windows** — příkazy dostaly
+  `--accept-source-agreements --accept-package-agreements`, aby instalace/aktualizace
+  z tlačítka ve Správci aktualizací proběhla neinteraktivně (jen případné UAC).
+- **Text hlavičky Správce aktualizací je platformový** — na Windows už nemluví o
+  brew/sudo, ale o wingetu a UAC (a připomíná, že Python knihovny řeší
+  `install_windows.bat`, ne winget/brew).
+
 ## [5.16.3] - 2026-09-19
 
 ### Opraveno

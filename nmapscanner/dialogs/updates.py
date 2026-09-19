@@ -111,11 +111,19 @@ class UpdateManagerDialog(QDialog):
 
     # ------------------------------------------------------------------ tools
     def _tools_tab(self):
+        import sys as _sys
+        if _sys.platform.startswith("win"):
+            _hint = ("tlačítkem (vyžaduje winget, může vyskočit potvrzení UAC). "
+                     "Pozn.: brew na Windows není — Python knihovny řeší install_windows.bat.")
+        elif _sys.platform == "darwin":
+            _hint = "tlačítkem (vyžaduje Homebrew / pip)."
+        else:
+            _hint = "tlačítkem (vyžaduje apt / pip, může chtít heslo sudo)."
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.addWidget(QLabel(
             "Detekce nainstalovaných nástrojů a jejich verzí. Aktualizaci spustíš "
-            "tlačítkem (vyžaduje brew/apt/pip, může chtít heslo sudo v terminálu)."))
+            + _hint))
         self.tools_table = QTableWidget(0, 5)
         self.tools_table.setHorizontalHeaderLabels(
             ["Nástroj", "Účel", "Stav", "Verze", "Akce"])
