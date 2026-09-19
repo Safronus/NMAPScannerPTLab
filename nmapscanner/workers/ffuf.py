@@ -1,15 +1,86 @@
 import os
+import io
 import time
 import json
 import re
 import shutil
 import subprocess
 import glob
+import zipfile
+import platform
 
 import requests
 
 
 from PySide6.QtCore import Signal, QThread
+
+
+class FfufDownloadWorker(QThread):
+    """Stáhne oficiální ffuf z GitHub releases a rozbalí ffuf(.exe) do dané složky.
+    Řešení pro rozbitý winget (bez adminu, bez databáze, bez PATH)."""
+    progress = Signal(str)
+    finished_dl = Signal(bool, str)   # (ok, cesta nebo chybová hláška)
+
+    def __init__(self, dest_dir):
+        super().__init__()
+        self.dest_dir = dest_dir
+
+    def run(self):
+        try:
+            ua = {"User-Agent": "NMAPScanner-PTLab"}
+            self.progress.emit("Zjišťuji nejnovější ffuf z GitHubu…")
+            rel = requests.get("https://api.github.com/repos/ffuf/ffuf/releases/latest",
+                               headers=ua, timeout=25).json()
+            sysname = platform.system().lower()   # windows / darwin / linux
+            oskey = {"windows": "windows", "darwin": "macos", "linux": "linux"}.get(sysname, sysname)
+            m = platform.machine().lower()
+            archkey = "arm64" if ("arm" in m or "aarch" in m) else "amd64"
+            asset = None
+            for a in rel.get("assets", []):
+                n = (a.get("name") or "").lower()
+                if oskey in n and archkey in n and n.endswith((".zip", ".tar.gz")):
+                    asset = a
+                    break
+            if not asset:  # fallback: aspoň dle OS
+                for a in rel.get("assets", []):
+                    n = (a.get("name") or "").lower()
+                    if oskey in n and n.endswith((".zip", ".tar.gz")):
+                        asset = a
+                        break
+            if not asset:
+                self.finished_dl.emit(False, "Nenašel jsem vhodný ffuf balíček pro tvůj systém.")
+                return
+            self.progress.emit(f"Stahuji {asset.get('name')}…")
+            blob = requests.get(asset["browser_download_url"], headers=ua, timeout=180).content
+            exe = "ffuf.exe" if os.name == "nt" else "ffuf"
+            os.makedirs(self.dest_dir, exist_ok=True)
+            dest = os.path.join(self.dest_dir, exe)
+            name = (asset.get("name") or "").lower()
+            if name.endswith(".zip"):
+                with zipfile.ZipFile(io.BytesIO(blob)) as z:
+                    member = next((mm for mm in z.namelist() if mm.lower().endswith(exe)), None)
+                    if not member:
+                        self.finished_dl.emit(False, "V balíčku nebyl ffuf.")
+                        return
+                    with z.open(member) as src, open(dest, "wb") as out:
+                        out.write(src.read())
+            else:  # tar.gz
+                import tarfile
+                with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as t:
+                    member = next((mm for mm in t.getnames() if mm.lower().endswith(exe)), None)
+                    if not member:
+                        self.finished_dl.emit(False, "V balíčku nebyl ffuf.")
+                        return
+                    with t.extractfile(member) as src, open(dest, "wb") as out:
+                        out.write(src.read())
+            if os.name != "nt":
+                try:
+                    os.chmod(dest, 0o755)
+                except Exception:
+                    pass
+            self.finished_dl.emit(True, dest)
+        except Exception as e:  # noqa: BLE001
+            self.finished_dl.emit(False, f"Stažení selhalo: {e}")
 
 
 def find_ffuf():

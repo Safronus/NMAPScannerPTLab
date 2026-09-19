@@ -4,6 +4,15 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.18.0] - 2026-09-19
+
+### Přidáno
+- **Automatické stažení ffuf přímo z aplikace** — když ffuf chybí (nebo je
+  rozbitá winget instalace), fuzzing nabídne „Stáhnout automaticky?": stáhne
+  oficiální ffuf z GitHub releases a rozbalí `ffuf.exe` do složky aplikace.
+  Bez wingetu, bez práv správce, bez PATH. Vybírá balíček dle OS/architektury
+  (Windows/macOS/Linux, amd64/arm64). Ověřeno: ffuf 2.3.0 stažen a spustitelný.
+
 ## [5.17.9] - 2026-09-19
 
 ### Změněno

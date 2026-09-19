@@ -1143,15 +1143,17 @@ class FfufDialog(QDialog):
         """
         self.export_json_btn.setEnabled(False)
 
-        # Pre-check: je ffuf vůbec k dispozici? (na Windows častá PATH staleness)
+        # Pre-check: je ffuf vůbec k dispozici? Když ne, nabídnout automatické stažení.
         from ..workers.ffuf import find_ffuf
         if not find_ffuf():
-            QMessageBox.critical(
+            ret = QMessageBox.question(
                 self, "ffuf nenalezen",
                 "Nástroj ffuf nebyl nalezen, fuzzing nelze spustit.\n\n"
-                "Nainstaluj ho ve Správci aktualizací (⬆️). Pokud jsi ho právě "
-                "nainstaloval přes winget, ZAVŘI a spusť aplikaci znovu — nová "
-                "PATH se načte až v novém procesu.")
+                "Chceš ho teď automaticky stáhnout z oficiálního GitHubu přímo do "
+                "složky aplikace? (Nevyžaduje winget ani práva správce.)",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+            if ret == QMessageBox.Yes:
+                self._download_ffuf()
             return
 
         # Sjednocení slovníků
@@ -1560,6 +1562,29 @@ class FfufDialog(QDialog):
         self.log_label.setText(msg)
         self.log_label.setToolTip(msg)
         print(f"DEBUG: [ffuf-log] {msg}")
+
+    def _download_ffuf(self):
+        """Stáhne oficiální ffuf do složky aplikace (obchází rozbitý winget)."""
+        from ..workers.ffuf import FfufDownloadWorker
+        dest = os.getcwd()  # složka aplikace (find_ffuf ji kontroluje jako první)
+        self.log_label.setText("Stahuji ffuf z GitHubu…")
+        self._ffuf_dl = FfufDownloadWorker(dest)
+        self._ffuf_dl.progress.connect(self._append_ffuf_log)
+        self._ffuf_dl.finished_dl.connect(self._on_ffuf_downloaded)
+        self._ffuf_dl.start()
+
+    def _on_ffuf_downloaded(self, ok, msg):
+        self._ffuf_dl = None
+        if ok:
+            self.log_label.setText(f"✅ ffuf stažen: {msg}")
+            QMessageBox.information(
+                self, "ffuf stažen",
+                f"ffuf byl stažen do:\n{msg}\n\nSpusť fuzzing znovu (tlačítko Start).")
+        else:
+            QMessageBox.warning(
+                self, "Stažení ffuf selhalo",
+                f"{msg}\n\nStáhni ffuf ručně z https://github.com/ffuf/ffuf/releases "
+                "a vlož ffuf.exe do složky aplikace.")
 
     def _fill_slots(self):
         """Spustí cíle z fronty, dokud nejsou obsazené všechny paralelní sloty."""
