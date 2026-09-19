@@ -4,6 +4,23 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.16.0] - 2026-09-19
+
+### Přidáno
+- **Podpora Windows.** Aplikace už na Windows nevyžaduje `sudo` (to je macOS/Linux
+  koncept):
+  - Na Windows se `sudo` vůbec nepoužívá. Privilegia řeší spuštění „Spustit jako
+    správce“. Při startu skenu bez práv správce se zobrazí info a nabídka
+    pokračovat v neprivilegovaném režimu.
+  - Bez práv správce se SYN sken (`-sS`) automaticky převede na TCP connect
+    (`-sT`), který správce nevyžaduje (UDP `-sU` a detekce OS `-O` bez správce
+    fungovat nemohou).
+  - Tlačítko „Zapomenout sudo heslo“ je na Windows skryté.
+- **`build_exe_windows.bat`** — skript, který aplikaci na Windows zabalí
+  PyInstallerem do samostatného `.exe` (`dist\NMAPScannerPTLab\`), včetně assetů,
+  klasifikační databáze a složky `wordlists` vedle exe. Zmražený běh navíc
+  nastaví pracovní adresář vedle `.exe` a přeskočí auto-update.
+
 ## [5.15.2] - 2026-06-12
 
 ### Opraveno

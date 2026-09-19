@@ -79,7 +79,12 @@ class ScanWorker(QRunnable):
     def _build_command(self):
         """Sestaví argv (případně obalený sudem) a vstup pro stdin. Heslo jde jen
         na stdin (``sudo -S``), nikdy ne do argv (nebylo by vidět v ``ps``)."""
-        parts = self.command.split()
+        command = self.command
+        # Windows bez práv správce: SYN sken (-sS) selže → převést na TCP connect.
+        from ..utils import is_windows, is_windows_admin, unprivileged_nmap_command
+        if is_windows() and not is_windows_admin():
+            command = unprivileged_nmap_command(command)
+        parts = command.split()
         if not self.use_sudo:
             return parts, None
         if self.sudo_password is not None:

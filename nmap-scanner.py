@@ -107,6 +107,14 @@ def _print_banner():
 
 
 def main():
+    # Zmražený běh (PyInstaller .exe): pracovní adresář nastavit vedle .exe, aby
+    # se našla/ukládala složka „wordlists“; auto-update (git) přeskočit.
+    if getattr(sys, "frozen", False):
+        try:
+            os.chdir(os.path.dirname(sys.executable))
+        except Exception:
+            pass
+        os.environ.setdefault("NMAPSCANNER_NO_UPDATE", "1")
     _auto_update()   # případný git pull + doinstalace závislostí + restart na novou verzi
     _startup_checks()
     _print_banner()

@@ -1,9 +1,35 @@
 import re
+import sys
 import ipaddress
 
 
 
 from PySide6.QtGui import QColor
+
+
+def is_windows():
+    """True na Windows (kde sudo nedává smysl — používá se admin/UAC)."""
+    return sys.platform.startswith("win")
+
+
+def is_windows_admin():
+    """True, pokud proces na Windows běží se zvýšenými právy (Administrátor).
+
+    Na jiných OS vrací False (tam se řeší přes sudo/geteuid jinde)."""
+    if not is_windows():
+        return False
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def unprivileged_nmap_command(cmd):
+    """Na Windows bez práv správce nejde SYN sken (-sS, raw sockety) — převede ho
+    na TCP connect (-sT), který správce nevyžaduje. Ostatní ponechá beze změny.
+    UDP (-sU) ani OS detekce (-O) bez správce fungovat nemohou."""
+    return " ".join("-sT" if p == "-sS" else p for p in (cmd or "").split())
 
 
 def clean_and_parse_ips(raw_text):

@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import json
 import subprocess
@@ -337,6 +338,9 @@ class NmapScannerApp(QWidget):
         self.forget_sudo_btn.setToolTip("Bezpečně vymaže sudo heslo z paměti (drží se jen v RAM, nikdy na disk).")
         self.forget_sudo_btn.clicked.connect(self.forget_sudo_password)
         left_panel.addWidget(self.forget_sudo_btn)
+        # Na Windows se sudo nepoužívá (privilegia řeší „Spustit jako správce“).
+        if sys.platform.startswith("win"):
+            self.forget_sudo_btn.hide()
 
         # Nový layout pro Export / Import / Přepnutí projektu
         export_import_layout = QVBoxLayout()
@@ -2057,6 +2061,27 @@ class NmapScannerApp(QWidget):
         heslo? → zeptat se v dialogu (max 3 pokusy). Heslo se nikdy neukládá na
         disk, drží se jen jako mazatelná bytearray v RAM.
         """
+        # 0) Windows: žádné sudo. Privilegované skeny (SYN/UDP/OS) vyžadují spuštění
+        #    aplikace jako správce + nainstalovaný Npcap. Když správce není, nmap
+        #    použije TCP connect (-sT) — sken proběhne, jen bez SYN/UDP/OS.
+        if sys.platform.startswith("win"):
+            self._use_sudo = False
+            from .utils import is_windows_admin
+            if is_windows_admin():
+                return True
+            ret = QMessageBox.question(
+                self, "Oprávnění (Windows)",
+                "Aplikace neběží jako správce.\n\n"
+                "Plné skeny (SYN -sS, UDP -sU, detekce OS -O) vyžadují spuštění "
+                "jako správce a nainstalovaný Npcap. Bez toho nmap automaticky "
+                "použije TCP connect sken (-sT) — pomalejší a méně skrytý, ale "
+                "funkční.\n\n"
+                "Pro plné funkce zavři aplikaci a spusť ji přes pravý klik → "
+                "„Spustit jako správce“.\n\n"
+                "Pokračovat teď v neprivilegovaném režimu?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+            return ret == QMessageBox.Yes
+
         # 1) Už běžíme jako root → sudo netřeba.
         if hasattr(os, "geteuid") and os.geteuid() == 0:
             self._use_sudo = False
