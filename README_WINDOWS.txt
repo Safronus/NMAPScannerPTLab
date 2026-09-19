@@ -39,14 +39,26 @@ Priste uz staci jen krok 4.
    neprivilegovanem rezimu (TCP connect sken).
 
 --------------------------------------------------------------------
- VOLITELNE NASTROJE
+ SYSTEMOVE NASTROJE - POZOR: brew NENI pro Windows!
 --------------------------------------------------------------------
-   * ffuf        https://github.com/ffuf/ffuf/releases  (ffuf.exe do PATH)
-   * OWASP ZAP   https://www.zaproxy.org/download/  (vyzaduje Javu 17+,
-                 napr. Eclipse Temurin z https://adoptium.net )
-   * testssl / sslscan  - na Windows nejsnaze pres WSL
-   Detekce verzi a aktualizace nastroju je primo v aplikaci
-   (tlacitko Spravce aktualizaci).
+   Homebrew (brew) funguje jen na macOS/Linux. Na Windows pouzij
+   WINGET (je soucasti Windows 10/11) nebo primy instalator.
+
+   Nejrychleji pres winget (v PowerShellu/cmd):
+     winget install -e --id Insecure.Nmap     (POVINNE, jadro aplikace)
+     winget install -e --id ffuf.ffuf         (volitelne)
+     winget install -e --id ZAP.ZAP           (volitelne, vyzaduje Javu 17+)
+
+   Nebo primymi instalatory:
+     * Nmap        https://nmap.org/download.html   (nech zaskrtnuty Npcap)
+     * ffuf        https://github.com/ffuf/ffuf/releases  (ffuf.exe do PATH)
+     * OWASP ZAP   https://www.zaproxy.org/download/  (Java 17+, napr.
+                   Eclipse Temurin z https://adoptium.net )
+     * testssl / sslscan  - na Windows nejsnaze pres WSL
+
+   POZN.: Python knihovny (PySide6 atd.) NEinstaluje winget ani brew -
+   ty resi install_windows.bat pres pip. Detekce verzi a aktualizace
+   nastroju je i primo v aplikaci (tlacitko Spravce aktualizaci).
 
 --------------------------------------------------------------------
  API KLICE (volitelne, zrychli obohacovani zranitelnosti)

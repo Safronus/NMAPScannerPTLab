@@ -4,6 +4,15 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.16.3] - 2026-09-19
+
+### Opraveno
+- **Správce aktualizací na Windows nabízel `brew`** (fallback), který na Windows
+  neexistuje. Nově ukazuje **winget** příkazy: `winget install -e --id
+  Insecure.Nmap` / `ffuf.ffuf` / `ZAP.ZAP`; SSLyze přes pip; ostatní odkaz na
+  homepage. macOS/Linux beze změny (brew/apt). `README_WINDOWS.txt` doplněn o
+  jasné upozornění, že brew na Windows není a používá se winget.
+
 ## [5.16.2] - 2026-09-19
 
 ### Přidáno
