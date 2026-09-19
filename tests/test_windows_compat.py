@@ -56,6 +56,26 @@ def test_update_command_macos_still_brew():
     assert tc.update_command(specs["nmap"], "darwin") == "brew install nmap"
 
 
+def test_installable_here_windows():
+    specs = {s["key"]: s for s in tc.TOOLS}
+    # winget nástroje instalovatelné na Windows
+    for key in ("nmap", "ffuf", "zap"):
+        assert tc.installable_here(specs[key], "windows") is True
+    # bez winget/pip → na Windows neinstalovatelné (info, ne instalace naslepo)
+    for key in ("testssl", "sslscan", "searchsploit"):
+        assert tc.installable_here(specs[key], "windows") is False
+    # SSLyze má pip → instalovatelné i na Windows
+    assert tc.installable_here(specs["sslyze"], "windows") is True
+    # na macOS jsou přes brew instalovatelné (i testssl)
+    assert tc.installable_here(specs["testssl"], "darwin") is True
+
+
+def test_tools_have_winget_id():
+    specs = {s["key"]: s for s in tc.TOOLS}
+    for key in ("nmap", "ffuf", "zap"):
+        assert specs[key].get("winget_id"), f"{key} nemá winget_id"
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     fails = []

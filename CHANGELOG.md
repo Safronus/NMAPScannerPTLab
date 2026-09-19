@@ -4,6 +4,21 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.16.6] - 2026-09-19
+
+### Změněno / Opraveno (Správce aktualizací — chytřejší na Windows)
+- **ffuf hlásil „chybí", i když je nainstalovaný přes winget.** Detekce nově
+  pozná balíček i mimo PATH (přes `winget list`) a označí ho „✅ nainstalováno
+  (restartuj app)" — běžící proces má totiž ještě starou PATH.
+- **Nástroje bez Windows balíku** (testssl.sh, sslscan, searchsploit) se už
+  nenabízejí k instalaci naslepo: stav „— není pro tuto platformu" a neaktivní
+  tlačítko „ℹ Nedostupné" s vysvětlením (WSL / ruční instalace).
+- **Rozumnější akce u nainstalovaných nástrojů:** místo „Aktualizovat" je
+  „↻ Přeinstalovat" s vysvětlením, že winget/brew aktualizuje jen když existuje
+  novější verze (jinak nahlásí, že je aktuální).
+- Po instalaci se do výstupu vypíše připomínka restartovat aplikaci, aby se
+  načetla nová PATH.
+
 ## [5.16.5] - 2026-09-19
 
 ### Opraveno

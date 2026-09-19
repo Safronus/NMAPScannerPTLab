@@ -14,7 +14,7 @@ Příkazy nástrojů se spouští až na výslovné kliknutí; nic se nedělá a
 import os
 
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QGuiApplication, QColor
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QPlainTextEdit, QMessageBox,
@@ -151,23 +151,54 @@ class UpdateManagerDialog(QDialog):
         for i, (spec, st) in enumerate(results):
             self.tools_table.setItem(i, 0, QTableWidgetItem(spec["name"]))
             self.tools_table.setItem(i, 1, QTableWidgetItem(spec["kind"]))
-            if st["installed"]:
+            cmd = toolcheck.update_command(spec)
+            installable = bool(cmd)
+            installed = st["installed"]
+            needs_restart = st.get("needs_restart")
+
+            # --- Sloupec Stav ---
+            if installed and needs_restart:
+                cell = QTableWidgetItem("✅ nainstalováno (restartuj app)")
+                cell.setForeground(QColor("#BF9000"))
+                cell.setToolTip("Nainstalováno přes winget, ale běžící aplikace má "
+                                "ještě starou PATH. Zavři a spusť aplikaci znovu.")
+            elif installed:
                 cell = QTableWidgetItem("✅ nainstalováno")
                 cell.setForeground(Qt.darkGreen)
+            elif not installable:
+                cell = QTableWidgetItem("— není pro tuto platformu")
+                cell.setForeground(QColor("#888888"))
+                cell.setToolTip(toolcheck.unavailable_hint(spec))
             else:
                 cell = QTableWidgetItem("— chybí")
                 cell.setForeground(Qt.red)
             self.tools_table.setItem(i, 2, cell)
             self.tools_table.setItem(i, 3, QTableWidgetItem(st["version"] or "—"))
-            cmd = toolcheck.update_command(spec)
+
+            # --- Sloupec Akce ---
             holder = QWidget()
             hl = QHBoxLayout(holder)
             hl.setContentsMargins(2, 1, 2, 1)
-            label = "⬆️ Aktualizovat" if st["installed"] else "⬇️ Instalovat"
-            run_btn = QPushButton(label)
-            run_btn.setEnabled(bool(cmd) and self._worker is None)
-            run_btn.clicked.connect(lambda _=False, c=cmd, n=spec["name"]: self._run_cmd(c, n))
-            hl.addWidget(run_btn)
+            if not installable:
+                # Nedostupné na této platformě → jen informovat, žádná instalace
+                info = QPushButton("ℹ Nedostupné")
+                info.setEnabled(False)
+                info.setToolTip(toolcheck.unavailable_hint(spec))
+                hl.addWidget(info)
+            else:
+                if installed:
+                    label = "↻ Přeinstalovat"
+                    tip = ("Spustí instalátor znovu; aktualizuje jen pokud je "
+                           "dostupná novější verze (jinak nahlásí, že je aktuální).")
+                else:
+                    label = "⬇️ Instalovat"
+                    tip = cmd
+                run_btn = QPushButton(label)
+                run_btn.setToolTip(tip)
+                run_btn.setEnabled(self._worker is None)
+                run_btn.clicked.connect(
+                    lambda _=False, c=cmd, n=spec["name"]: self._run_cmd(c, n))
+                hl.addWidget(run_btn)
             copy_btn = QPushButton("⧉")
             copy_btn.setToolTip(cmd or spec["homepage"])
             copy_btn.setFixedWidth(34)
@@ -295,6 +326,7 @@ class UpdateManagerDialog(QDialog):
                                     "Počkej na dokončení aktuální operace.")
             return
         self._log(f"\n=== {name} ===")
+        self._last_cmd = command
         self._worker = CommandWorker(command, self)
         self._worker.line.connect(self._log)
         self._worker.finished.connect(self._cmd_done)
@@ -303,6 +335,12 @@ class UpdateManagerDialog(QDialog):
 
     def _cmd_done(self, code):
         self._log(f"[hotovo, návratový kód {code}]")
+        # Po instalaci nástroje připomenout restart (nová PATH se načte až v novém procesu).
+        cmd = (getattr(self, "_last_cmd", "") or "").lower()
+        if any(k in cmd for k in ("winget install", "brew install", "apt-get install",
+                                  "snap install", "pip install")):
+            self._log("ℹ Pokud nástroj i po instalaci hlásí „chybí“, zavři a spusť "
+                      "aplikaci znovu — nová PATH se načte až v novém procesu.")
         self._worker = None
         self._refresh_tools()
 

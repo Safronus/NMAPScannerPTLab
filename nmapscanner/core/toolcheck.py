@@ -26,6 +26,7 @@ TOOLS = [
         "version_re": r"Nmap version ([\d.]+)",
         "brew": "brew install nmap", "apt": "sudo apt-get install -y nmap",
         "winget": "winget install -e --id Insecure.Nmap --accept-source-agreements --accept-package-agreements",
+        "winget_id": "Insecure.Nmap",
         "pip": None, "homepage": "https://nmap.org/download",
     },
     {
@@ -35,6 +36,7 @@ TOOLS = [
         "brew": "brew install ffuf",
         "apt": "sudo apt-get install -y ffuf",
         "winget": "winget install -e --id ffuf.ffuf --accept-source-agreements --accept-package-agreements",
+        "winget_id": "ffuf.ffuf",
         "pip": None, "homepage": "https://github.com/ffuf/ffuf",
     },
     {
@@ -44,6 +46,7 @@ TOOLS = [
         "brew": "brew install --cask zap",
         "apt": "sudo snap install zaproxy --classic",
         "winget": "winget install -e --id ZAP.ZAP --accept-source-agreements --accept-package-agreements",
+        "winget_id": "ZAP.ZAP",
         "pip": None, "homepage": "https://www.zaproxy.org/download/",
     },
     {
@@ -107,11 +110,31 @@ def _find_bin(spec):
     return None
 
 
+def _winget_installed(winget_id, timeout=20):
+    """Na Windows zjistí přes ``winget list``, zda je balíček nainstalován
+    (i když ještě není v PATH — čerstvá instalace vyžaduje nový proces)."""
+    if not (sys.platform.startswith("win") and winget_id and shutil.which("winget")):
+        return False
+    try:
+        r = subprocess.run(
+            ["winget", "list", "--id", winget_id, "-e", "--accept-source-agreements"],
+            capture_output=True, text=True, timeout=timeout)
+        out = ((r.stdout or "") + (r.stderr or "")).lower()
+        return r.returncode == 0 and winget_id.lower() in out
+    except Exception:
+        return False
+
+
 def detect(spec):
-    """Vrátí {'installed','version','path'} pro daný nástroj."""
+    """Vrátí {'installed','version','path','needs_restart'} pro daný nástroj."""
     path = _find_bin(spec)
     if not path:
-        return {"installed": False, "version": "", "path": ""}
+        # Windows fallback: nástroj může být nainstalován přes winget, ale běžící
+        # proces má ještě starou PATH → hlásit jako nainstalovaný (nutný restart).
+        if _winget_installed(spec.get("winget_id")):
+            return {"installed": True, "version": "", "path": "",
+                    "needs_restart": True}
+        return {"installed": False, "version": "", "path": "", "needs_restart": False}
     version = ""
     arg = spec.get("version_arg")
     if arg:
@@ -124,7 +147,22 @@ def detect(spec):
                 version = m.group(1)
         except Exception:
             version = "?"
-    return {"installed": True, "version": version, "path": path}
+    return {"installed": True, "version": version, "path": path,
+            "needs_restart": False}
+
+
+def installable_here(spec, platform=None):
+    """True, pokud pro tento nástroj existuje na dané platformě automatická
+    instalace (brew/apt/winget/pip). Jinak jde jen o ruční instalaci."""
+    return bool(update_command(spec, platform))
+
+
+def unavailable_hint(spec):
+    """Text pro nástroj bez automatické instalace na této platformě."""
+    if sys.platform.startswith("win"):
+        return ("Na Windows není nativní balík — použij WSL, nebo přeskoč "
+                f"(ruční instalace: {spec.get('homepage', '')}).")
+    return f"Automatická instalace není k dispozici — viz {spec.get('homepage', '')}."
 
 
 def update_command(spec, platform=None):
