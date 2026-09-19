@@ -813,7 +813,15 @@ class FfufDialog(QDialog):
         self.redirect_check = QCheckBox("Sledovat přesměrování (-r)")
         self.redirect_check.setChecked(True)
         config_layout.addWidget(self.redirect_check, 2, 1)
-        
+
+        self.autocalib_check = QCheckBox("Auto-kalibrace (-ac) — odfiltruje falešné shody")
+        self.autocalib_check.setChecked(True)
+        self.autocalib_check.setToolTip(
+            "ffuf nejdřív pošle náhodné cesty, naučí se, jak vypadá „nenalezeno“, a "
+            "automaticky odfiltruje servery, které vrací 200/401 na cokoli (SPA, login, "
+            "wildcard). Doporučeno nechat zapnuté.")
+        config_layout.addWidget(self.autocalib_check, 3, 1)
+
         tech_layout = QHBoxLayout()
         tech_layout.setContentsMargins(0, 0, 0, 0)
         self.chk_asp = QCheckBox("ASP.NET"); self.chk_asp.toggled.connect(lambda s: self.toggle_ext_group("ASP.NET", s))
@@ -1629,6 +1637,7 @@ class FfufDialog(QDialog):
             "matcher": mcs,
             "extensions": exts,
             "follow_redirects": self.redirect_check.isChecked(),
+            "auto_calibrate": self.autocalib_check.isChecked(),
         }
 
         worker = FfufWorker(current_url, self.current_wordlist, options)
@@ -1926,6 +1935,7 @@ class FfufDialog(QDialog):
         s.setValue("ffuf/match_codes", self.mc_combo.get_checked_codes())
         s.setValue("ffuf/extensions", self.ext_combo.get_checked_codes())
         s.setValue("ffuf/follow_redirects", self.redirect_check.isChecked())
+        s.setValue("ffuf/auto_calibrate", self.autocalib_check.isChecked())
         s.setValue("ffuf/parallel", self.parallel_spin.value())
 
     def _restore_ffuf_settings(self):
@@ -1935,6 +1945,8 @@ class FfufDialog(QDialog):
             self.parallel_spin.setValue(int(s.value("ffuf/parallel", 1)))
         except (TypeError, ValueError):
             pass
+        ac = s.value("ffuf/auto_calibrate", True)
+        self.autocalib_check.setChecked(ac in (True, "true", "True", 1, "1"))
 
         wl_names = [x for x in str(s.value("ffuf/wordlists", "")).split(",") if x]
         if wl_names:

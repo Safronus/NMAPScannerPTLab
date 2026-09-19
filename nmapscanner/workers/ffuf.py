@@ -293,6 +293,10 @@ class FfufWorker(QThread):
         if self.options.get('extensions'): command.extend(["-e", self.options['extensions']])
         if self.options.get('matcher'): command.extend(["-mc", self.options['matcher']])
         if self.options.get('follow_redirects', False): command.append("-r")
+        # Auto-kalibrace: ffuf se naučí „wildcard/nenalezeno" odpověď a odfiltruje
+        # falešné shody (servery vracející 200/401 na cokoli). Zásadní proti FP.
+        if self.options.get('auto_calibrate', True):
+            command.append("-ac")
 
         # Debug do logu aplikace (viditelné bez CMD)
         try:

@@ -4,6 +4,15 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.18.2] - 2026-09-19
+
+### Přidáno
+- **Auto-kalibrace ffuf (`-ac`) proti falešným shodám** — nově zapnutá výchozím
+  stavem (přepínač v okně ffuf). ffuf nejdřív pošle náhodné cesty, naučí se, jak
+  vypadá odpověď „nenalezeno", a **automaticky odfiltruje servery vracející
+  200/401 na cokoli** (SPA, login stránky, wildcard). Řeší statisíce
+  false-positive nálezů. Ověřeno: catch-all 404 → 0 nálezů s `-ac` vs 5 bez.
+
 ## [5.18.1] - 2026-09-19
 
 ### Opraveno (výkon ffuf při obřích skenech)
