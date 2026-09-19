@@ -139,6 +139,35 @@ def _path_present(p):
         return False
 
 
+def _real_target(path):
+    """Vrátí skutečný cíl cesty (rozresolvuje symlink víc způsoby kvůli Windows)."""
+    # 1) realpath (většinou stačí)
+    try:
+        r = os.path.realpath(path)
+        if os.path.isfile(r):
+            return r
+    except Exception:
+        pass
+    # 2) readlink (když realpath symlink nerozbalí)
+    try:
+        if os.path.islink(path):
+            t = os.readlink(path)
+            if not os.path.isabs(t):
+                t = os.path.join(os.path.dirname(path), t)
+            t = os.path.normpath(t)
+            if os.path.isfile(t):
+                return t
+    except Exception:
+        pass
+    # 3) samotný soubor (reálný exe, ne symlink)
+    try:
+        if os.path.isfile(path):
+            return path
+    except Exception:
+        pass
+    return None
+
+
 def _resolve_real_exe(candidates):
     """Z kandidátních cest vrátí SKUTEČNĚ SPUSTITELNÝ soubor. Winget `Links\\*.exe`
     je symlink, který ``subprocess`` na Windows neumí spustit (WinError 2) — musí
@@ -146,16 +175,9 @@ def _resolve_real_exe(candidates):
     mimo `\\Links\\`."""
     reals = []
     for c in candidates:
-        if not c:
-            continue
-        try:
-            r = os.path.realpath(c)   # rozresolví symlink na skutečný cíl
-            if os.path.isfile(r):
-                reals.append(r)
-            elif os.path.isfile(c):
-                reals.append(c)
-        except Exception:
-            pass
+        r = _real_target(c) if c else None
+        if r and r not in reals:
+            reals.append(r)
     if not reals:
         return None
     for r in reals:                    # preferovat reálné Packages exe, ne Links alias

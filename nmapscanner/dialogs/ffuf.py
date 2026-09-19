@@ -1555,6 +1555,12 @@ class FfufDialog(QDialog):
             if it.flags() & Qt.ItemIsUserCheckable:
                 it.setCheckState(Qt.Checked)
 
+    def _append_ffuf_log(self, msg):
+        """Zobrazí debug/chybovou zprávu z ffuf workeru (viditelně v okně)."""
+        self.log_label.setText(msg)
+        self.log_label.setToolTip(msg)
+        print(f"DEBUG: [ffuf-log] {msg}")
+
     def _fill_slots(self):
         """Spustí cíle z fronty, dokud nejsou obsazené všechny paralelní sloty."""
         if not self.is_scanning:
@@ -1610,6 +1616,7 @@ class FfufDialog(QDialog):
         worker.result_found.connect(lambda data, c=ctx: self.add_result(data, c))
         worker.progress_update.connect(lambda data, c=ctx: self.on_progress_update(data, c))
         worker.finished.connect(lambda c=ctx: self.on_worker_finished(c), Qt.SingleShotConnection)
+        worker.log.connect(self._append_ffuf_log)   # debug/chyby ffuf do viditelného logu
         worker.start()
 
         running = len(self.active_ctxs)

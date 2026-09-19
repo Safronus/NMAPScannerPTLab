@@ -4,6 +4,16 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.17.7] - 2026-09-19
+
+### Opraveno
+- **Log z ffuf fuzzingu se nikde nezobrazoval** — signál `log` workeru nebyl
+  napojený na okno. Nově se debug/chyby (spouštěný ffuf, slovník, návratový kód,
+  WinError) ukazují ve stavovém řádku okna, ne jen v CMD.
+- **Zpevněné resolvování ffuf.exe** — kromě `os.path.realpath` i `os.readlink`
+  (kdyby realpath winget symlink nerozbalil), ať se vždy získá skutečně
+  spustitelný soubor.
+
 ## [5.17.6] - 2026-09-19
 
 ### Opraveno
