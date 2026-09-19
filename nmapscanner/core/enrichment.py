@@ -81,6 +81,49 @@ def _load(path):
         return {}
 
 
+def _age_days(ts):
+    try:
+        return max(0.0, (time.time() - float(ts)) / 86400.0)
+    except Exception:
+        return None
+
+
+def cache_status():
+    """Čerstvost lokálních dat/DB (pro startup kontrolu). Vrací dict s údaji o
+    stáří a zastaralosti KEV / EOL / NVD / EPSS cache. Bez sítě."""
+    out = {}
+    # CISA KEV (aktivně zneužívané) — TTL 1 den
+    kev = _load(_KEV_CACHE).get("_catalog") if os.path.exists(_KEV_CACHE) else None
+    if kev:
+        age = _age_days(kev.get("_ts", 0))
+        out["kev"] = {"present": True, "age_days": age, "count": len(kev.get("data", {}) or {}),
+                      "stale": (age is None or age > _KEV_TTL / 86400.0)}
+    else:
+        out["kev"] = {"present": False, "age_days": None, "count": 0, "stale": True}
+    # EOL (endoflife.date) — TTL 14 dní; stáří dle nejmladšího záznamu
+    eol = _load(_EOL_CACHE) if os.path.exists(_EOL_CACHE) else {}
+    if eol:
+        tss = [v.get("_ts", 0) for v in eol.values() if isinstance(v, dict)]
+        age = _age_days(max(tss)) if tss else None
+        out["eol"] = {"present": True, "age_days": age, "count": len(eol),
+                      "stale": (age is None or age > _EOL_TTL / 86400.0)}
+    else:
+        out["eol"] = {"present": False, "age_days": None, "count": 0, "stale": True}
+    # NVD CVE cache — bez TTL (CVE se nemění), jen počet
+    nvd = _load(_NVD_CACHE) if os.path.exists(_NVD_CACHE) else {}
+    out["nvd"] = {"present": bool(nvd), "count": len(nvd), "stale": False, "age_days": None}
+    # EPSS — TTL 3 dny; stáří dle nejmladšího záznamu
+    epss = _load(_EPSS_CACHE) if os.path.exists(_EPSS_CACHE) else {}
+    if epss:
+        tss = [v.get("_ts", 0) for v in epss.values() if isinstance(v, dict)]
+        age = _age_days(max(tss)) if tss else None
+        out["epss"] = {"present": True, "age_days": age, "count": len(epss),
+                       "stale": (age is not None and age > _EPSS_TTL / 86400.0)}
+    else:
+        out["epss"] = {"present": False, "age_days": None, "count": 0, "stale": False}
+    return out
+
+
 def _save(path, data):
     try:
         os.makedirs(CACHE_DIR, exist_ok=True)

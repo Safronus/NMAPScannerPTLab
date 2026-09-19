@@ -4,6 +4,20 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.17.0] - 2026-09-19
+
+### Přidáno
+- **Startup průvodce „Kontrola aktuálnosti"** — po spuštění (volitelně, výchozí
+  zapnuto) zkontroluje, než začneš testovat:
+  - **Aplikace** — je na GitHubu novější verze?
+  - **Nástroje** — nmap / ffuf / ZAP / TLS… nainstalované + verze (nmap chybějící
+    zvýrazní jako povinný).
+  - **Data / DB** — čerstvost CVE/DB cache: CISA KEV, End-of-Life, NVD, EPSS
+    (stáří + upozornění na zastaralost).
+  - Zelený/žlutý souhrn „vše aktuální / něco zastaralé" a rovnou tlačítko do
+    Správce aktualizací. Přepínač „Zobrazovat při startu" (lze vypnout).
+  - Kontrola verze aplikace a nástrojů běží na pozadí (nezdrží start).
+
 ## [5.16.8] - 2026-09-19
 
 ### Opraveno / Změněno (Vulners ověření klíče)

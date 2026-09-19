@@ -137,6 +137,9 @@ def main():
         app.setWindowIcon(QIcon(icon_path))  # okna + Dock (macOS) / taskbar (Linux)
     window = NmapScannerApp()
     window.showMaximized()
+    # Startup průvodce: kontrola aktuálnosti (aplikace/nástroje/CVE-DB) po vykreslení okna.
+    from PySide6.QtCore import QTimer
+    QTimer.singleShot(500, window.maybe_startup_check)
     sys.exit(app.exec())
 
 

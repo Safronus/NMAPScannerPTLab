@@ -64,6 +64,16 @@ def test_build_eol_skips_supported():
     assert build_findings(sr, sections=["eol"])["total"] == 0
 
 
+def test_cache_status_structure():
+    cs = enr.cache_status()
+    for k in ("kev", "eol", "nvd", "epss"):
+        assert k in cs, f"chybí klíč {k}"
+        for field in ("present", "stale", "age_days", "count"):
+            assert field in cs[k], f"{k} nemá pole {field}"
+        assert isinstance(cs[k]["present"], bool)
+        assert isinstance(cs[k]["stale"], bool)
+
+
 def test_epss_band():
     assert enr.epss_band(0.97) == "velmi vysoká"
     assert enr.epss_band(0.20) == "vysoká"

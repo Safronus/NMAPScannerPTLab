@@ -1004,6 +1004,18 @@ class NmapScannerApp(QWidget):
         from .dialogs.updates import UpdateManagerDialog
         UpdateManagerDialog(self).exec()
 
+    def maybe_startup_check(self):
+        """Při startu (je-li zapnuto) zkontroluje aktuálnost aplikace, nástrojů a
+        CVE/DB dat — ať uživatel netestuje na zastaralých datech."""
+        from PySide6.QtCore import QSettings
+        if not QSettings("UTB", "NmapScannerApp").value("startup_check", True, type=bool):
+            return
+        try:
+            from .dialogs.startup_check import StartupCheckDialog
+            StartupCheckDialog(self).exec()
+        except Exception:
+            pass
+
     def open_report_manager(self):
         """Otevře manažer reportů (přehled všech reportů v projektu)."""
         from .dialogs.report_manager import ReportManagerDialog
