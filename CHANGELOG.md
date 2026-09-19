@@ -4,6 +4,19 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.17.6] - 2026-09-19
+
+### Opraveno
+- **ffuf na Windows spadl hned (WinError 2), fuzzing „bez nálezů" za sekundu** —
+  detekce sice našla `…\WinGet\Links\ffuf.exe`, jenže to je **symlink** a
+  `subprocess.Popen` ho na Windows neumí spustit (WinError 2 „soubor nenalezen").
+  Nově se cesta rozresolví na **skutečný spustitelný soubor** (cíl symlinku v
+  `…\Packages\…\ffuf.exe`) — sdíleno mezi fuzzingem i detekcí ve Správci
+  aktualizací (proto se ukáže i verze místo „?").
+- **Přehlednější log fuzzingu** — do logu aplikace se vypisuje spouštěný ffuf,
+  cesta ke slovníku (existence + počet řádků) a návratový kód, ať je případný
+  problém hned vidět bez CMD.
+
 ## [5.17.5] - 2026-09-19
 
 ### Opraveno

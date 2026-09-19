@@ -139,6 +139,32 @@ def _path_present(p):
         return False
 
 
+def _resolve_real_exe(candidates):
+    """Z kandidátních cest vrátí SKUTEČNĚ SPUSTITELNÝ soubor. Winget `Links\\*.exe`
+    je symlink, který ``subprocess`` na Windows neumí spustit (WinError 2) — musí
+    se spustit cíl symlinku (reálný exe v `Packages\\…`). Preferuje reálné soubory
+    mimo `\\Links\\`."""
+    reals = []
+    for c in candidates:
+        if not c:
+            continue
+        try:
+            r = os.path.realpath(c)   # rozresolví symlink na skutečný cíl
+            if os.path.isfile(r):
+                reals.append(r)
+            elif os.path.isfile(c):
+                reals.append(c)
+        except Exception:
+            pass
+    if not reals:
+        return None
+    for r in reals:                    # preferovat reálné Packages exe, ne Links alias
+        low = r.replace("/", "\\").lower()
+        if "\\links\\" not in low:
+            return r
+    return reals[0]
+
+
 def _find_bin(spec):
     # ZAP má speciální vyhledávání (i mimo PATH, např. /Applications)
     if spec["key"] == "zap":
@@ -159,10 +185,15 @@ def _find_bin(spec):
                 return p
     # Windows: hledat i v obvyklých instalačních cestách mimo PATH
     if sys.platform.startswith("win"):
+        all_cands = []
         for name in spec["bins"]:
-            for c in _windows_bin_candidates(name, spec.get("winget_id")):
-                if _path_present(c):
-                    return c
+            all_cands += _windows_bin_candidates(name, spec.get("winget_id"))
+        real = _resolve_real_exe(all_cands)   # skutečně spustitelný soubor (ne symlink)
+        if real:
+            return real
+        for c in all_cands:                    # fallback: aspoň potvrdit existenci
+            if _path_present(c):
+                return c
     return None
 
 

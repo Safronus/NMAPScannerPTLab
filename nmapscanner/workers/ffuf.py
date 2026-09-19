@@ -22,20 +22,26 @@ def find_ffuf():
         return p
     cands = ["/usr/local/bin/ffuf", "/opt/homebrew/bin/ffuf", "/opt/local/bin/ffuf",
              "/usr/bin/ffuf"]
-    # Windows: sdílené hledání s toolcheck (winget Links + celý strom, scoop, choco)
-    present = os.path.exists
-    try:
-        from ..core.toolcheck import _windows_bin_candidates, _path_present
-        cands += _windows_bin_candidates("ffuf", "ffuf.ffuf")
-        present = _path_present
-    except Exception:
-        pass
+    # macOS/Linux: prostá existence
     for c in cands:
         try:
-            if c and present(c):
+            if c and os.path.exists(c):
                 return c
         except Exception:
             pass
+    # Windows: sdílené hledání s toolcheck + rozresolvení symlinku na SPUSTITELNÝ
+    # soubor (winget Links\ffuf.exe je symlink → Popen ho neumí spustit, WinError 2)
+    try:
+        from ..core.toolcheck import _windows_bin_candidates, _resolve_real_exe, _path_present
+        wcands = _windows_bin_candidates("ffuf", "ffuf.ffuf")
+        real = _resolve_real_exe(wcands)
+        if real:
+            return real
+        for c in wcands:
+            if _path_present(c):
+                return c
+    except Exception:
+        pass
     return None
 
 
@@ -201,6 +207,15 @@ class FfufWorker(QThread):
         if self.options.get('matcher'): command.extend(["-mc", self.options['matcher']])
         if self.options.get('follow_redirects', False): command.append("-r")
 
+        # Debug do logu aplikace (viditelné bez CMD)
+        try:
+            wl_ok = os.path.isfile(self.wordlist)
+            wl_lines = sum(1 for _ in open(self.wordlist, "rb")) if wl_ok else 0
+            self.log.emit(f"▶️ ffuf: {ffuf_path}")
+            self.log.emit(f"   slovník: {self.wordlist} (existuje={wl_ok}, řádků={wl_lines})")
+        except Exception:
+            pass
+
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
 
@@ -231,6 +246,10 @@ class FfufWorker(QThread):
             
             print("DEBUG: [FfufWorker] Stdout loop finished, waiting for process...")
             self.process.wait()
+            rc = self.process.returncode
+            if rc not in (0, None):
+                self.log.emit(f"⚠️ ffuf skončil s návratovým kódem {rc} "
+                              "(zkontroluj slovník/cíl výše).")
             
             # CRITICAL FIX: Musíme počkat, až skončí reader thread!
             if self.stderr_reader and self.stderr_reader.isRunning():
