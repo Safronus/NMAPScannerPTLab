@@ -4,6 +4,17 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.18.1] - 2026-09-19
+
+### Opraveno (výkon ffuf při obřích skenech)
+- **Aplikace zamrzala při fuzzingu s velkým počtem nálezů** — každý nález
+  překresloval strom (`resizeSections`/`sortChildren` per řádek) a kontroloval
+  duplicitu v seznamu (O(n²)). Nově se nálezy **dávkově vykreslují** (buffer +
+  timer, ~3×/s, `setUpdatesEnabled`), skupiny statusů se cachují, drahé operace
+  se dělají jednou za dávku.
+- **Ochrana proti zamrznutí/OOM**: strop zobrazených řádků (5000) a uložených
+  nálezů v paměti (200000) — sken běží dál, jen upozorní, ať zúžíš matcher/slovník.
+
 ## [5.18.0] - 2026-09-19
 
 ### Přidáno

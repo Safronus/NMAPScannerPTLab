@@ -690,6 +690,18 @@ class FfufDialog(QDialog):
         self.is_scanning = False
         self.json_results = []
 
+        # Dávkové vykreslování výsledků (ochrana GUI při milionech nálezů)
+        self._pending_results = []          # (data, ctx) čekající na vložení do stromu
+        self._tree_item_count = 0           # kolik řádků už je ve stromu
+        self.MAX_TREE_ITEMS = 5000          # strop ZOBRAZENÝCH řádků
+        self.MAX_JSON_RESULTS = 200000      # strop nálezů v paměti (ochrana OOM)
+        self._tree_capped_warned = False
+        self._json_capped_warned = False
+        self._flush_timer = QTimer(self)
+        self._flush_timer.setInterval(300)  # překreslit nejvýš ~3×/s
+        self._flush_timer.timeout.connect(self._flush_results)
+        self._flush_timer.start()
+
         # Počítadla pro celkový progress bar
         self.total_targets = 0
         self.completed_targets = 0
@@ -1648,92 +1660,103 @@ class FfufDialog(QDialog):
         self.log_label.setText(f"Skenuji {running} cíl(ů) paralelně…")
 
     def add_result(self, data, ctx):
-        """
-        Zpracuje jeden nález pro daný kontext (cíl).
-        """
-        if data.get('_meta') != 'empty_scan':
-            ctx["has_results"] = True
-
+        """Zpracuje jeden nález — RYCHLE: uloží do JSON a zařadí do bufferu.
+        Vlastní vykreslení do stromu dělá dávkově ``_flush_results`` (jinak by
+        miliony nálezů zamrzly GUI)."""
         if "_settings" not in data:
             data["_settings"] = ctx["settings"]
-
-        # NOVÉ: Uložení timestampu skenu do výsledků pro budoucí seskupení
         if "_scan_timestamp" not in data and hasattr(self, "current_scan_timestamp"):
             data["_scan_timestamp"] = self.current_scan_timestamp
 
-        if data not in self.json_results:
-            self.json_results.append(data)
-        
-        if hasattr(self, "export_json_btn"): self.export_json_btn.setEnabled(True)
-        if hasattr(self, "export_txt_btn"): self.export_txt_btn.setEnabled(True)
-            
-        full_url = data.get("url", "")
-        if not full_url and data.get('_meta') == 'empty_scan':
-             full_url = ctx["url"]
-
-        # Cílová hlavička pro tento kontext (vytvořená v _start_target)
-        parent_item = ctx["tree_item"]
-
         if data.get('_meta') == 'empty_scan':
-            if parent_item:
+            parent_item = ctx.get("tree_item")
+            if parent_item and not ctx.get("has_results"):
                 info_item = QTreeWidgetItem(parent_item, ["Sken dokončen - žádné nálezy", "", "", "", ""])
                 info_item.setForeground(0, QColor("#95A5A6"))
                 info_item.setFirstColumnSpanned(True)
             return
 
-        status = data.get("status", 0)
+        ctx["has_results"] = True
+        # Strop nálezů v paměti (ochrana proti OOM při milionech shod)
+        if len(self.json_results) < self.MAX_JSON_RESULTS:
+            self.json_results.append(data)      # bez O(n) kontroly – nálezy jsou unikátní
+        elif not getattr(self, "_json_capped_warned", False):
+            self._json_capped_warned = True
+            self.log_label.setText(
+                f"⚠️ Dosažen strop {self.MAX_JSON_RESULTS} uložených nálezů — zúž "
+                "matcher (-mc) nebo slovník. Sken běží dál, další nálezy se neukládají.")
+        if hasattr(self, "export_json_btn"): self.export_json_btn.setEnabled(True)
+        if hasattr(self, "export_txt_btn"): self.export_txt_btn.setEnabled(True)
+        if len(self._pending_results) < 20000:  # nenechat růst buffer donekonečna
+            self._pending_results.append((data, ctx))
+
+    def _flush_results(self):
+        """Dávkově vloží čekající nálezy do stromu (max chunk / tick). Drahé
+        operace (sort/resize) se dělají jednou za dávku, ne za nález."""
+        if not self._pending_results:
+            return
+        # počet nálezů celkem (pro info i strop)
+        if self._tree_item_count >= self.MAX_TREE_ITEMS:
+            n = len(self._pending_results)
+            self._pending_results.clear()
+            if not self._tree_capped_warned:
+                self._tree_capped_warned = True
+                self.log_label.setText(
+                    f"⚠️ Zobrazeno max {self.MAX_TREE_ITEMS} nálezů (další se sbírají do "
+                    "JSON exportu). Zvaž užší matcher/slovník.")
+            return
+        chunk = self._pending_results[:400]
+        del self._pending_results[:400]
+        self.results_tree.setUpdatesEnabled(False)
+        try:
+            for data, ctx in chunk:
+                if self._tree_item_count >= self.MAX_TREE_ITEMS:
+                    break
+                self._insert_result_item(data, ctx)
+                self._tree_item_count += 1
+        finally:
+            self.results_tree.setUpdatesEnabled(True)
+
+    def _insert_result_item(self, data, ctx):
+        """Vloží jeden nález do stromu — bez sort/resize (dělá se dávkově)."""
+        parent_item = ctx.get("tree_item")
+        if not parent_item:
+            return
+        full_url = data.get("url", "")
+        status = data.get('status', 0)
+        length = data.get('length', 0)
+        words = data.get('words', 0)
         path_display = ""
-        
         if full_url:
             try:
                 from urllib.parse import urlparse
                 parsed = urlparse(full_url)
-                path_display = parsed.path
-                if parsed.query: path_display += f"?{parsed.query}"
-            except: 
+                path_display = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+            except Exception:
                 path_display = full_url
-        
-        if not path_display: 
+        if not path_display:
             path_display = data.get('input', {}).get('FUZZ', 'Unknown')
-            
-        status = data.get('status', 0)
-        length = data.get('length', 0)
-        words = data.get('words', 0)
-        
-        if parent_item:
-            status_group_item = None
-            group_label = f"Status: {status}"
 
-            for i in range(parent_item.childCount()):
-                child = parent_item.child(i)
-                if child.text(0) == group_label:
-                    status_group_item = child
-                    break
+        group_label = f"Status: {status}"
+        status_group_item = ctx.setdefault("_status_groups", {}).get(status)
+        if status_group_item is None:
+            status_group_item = QTreeWidgetItem(parent_item, [group_label, "", "", "", ""])
+            status_group_item.setExpanded(True)
+            gc = QColor("#95A5A6")
+            if 200 <= status < 300: gc = QColor("#2ECC71")
+            elif 300 <= status < 400: gc = QColor("#F39C12")
+            elif status in (401, 403): gc = QColor("#E74C3C")
+            status_group_item.setForeground(0, gc)
+            status_group_item.setFont(0, QFont("Arial", 10, QFont.Bold))
+            ctx["_status_groups"][status] = status_group_item
 
-            if not status_group_item:
-                status_group_item = QTreeWidgetItem(parent_item, [group_label, "", "", "", ""])
-                status_group_item.setExpanded(True)
-                group_color = QColor("#95A5A6")
-                if 200 <= status < 300: group_color = QColor("#2ECC71")
-                elif 300 <= status < 400: group_color = QColor("#F39C12")
-                elif status == 401 or status == 403: group_color = QColor("#E74C3C")
-                status_group_item.setForeground(0, group_color)
-                status_group_item.setFont(0, QFont("Arial", 10, QFont.Bold))
-                parent_item.sortChildren(0, Qt.AscendingOrder)
-
-            item = QTreeWidgetItem(status_group_item, [str(path_display), str(status), str(length), str(words), full_url])
-            item.setData(0, Qt.UserRole, full_url)
-            
-            status_group_item.sortChildren(0, Qt.AscendingOrder)
-            
-            if 200 <= status < 300: item.setForeground(1, QColor("#2ECC71"))
-            elif 300 <= status < 400: item.setForeground(1, QColor("#F39C12"))
-            elif status == 401 or status == 403: item.setForeground(1, QColor("#E74C3C"))
-            elif status >= 400: item.setForeground(1, QColor("#95A5A6"))
-            
-            self.results_tree.header().resizeSections(QHeaderView.ResizeToContents)
-        
-        self.export_txt_btn.setEnabled(True)
+        item = QTreeWidgetItem(status_group_item,
+                               [str(path_display), str(status), str(length), str(words), full_url])
+        item.setData(0, Qt.UserRole, full_url)
+        if 200 <= status < 300: item.setForeground(1, QColor("#2ECC71"))
+        elif 300 <= status < 400: item.setForeground(1, QColor("#F39C12"))
+        elif status in (401, 403): item.setForeground(1, QColor("#E74C3C"))
+        elif status >= 400: item.setForeground(1, QColor("#95A5A6"))
 
     def export_raw_json(self):
         if not self.json_results:
@@ -1843,6 +1866,13 @@ class FfufDialog(QDialog):
     def fuzzing_finished(self):
         if not getattr(self, 'is_scanning', False): return
         self.is_scanning = False
+
+        # Doflushovat zbývající nálezy a jednou upravit šířky sloupců
+        try:
+            self._flush_results()
+            self.results_tree.header().resizeSections(QHeaderView.ResizeToContents)
+        except Exception:
+            pass
 
         # Odstranit dočasný sjednocený slovník
         merged_path = os.path.join(os.getcwd(), "wordlists", "merged_wordlist.tmp")
