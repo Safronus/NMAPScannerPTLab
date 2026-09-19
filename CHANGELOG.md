@@ -4,6 +4,14 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.17.3] - 2026-09-19
+
+### Opraveno
+- **Kontrola verze hlásila „aktuální", i když byla novější verze** — `raw`
+  .githubusercontent.com má CDN cache (klidně pár minut starou), takže vracel
+  zastaralé číslo. Verze-check nově používá **GitHub API první** (odráží HEAD
+  okamžitě) a `raw` je jen fallback.
+
 ## [5.17.2] - 2026-09-19
 
 ### Opraveno (detekce nástrojů + aktualizace aplikace)

@@ -41,22 +41,26 @@ GH_ZIP = f"https://github.com/{GH_OWNER}/{GH_REPO}/archive/refs/heads/{GH_BRANCH
 
 
 def fetch_remote_version(timeout=15):
-    """Zjistí nejnovější verzi z GitHubu. Zkusí raw (rychlé) a jako fallback
-    GitHub API contents (funguje i hned po zveřejnění repa, kdy raw ještě 404).
-    Vrací verzi ('X.Y.Z') nebo None."""
+    """Zjistí nejnovější verzi z GitHubu. **API první** — odráží HEAD okamžitě;
+    `raw.githubusercontent.com` má CDN cache (klidně i pár minut starou), takže by
+    hlásil zastaralou verzi. Raw je jen fallback (kdyby API rate-limit). Vrací
+    verzi ('X.Y.Z') nebo None."""
     import requests
     headers = {"User-Agent": "NMAPScanner-PTLab"}
-    try:
-        v = _parse_version(requests.get(GH_RAW_VER, timeout=timeout, headers=headers).text)
-        if v:
-            return v
-    except Exception:
-        pass
+    # 1) GitHub API contents (aktuální, bez CDN cache)
     try:
         import base64
         j = requests.get(GH_API_VER, timeout=timeout, headers=headers).json()
         txt = base64.b64decode(j.get("content", "") or "").decode("utf-8", "ignore")
-        return _parse_version(txt) or None
+        v = _parse_version(txt)
+        if v:
+            return v
+    except Exception:
+        pass
+    # 2) Fallback: raw (může být z CDN cache mírně pozadu)
+    try:
+        return _parse_version(
+            requests.get(GH_RAW_VER, timeout=timeout, headers=headers).text) or None
     except Exception:
         return None
 # Co při aktualizaci nikdy nepřepisovat (uživatelské / vygenerované / prostředí)
