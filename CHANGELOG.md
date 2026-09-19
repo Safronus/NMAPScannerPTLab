@@ -4,6 +4,17 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.16.8] - 2026-09-19
+
+### Opraveno / Změněno (Vulners ověření klíče)
+- Ověření Vulners klíče nově běží přes **audit endpoint** (v4, doporučeno
+  dokumentací a zároveň endpoint, který appka reálně používá) s fallbackem na
+  search; HTTP 200 na kterémkoli = klíč platný.
+- **Klíč se před odesláním čistí** od mezer, nezlomitelných/neviditelných znaků
+  a uvozovek (časté při copy-paste na Windows).
+- Chybová hláška ukazuje **konkrétní důvod od Vulners** (např. „Unknown api key")
+  a radí zkontrolovat přesnost klíče a aktivaci trialu.
+
 ## [5.16.7] - 2026-09-19
 
 ### Přidáno

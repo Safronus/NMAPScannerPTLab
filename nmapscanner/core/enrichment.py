@@ -187,17 +187,30 @@ def _extract_desc(cve):
     return ""
 
 
+def _clean_key(k):
+    """Očistí API klíč od whitespace, nezlomitelných/neviditelných znaků a
+    případných uvozovek z copy-paste (časté na Windows). Klíče jsou alfanumerické,
+    takže je bezpečné odstranit i vnitřní mezery/neviditelné znaky."""
+    if not k:
+        return ""
+    k = str(k)
+    for ch in (" ", "​", "﻿", "\r", "\n", "\t", " "):
+        k = k.replace(ch, "")
+    return k.strip().strip('"').strip("'")
+
+
 def validate_nvd_key(api_key, timeout=12):
     """Ověří platnost NVD API klíče drobným dotazem. Vrací (ok: bool, zpráva: str).
 
     NVD při neplatném klíči vrací 403/404; 200 = klíč přijat. Prázdný klíč = bez klíče."""
-    if not (api_key or "").strip():
+    key = _clean_key(api_key)
+    if not key:
         return False, "Klíč není zadán."
     try:
         import requests
         url = "https://services.nvd.nist.gov/rest/json/cves/2.0?resultsPerPage=1"
         r = requests.get(url, timeout=timeout, headers={
-            "User-Agent": "NMAPScanner-PTLab", "apiKey": api_key.strip()})
+            "User-Agent": "NMAPScanner-PTLab", "apiKey": key})
         if r.status_code == 200:
             return True, "Klíč je platný — NVD požadavek přijat."
         if r.status_code in (403, 404):
@@ -212,34 +225,51 @@ VULNERS_SEARCH_URL = "https://vulners.com/api/v3/search/lucene/"
 VULNERS_AUDIT_URL = "https://vulners.com/api/v4/audit/software"
 
 
-def validate_vulners_key(api_key, timeout=12):
-    """Ověří platnost Vulners API klíče drobným dotazem. Vrací (ok: bool, zpráva: str).
+def validate_vulners_key(api_key, timeout=15):
+    """Ověří platnost Vulners API klíče. Vrací (ok: bool, zpráva: str).
 
-    Vulners v3/v4 vyžaduje klíč v hlavičce ``X-Api-Key`` a metodu POST — starý
-    způsob (``apiKey`` v URL přes GET) vrací HTTP 403."""
-    key = (api_key or "").strip()
+    Ověřuje se přes **audit endpoint** (v4, doporučeno dokumentací a zároveň
+    endpoint, který appka reálně používá pro CVE dle verze) s klíčem v hlavičce
+    ``X-Api-Key``. Při 401/403 zkusí ještě search endpoint (jiný scope tarifu).
+    HTTP 200 na kterémkoli = klíč přijat."""
+    key = _clean_key(api_key)
     if not key:
         return False, "Klíč není zadán."
-    try:
+
+    def _post(url, body):
         import requests
         headers = dict(_VULNERS_HEADERS, **{"X-Api-Key": key})
-        r = requests.post(VULNERS_SEARCH_URL, json={"query": "cvss:9", "size": 1},
-                          headers=headers, timeout=timeout)
+        return requests.post(url, json=body, headers=headers, timeout=timeout)
+
+    try:
+        r = _post(VULNERS_AUDIT_URL,
+                  {"software": ["cpe:2.3:a:nginx:nginx:1.0.0"], "fields": ["title"]})
         if r.status_code == 200:
+            return True, "Klíč je platný — Vulners audit přijat."
+        if r.status_code in (401, 403):
+            # Zkusit ještě search endpoint (může mít jiný scope pro daný tarif)
             try:
-                data = r.json()
+                r2 = _post(VULNERS_SEARCH_URL, {"query": "cvss:9", "size": 1})
+                if r2.status_code == 200:
+                    return True, "Klíč je platný — Vulners search přijat."
             except Exception:
-                return True, "Klíč přijat (HTTP 200)."
-            if data.get("result") == "OK":
-                return True, "Klíč je platný — Vulners požadavek přijat."
-            err = ((data.get("data", {}) or {}).get("error")
-                   or data.get("result") or "neznámá chyba")
-            return False, f"Vulners klíč odmítnut: {err}"
-        if r.status_code == 401:
-            return False, "Klíč odmítnut (HTTP 401 — neplatný API klíč)."
-        if r.status_code == 403:
-            return False, ("Přístup odepřen (HTTP 403) — klíč je neplatný, nebo tvůj "
-                           "tarif nemá přístup k tomuto API.")
+                pass
+            # Přečíst konkrétní chybu od Vulners (např. „Unknown api key")
+            detail = ""
+            try:
+                detail = ((r.json().get("data", {}) or {}).get("error") or "").strip()
+            except Exception:
+                detail = ""
+            if r.status_code == 401:
+                msg = "Klíč odmítnut (HTTP 401"
+                msg += f" — {detail})." if detail else ")."
+                if "unknown" in detail.lower() or not detail:
+                    msg += (" Vulners klíč nezná — zkontroluj, že je přesně zkopírovaný "
+                            "(bez mezer navíc) a že trial klíč je už aktivovaný na "
+                            "vulners.com (aktivace může chvíli trvat).")
+                return False, msg
+            return False, (f"Přístup odepřen (HTTP 403{' — ' + detail if detail else ''}) "
+                           "— klíč platí, ale tvůj tarif nemá přístup k audit/search API.")
         if r.status_code == 429:
             return False, "Překročen limit dotazů (HTTP 429) — zkus to za chvíli."
         return False, f"Neočekávaná odpověď Vulners (HTTP {r.status_code})."
@@ -382,6 +412,7 @@ def vulners_cves_for_version(product_text, version, api_key, timeout=20, force=F
     """Fallback/augmentace přes Vulners audit (v4, vyžaduje API klíč v hlavičce
     ``X-Api-Key``). Best-effort: při jakékoli chybě vrací None. Vrací list
     ``[{'cve','cvss','severity'}]`` nebo None."""
+    api_key = _clean_key(api_key)
     if not api_key:
         return None
     cpe = cpe_for(product_text)
@@ -397,7 +428,7 @@ def vulners_cves_for_version(product_text, version, api_key, timeout=20, force=F
         return entry.get("data")
     try:
         import requests
-        headers = dict(_VULNERS_HEADERS, **{"X-Api-Key": api_key.strip()})
+        headers = dict(_VULNERS_HEADERS, **{"X-Api-Key": api_key})
         body = {"software": [cpe_full], "fields": ["cvelistMetrics"]}
         r = requests.post(VULNERS_AUDIT_URL, json=body, headers=headers, timeout=timeout)
         if r.status_code != 200:
