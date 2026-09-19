@@ -14,6 +14,8 @@ echo "Vytvarim .venv a instaluji zavislosti (PySide6 je velky, chvili to trva)..
 python3 -m venv .venv || { echo "[CHYBA] venv"; read -n1 -r -p "..."; exit 1; }
 ./.venv/bin/python -m pip install --upgrade pip
 ./.venv/bin/python -m pip install -r requirements.txt || { echo "[CHYBA] zavislosti"; read -n1 -r -p "..."; exit 1; }
+# Aktivovat git hook: pri zmene verze se automaticky pregeneruji porty (Win + macOS)
+git rev-parse --git-dir >/dev/null 2>&1 && git config core.hooksPath .githooks 2>/dev/null
 # Vyrobit spousteci .app (dvojklik bez terminalu)
 [ -x ./make_macos_app.command ] && ./make_macos_app.command
 echo ""

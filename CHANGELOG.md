@@ -4,6 +4,19 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.16.2] - 2026-09-19
+
+### Přidáno
+- **Automatické generování portů při každé změně verze.** Nové pravidlo:
+  jakmile commit změní `VERSION` v `nmapscanner/__init__.py`, git hook
+  (`.githooks/post-commit`) sám přegeneruje přenosné porty pro **Windows i
+  macOS**.
+  - `make_ports.command` — jednotný build: Windows balík
+    (`windows-package/NMAPScannerPTLab-<verze>-Windows.zip`) + macOS
+    `NMAPScannerPTLab.app`. Lze spustit i ručně.
+  - Hook se aktivuje přes `git config core.hooksPath .githooks` (dělá to
+    `install_macos.command`).
+
 ## [5.16.1] - 2026-09-19
 
 ### Přidáno

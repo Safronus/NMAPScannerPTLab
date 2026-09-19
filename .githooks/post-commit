@@ -1,0 +1,16 @@
+#!/bin/bash
+# Automatické PRAVIDLO: kdykoli commit změní verzi aplikace
+# (nmapscanner/__init__.py: VERSION = "..."), přegeneruj porty pro Windows + macOS.
+#
+# Aktivace (jednorázově v tomto klonu):  git config core.hooksPath .githooks
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+[ -n "$ROOT" ] || exit 0
+
+# Změnila poslední commit řádku s VERSION v __init__.py?
+if git show HEAD -- nmapscanner/__init__.py 2>/dev/null | grep -Eq '^\+[[:space:]]*VERSION[[:space:]]*='; then
+  echo "[post-commit] Zjištěna změna verze -> generuji porty (Windows + macOS)…"
+  if [ -x "$ROOT/make_ports.command" ]; then
+    "$ROOT/make_ports.command" || echo "[post-commit] Generování portů selhalo (přeskočeno)."
+  fi
+fi
+exit 0
