@@ -4,6 +4,14 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.18.3] - 2026-09-20
+
+### Opraveno / Přidáno (OWASP ZAP diagnostika)
+- **„ZAP daemon se neočekávaně ukončil při startu" bez důvodu** — daemon běžel
+  s výstupem do DEVNULL, takže se nedalo zjistit proč spadl. Nově se jeho výstup
+  zachytává a při pádu se ukáže (+ kontrola Javy: ZAP vyžaduje Javu 17+, při její
+  absenci/staré verzi to hláška jasně řekne).
+
 ## [5.18.2] - 2026-09-19
 
 ### Přidáno

@@ -43,6 +43,36 @@ def find_zap():
     return None
 
 
+def java_version():
+    """Vrátí major verzi nalezené Javy (int) nebo None. ZAP vyžaduje Javu 17+.
+
+    Hledá ``java`` v PATH a v ``JAVA_HOME``. Nezablokuje sken (ZAP může mít vlastní
+    nakonfigurovanou Javu) — slouží jen jako diagnostika při pádu daemonu."""
+    import subprocess
+    import re
+    cands = []
+    j = shutil.which("java")
+    if j:
+        cands.append(j)
+    jh = os.environ.get("JAVA_HOME")
+    if jh:
+        cands.append(os.path.join(jh, "bin", "java.exe" if os.name == "nt" else "java"))
+    for c in cands:
+        try:
+            r = subprocess.run([c, "-version"], capture_output=True, text=True, timeout=10)
+            blob = (r.stderr or "") + (r.stdout or "")
+            m = re.search(r'version "(\d+)(?:\.(\d+))?', blob)
+            if m:
+                major = int(m.group(1))
+                # starý formát 1.8 → major je 8
+                if major == 1 and m.group(2):
+                    return int(m.group(2))
+                return major
+        except Exception:
+            pass
+    return None
+
+
 def install_hint():
     """Vrátí krátkou nápovědu, jak ZAP doinstalovat (dle platformy)."""
     import sys

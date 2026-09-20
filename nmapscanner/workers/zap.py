@@ -48,6 +48,34 @@ class ZapScanWorker(QThread):
         except Exception:
             return False
 
+    def _daemon_crash_message(self):
+        """Sestaví srozumitelnou chybu při pádu daemonu — výstup ZAP + kontrola Javy."""
+        from ..core.zap_runner import java_version
+        detail = ""
+        try:
+            if getattr(self, "_zap_logf", None):
+                self._zap_logf.flush()
+            with open(self._zap_log_path, "r", encoding="utf-8", errors="ignore") as f:
+                lines = [ln for ln in f.read().splitlines() if ln.strip()]
+            if lines:
+                detail = "\n".join(lines[-25:])
+        except Exception:
+            pass
+        jv = java_version()
+        java_hint = ""
+        if jv is None:
+            java_hint = ("\n\n⚠️ Java nebyla nalezena. OWASP ZAP vyžaduje Javu 17+ — "
+                         "nainstaluj ji (např. Eclipse Temurin z https://adoptium.net) "
+                         "a restartuj aplikaci.")
+        elif jv < 17:
+            java_hint = (f"\n\n⚠️ Nalezena Java {jv}, ale ZAP vyžaduje 17+. Doinstaluj "
+                         "novější (https://adoptium.net).")
+        msg = "ZAP daemon se neočekávaně ukončil při startu."
+        if detail:
+            msg += "\n\nVýstup ZAP:\n" + detail
+        msg += java_hint
+        return msg
+
     def _ensure_daemon(self, host, port, api_key):
         """Vrátí připojeného ZAPv2 klienta; daemon spustí, jen když neběží."""
         zap = self._connect_client(host, port, api_key)
@@ -65,9 +93,17 @@ class ZapScanWorker(QThread):
         home = self.options.get("home_dir") or default_home_dir()
         cmd = daemon_command(zap_path, host=host, port=port, api_key=api_key, home_dir=home)
         self.log.emit(f"🚀 Spouštím ZAP daemon: {zap_path} (port {port})…")
-        self.proc = subprocess.Popen(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
+        # Výstup daemonu zachytit do souboru — kvůli diagnostice při pádu (Java atd.)
+        import os
+        import tempfile
+        self._zap_log_path = os.path.join(tempfile.gettempdir(), "nmapscanner_zap_startup.log")
+        try:
+            self._zap_logf = open(self._zap_log_path, "wb")
+            out = self._zap_logf
+        except Exception:
+            self._zap_logf = None
+            out = subprocess.DEVNULL
+        self.proc = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT)
 
         # Čekat na nastartování API (ZAP + JVM může chvíli trvat)
         timeout = int(self.options.get("startup_timeout", 90))
@@ -75,7 +111,7 @@ class ZapScanWorker(QThread):
             if not self.is_running:
                 raise RuntimeError("Přerušeno uživatelem během startu daemonu.")
             if self.proc.poll() is not None:
-                raise RuntimeError("ZAP daemon se neočekávaně ukončil při startu.")
+                raise RuntimeError(self._daemon_crash_message())
             if self._api_ready(zap):
                 self.log.emit("✅ ZAP daemon je připraven.")
                 return zap
