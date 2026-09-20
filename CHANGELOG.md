@@ -4,6 +4,18 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.18.6] - 2026-09-20
+
+### Opraveno
+- **OWASP ZAP daemon padal „Unable to access jarfile zap-<verze>.jar"** — launcher
+  spouští `java -jar zap-<verze>.jar` relativně k pracovnímu adresáři, který byl
+  složka aplikace. Nově se daemon spouští s **pracovním adresářem = složka ZAPu**,
+  takže jar najde. (Java hint se navíc ukáže jen když je opravdu problém s Javou.)
+- **Duplicitní screenshoty z dřívějších běhů** se při otevření projektu
+  automaticky pročistí (nechá se nejnovější na IP+port), včetně smazání souborů.
+
+### Změněno
+- **Menší checkboxy** v tmavém tématu (o ~20 %, 12 px) — méně nápadné, stále vidět.
 ## [5.18.5] - 2026-09-20
 
 ### Opraveno

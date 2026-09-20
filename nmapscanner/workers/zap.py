@@ -61,15 +61,19 @@ class ZapScanWorker(QThread):
                 detail = "\n".join(lines[-25:])
         except Exception:
             pass
+        low = detail.lower()
+        # Java hint jen když výstup nenaznačuje jinou konkrétní příčinu (např. jar)
+        java_looks_ok = any(k in low for k in ("jarfile", "-jar", "java ")) and "not recognized" not in low
         jv = java_version()
         java_hint = ""
-        if jv is None:
-            java_hint = ("\n\n⚠️ Java nebyla nalezena. OWASP ZAP vyžaduje Javu 17+ — "
-                         "nainstaluj ji (např. Eclipse Temurin z https://adoptium.net) "
-                         "a restartuj aplikaci.")
-        elif jv < 17:
-            java_hint = (f"\n\n⚠️ Nalezena Java {jv}, ale ZAP vyžaduje 17+. Doinstaluj "
-                         "novější (https://adoptium.net).")
+        if not java_looks_ok:
+            if jv is None:
+                java_hint = ("\n\n⚠️ Java nebyla nalezena. OWASP ZAP vyžaduje Javu 17+ — "
+                             "nainstaluj ji (např. Eclipse Temurin z https://adoptium.net) "
+                             "a restartuj aplikaci.")
+            elif jv < 17:
+                java_hint = (f"\n\n⚠️ Nalezena Java {jv}, ale ZAP vyžaduje 17+. Doinstaluj "
+                             "novější (https://adoptium.net).")
         msg = "ZAP daemon se neočekávaně ukončil při startu."
         if detail:
             msg += "\n\nVýstup ZAP:\n" + detail
@@ -103,7 +107,11 @@ class ZapScanWorker(QThread):
         except Exception:
             self._zap_logf = None
             out = subprocess.DEVNULL
-        self.proc = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT)
+        # Pracovní adresář = složka ZAP launcheru, jinak zap.bat nenajde svůj
+        # relativní `zap-<verze>.jar` („Unable to access jarfile") — spouští se
+        # totiž v adresáři aplikace.
+        zap_cwd = os.path.dirname(zap_path) or None
+        self.proc = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT, cwd=zap_cwd)
 
         # Čekat na nastartování API (ZAP + JVM může chvíli trvat)
         timeout = int(self.options.get("startup_timeout", 90))

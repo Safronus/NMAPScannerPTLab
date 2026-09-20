@@ -63,7 +63,7 @@ def _apply_dark_palette(app):
         QCheckBox::indicator, QTreeWidget::indicator, QTreeView::indicator,
         QListWidget::indicator, QListView::indicator, QTableWidget::indicator,
         QGroupBox::indicator, QMenu::indicator {
-            width:15px; height:15px; border:1px solid #8A8C91;
+            width:12px; height:12px; border:1px solid #8A8C91;
             border-radius:3px; background:#2A2C31;
         }
         QCheckBox::indicator:hover, QTreeWidget::indicator:hover,
@@ -79,8 +79,8 @@ def _apply_dark_palette(app):
             background:#BF9000; border:1px solid #BF9000;
         }
         QRadioButton::indicator {
-            width:15px; height:15px; border:1px solid #8A8C91;
-            border-radius:8px; background:#2A2C31;
+            width:12px; height:12px; border:1px solid #8A8C91;
+            border-radius:6px; background:#2A2C31;
         }
         QRadioButton::indicator:checked { background:#2E75B6; border:1px solid #2E75B6; }
     """)

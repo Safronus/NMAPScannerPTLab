@@ -1465,6 +1465,28 @@ class NmapScannerApp(QWidget):
 
     
     @Slot(str, str)
+    def _dedup_screenshots(self, delete_files=True):
+        """Odstraní duplicitní screenshoty (stejné IP+port) — nechá nejnovější
+        (poslední v pořadí). Vyčistí i zahlcené běhy z dřívějška."""
+        for ip, paths in list((self.screenshots or {}).items()):
+            ip_prefix = ip.replace('.', '_') + "_"
+            best = {}          # port -> cesta (pozdější přepíše)
+            drop = []
+            for p in paths:
+                fn = os.path.basename(p)
+                port = fn[len(ip_prefix):].split("_", 1)[0] if fn.startswith(ip_prefix) else fn
+                if port in best:
+                    drop.append(best[port])
+                best[port] = p
+            if delete_files:
+                for o in drop:
+                    try:
+                        if os.path.exists(o):
+                            os.remove(o)
+                    except Exception:
+                        pass
+            self.screenshots[ip] = list(best.values())
+
     def on_screenshot_taken(self, ip, filepath):
         """Reaguje na pořízení screenshotu a aktualizuje GUI. Deduplikuje podle
         portu — nový screenshot téhož portu NAHRADÍ starý (re-scan se nehromadí)."""
@@ -3306,6 +3328,7 @@ class NmapScannerApp(QWidget):
                     out.append(p)
             resolved[ip] = out
         self.screenshots = resolved
+        self._dedup_screenshots()   # pročistit případné staré duplicity (IP+port)
         self.raw_input_text.setPlainText(meta.get("raw_input", ""))
         self.cleaned_output_text.setPlainText(meta.get("cleaned_input", ""))
 
