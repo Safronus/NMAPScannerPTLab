@@ -150,6 +150,7 @@ class ZapDialog(QDialog):
         found = set()
         tcp = self.scan_results.get("tcp", {}) or {}
         web_ports = [80, 443, 8080, 8000, 8008, 8443, 8081, 8888, 9443, 3000, 5000]
+        entries = []   # (ip, pnum, scheme, name, url)
         for ip, ip_data in tcp.items():
             for port, info in (ip_data.get("tcp", {}) or {}).items():
                 if not isinstance(info, dict) or info.get("state") != "open":
@@ -163,18 +164,41 @@ class ZapDialog(QDialog):
                     scheme = "https" if ("https" in name or "ssl" in name or pnum in (443, 8443, 9443)) else "http"
                     url = f"{scheme}://{ip}:{pnum}"
                     if url not in found:
-                        it = QListWidgetItem(f"{url} ({name or 'http'})")
-                        it.setData(Qt.UserRole, url)
-                        it.setCheckState(Qt.Unchecked)
-                        self.targets_list.addItem(it)
                         found.add(url)
-        if self.targets_list.count() == 0:
+                        entries.append((ip, pnum, scheme, name, url))
+
+        def _ipkey(ip):
+            try:
+                return tuple(int(x) for x in ip.split("."))
+            except Exception:
+                return (0, 0, 0, 0)
+        entries.sort(key=lambda e: (_ipkey(e[0]), e[1]))   # dle IP (číselně), pak portu
+
+        last_ip = None
+        for ip, pnum, scheme, name, url in entries:
+            if ip != last_ip:                              # hlavička skupiny IP
+                head = QListWidgetItem(f"■ {ip}")
+                head.setFlags(Qt.NoItemFlags)
+                head.setForeground(QColor("#4EA1FF"))
+                f = QFont(); f.setBold(True); head.setFont(f)
+                self.targets_list.addItem(head)
+                last_ip = ip
+            it = QListWidgetItem(f"    {scheme}://…:{pnum} ({name or 'http'})")
+            it.setData(Qt.UserRole, url)
+            it.setToolTip(url)
+            it.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            it.setCheckState(Qt.Unchecked)
+            self.targets_list.addItem(it)
+
+        if not entries:
             self.targets_list.addItem("Žádné webové cíle (spusť nejdřív TCP sken).")
             self.targets_list.setEnabled(False)
 
     def _select_all(self):
         for i in range(self.targets_list.count()):
             it = self.targets_list.item(i)
+            if not (it.flags() & Qt.ItemIsUserCheckable):   # přeskočit hlavičky skupin
+                continue
             if it.data(Qt.UserRole):
                 it.setCheckState(Qt.Checked)
 

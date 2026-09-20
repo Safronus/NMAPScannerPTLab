@@ -1466,10 +1466,27 @@ class NmapScannerApp(QWidget):
     
     @Slot(str, str)
     def on_screenshot_taken(self, ip, filepath):
-        """Reaguje na pořízení screenshotu a aktualizuje GUI."""
-        if ip not in self.screenshots:
-            self.screenshots[ip] = []
-        self.screenshots[ip].append(filepath)
+        """Reaguje na pořízení screenshotu a aktualizuje GUI. Deduplikuje podle
+        portu — nový screenshot téhož portu NAHRADÍ starý (re-scan se nehromadí)."""
+        self.screenshots.setdefault(ip, [])
+        # Název: <ip_s_podtržítky>_<port>_<timestamp>.png → vytáhnout port
+        ip_prefix = ip.replace('.', '_') + "_"
+        fn = os.path.basename(filepath)
+        port = fn[len(ip_prefix):].split("_", 1)[0] if fn.startswith(ip_prefix) else ""
+        if port:
+            keep = []
+            for old in self.screenshots[ip]:
+                if os.path.basename(old).startswith(ip_prefix + port + "_"):
+                    try:
+                        if os.path.exists(old) and old != filepath:
+                            os.remove(old)
+                    except Exception:
+                        pass
+                else:
+                    keep.append(old)
+            self.screenshots[ip] = keep
+        if filepath not in self.screenshots[ip]:
+            self.screenshots[ip].append(filepath)
 
         # Aktualizovat screenshot viewer
         self.update_screenshot_viewer()
@@ -3239,14 +3256,28 @@ class NmapScannerApp(QWidget):
         self.settings.setValue("recent_projects", recent_projects)
 
     def _project_meta(self):
-        """Metadata projektu pro projektový soubor (v4)."""
+        """Metadata projektu pro projektový soubor (v4). Cesty screenshotů se
+        ukládají RELATIVNĚ k projektu — přežijí i přesun složky."""
+        root = os.path.dirname(self.current_project_path) if getattr(self, "current_project_path", None) else None
+        shots = {}
+        for ip, paths in (self.screenshots or {}).items():
+            rel = []
+            for p in paths:
+                if root:
+                    try:
+                        rel.append(os.path.relpath(p, root))
+                        continue
+                    except Exception:
+                        pass
+                rel.append(p)
+            shots[ip] = rel
         return {
             "name": self.project_name_edit.text(),
             "scan_profile": self.profile_combo.currentData(),
             "custom_command": self.custom_command_edit.text(),
             "raw_input": self.raw_input_text.toPlainText(),
             "cleaned_input": self.cleaned_output_text.toPlainText(),
-            "screenshots": self.screenshots,
+            "screenshots": shots,
         }
 
     def apply_project_data(self, data):
@@ -3259,7 +3290,22 @@ class NmapScannerApp(QWidget):
         self.project_name_edit.setText(p_name)
         self._set_profile(meta.get("scan_profile", "master"))
         self.custom_command_edit.setText(meta.get("custom_command", ""))
-        self.screenshots = meta.get("screenshots", {}) or {}
+        # Screenshoty: rozresolvovat relativní cesty vůči kořeni projektu (absolutní
+        # z dřívějška ponechat) — soubory jsou v results/<běh>/<ip>/.
+        root = os.path.dirname(self.current_project_path) if getattr(self, "current_project_path", None) else None
+        raw_shots = meta.get("screenshots", {}) or {}
+        resolved = {}
+        for ip, paths in raw_shots.items():
+            out = []
+            for p in (paths or []):
+                if os.path.isabs(p):
+                    out.append(p)
+                elif root:
+                    out.append(os.path.normpath(os.path.join(root, p)))
+                else:
+                    out.append(p)
+            resolved[ip] = out
+        self.screenshots = resolved
         self.raw_input_text.setPlainText(meta.get("raw_input", ""))
         self.cleaned_output_text.setPlainText(meta.get("cleaned_input", ""))
 
@@ -3277,6 +3323,7 @@ class NmapScannerApp(QWidget):
             self.scan_results['certificates'] = {}
 
         self.loading_project = False
+        self.update_screenshot_viewer()   # zobrazit načtené screenshoty (galerie)
         if active:
             self._display_run(active)
         else:

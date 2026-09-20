@@ -56,9 +56,33 @@ def _apply_dark_palette(app):
     p.setColor(QPalette.Disabled, QPalette.Highlight, QColor(60, 62, 66))
     p.setColor(QPalette.Disabled, QPalette.HighlightedText, disabled)
     app.setPalette(p)
-    # Tooltipy a orámování polí čitelné na tmavém základu.
+    # Tooltipy a — hlavně — VIDITELNÉ checkboxy/radiobuttony na tmavém pozadí.
+    # (Fusion tmavá paleta jinak kreslí indikátory tak slabě, že nejsou vidět.)
     app.setStyleSheet((app.styleSheet() or "") + """
         QToolTip { color:#E4E6E9; background-color:#2A2C31; border:1px solid #4A4C51; }
+        QCheckBox::indicator, QTreeWidget::indicator, QTreeView::indicator,
+        QListWidget::indicator, QListView::indicator, QTableWidget::indicator,
+        QGroupBox::indicator, QMenu::indicator {
+            width:15px; height:15px; border:1px solid #8A8C91;
+            border-radius:3px; background:#2A2C31;
+        }
+        QCheckBox::indicator:hover, QTreeWidget::indicator:hover,
+        QListWidget::indicator:hover { border:1px solid #2E75B6; }
+        QCheckBox::indicator:checked, QTreeWidget::indicator:checked,
+        QTreeView::indicator:checked, QListWidget::indicator:checked,
+        QListView::indicator:checked, QTableWidget::indicator:checked,
+        QGroupBox::indicator:checked, QMenu::indicator:checked {
+            background:#2E75B6; border:1px solid #2E75B6;
+        }
+        QCheckBox::indicator:indeterminate, QTreeWidget::indicator:indeterminate,
+        QListWidget::indicator:indeterminate {
+            background:#BF9000; border:1px solid #BF9000;
+        }
+        QRadioButton::indicator {
+            width:15px; height:15px; border:1px solid #8A8C91;
+            border-radius:8px; background:#2A2C31;
+        }
+        QRadioButton::indicator:checked { background:#2E75B6; border:1px solid #2E75B6; }
     """)
 
 

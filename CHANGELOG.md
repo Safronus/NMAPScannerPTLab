@@ -4,6 +4,21 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.18.5] - 2026-09-20
+
+### Opraveno
+- **Screenshoty se po znovuotevření nenačítaly** — cesty se ukládaly absolutně a
+  ukazovaly do `results/<beh>/<ip>/`. Nově se ukládají RELATIVNĚ k projektu a při
+  načtení rozresolvují (přežijí i přesun složky), galerie se po načtení obnoví.
+  (Prázdná složka `screenshots/` je nevyužitá — screenshoty jsou v `results/`.)
+- **Re-scan screenshotů dělal duplicity** — dedup i podle portu: nový screenshot
+  téhož IP+portu nahradí starý (nehromadí se ani při běhu, ani při re-scanu).
+- **Neviditelné checkboxy na Windows (tmavé téma)** — přidány výrazné styly
+  indikátorů (checkbox/radio/tree/list) do tmavého tématu, teď jsou vidět všude.
+
+### Změněno
+- **OWASP ZAP dialog: cíle seřazené a seskupené podle IP** — číselné řazení dle
+  IP a portu, hlavičky skupin IP; „Vybrat vše" přeskakuje hlavičky.
 ## [5.18.4] - 2026-09-20
 
 ### Opraveno
