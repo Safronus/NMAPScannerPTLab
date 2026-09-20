@@ -4,6 +4,19 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.18.4] - 2026-09-20
+
+### Opraveno
+- **Screenshoty z běhu se ztrácely po zavření aplikace** — často dobíhají až PO
+  dokončení skenu, takže je poslední autosave nezachytil. Nově se projekt uloží
+  hned po dokončení dávky screenshotů, takže po znovuotevření tam jsou.
+- **Re-scan screenshotů vytvářel duplicity** — nejdřív se teď zahodí staré
+  screenshoty daných cílů (záznamy i soubory), pak se pořídí nové.
+- **Záplava „Shiboken _pythonToCppCopy: Cannot copy-convert (int) to C++" v CMD**
+  — signál `result` byl typu `dict`; data (TLS/cert/nmap) mají vnořené int klíče
+  (porty, cipher ID), které PySide přes vlákna marshaloval na QVariantMap (jen
+  str klíče). Změněno na `object` → žádný spam, data dorazí celá.
+
 ## [5.18.3] - 2026-09-20
 
 ### Opraveno / Přidáno (OWASP ZAP diagnostika)

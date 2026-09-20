@@ -1494,6 +1494,15 @@ class NmapScannerApp(QWidget):
             self._shot_last_err = info or "neznámá chyba"
         self._update_shot_status()
 
+        # Dávka screenshotů doběhla → ULOŽIT (screenshoty často dobíhají až PO
+        # workflow_finished, takže bez tohoto by se při zavření ztratily).
+        if self._shot_total > 0 and self._shot_done >= self._shot_total:
+            try:
+                if getattr(self, "current_project_path", None) and not getattr(self, "loading_project", False):
+                    self.auto_save_project()
+            except Exception:
+                pass
+
     def _screenshot_failure_hint(self, err):
         """Z textu chyby odhadne příčinu selhání screenshotu (síť vs práva vs Chrome)."""
         low = (err or "").lower()
@@ -2577,6 +2586,17 @@ class NmapScannerApp(QWidget):
         targets = [t for t in dict.fromkeys(targets) if t]
         if not targets:
             return
+        # Re-scan: zahodit STARÉ screenshoty těchto cílů (soubory i záznamy), jinak
+        # by se při opakovaném re-scanu hromadily duplicity.
+        for t in targets:
+            for old in self.screenshots.get(t, []):
+                try:
+                    if os.path.exists(old):
+                        os.remove(old)
+                except Exception:
+                    pass
+            self.screenshots.pop(t, None)
+        self.update_screenshot_viewer()
         run = self.run_history.active()
         common_web_ports = [80, 443, 8080, 8000, 8008, 8443]
         paths = self._ensure_project_folder()

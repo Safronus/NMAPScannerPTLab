@@ -4,7 +4,12 @@ from PySide6.QtCore import QObject, Signal
 class WorkerSignals(QObject):
     # --- Sdílené (nmap scan i ostatní workery: tls/cert/headers/ffuf) ---
     # Pro nmap scan: (phase, target, data); pro ostatní workery: (ip, port, data).
-    result = Signal(str, str, dict)
+    # POZOR: typ musí být ``object``, NE ``dict`` — data (TLS/cert/nmap) obsahují
+    # vnořené INT klíče (porty, cipher ID). Přes vlákna by PySide `dict` marshaloval
+    # na QVariantMap (vyžaduje str klíče) a pro každý int klíč vypsal do terminálu
+    # „Shiboken _pythonToCppCopy: Cannot copy-convert (int) to C++". ``object``
+    # předá Python objekt beze změny.
+    result = Signal(str, str, object)
     finished = Signal()
     log = Signal(str, str)                  # (level, message)
     screenshot_request = Signal(str, str, int, str)  # url, ip, port, path
