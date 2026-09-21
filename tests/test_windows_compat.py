@@ -83,6 +83,14 @@ def test_app_update_version_parse():
     assert _parse_version("nic") == ""
 
 
+def test_tls_is_public_host():
+    from nmapscanner.dialogs.tls import is_public_host
+    assert is_public_host("8.8.8.8") is True
+    assert is_public_host("example.com") is True
+    for priv in ("192.168.1.1", "10.0.0.5", "172.16.5.5", "127.0.0.1", "169.254.1.1", ""):
+        assert is_public_host(priv) is False
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     fails = []

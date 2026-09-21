@@ -18,6 +18,51 @@ from ..utils import register_project_report
 from PySide6.QtWebEngineCore import QWebEnginePage
 
 
+# Popisky enginů (klíč → text v nabídce)
+ENGINE_LABELS = {
+    "Nmap": "Nmap (rychlý lokální sken)",
+    "Qualys": "Qualys SSL Labs (jen VEŘEJNÉ cíle)",
+    "TestSSL": "TestSSL.sh (detailní)",
+    "Sslyze": "SSLyze (detailní lokální)",
+    "Sslscan": "sslscan (rychlý lokální)",
+}
+
+
+def is_public_host(host):
+    """True, pokud je cíl veřejný (routovatelný na internetu). Interní/privátní IP
+    (RFC1918, loopback, link-local) → False. Hostname s tečkou = veřejná doména."""
+    import ipaddress
+    h = (host or "").strip()
+    if not h:
+        return False
+    try:
+        ip = ipaddress.ip_address(h)
+        return not (ip.is_private or ip.is_loopback or ip.is_link_local
+                    or ip.is_reserved or ip.is_unspecified or ip.is_multicast)
+    except ValueError:
+        return "." in h  # není IP → hostname; doména = veřejný
+
+
+def engine_installed(key):
+    """True, pokud je engine k dispozici. Qualys je online API (vždy), ostatní
+    se detekují jako nástroje (winget/PATH/… přes toolcheck; SSLyze jako modul)."""
+    import shutil
+    if key == "Qualys":
+        return True
+    if key == "Nmap":
+        return bool(shutil.which("nmap") or shutil.which("nmap.exe"))
+    tc_key = {"TestSSL": "testssl", "Sslscan": "sslscan", "Sslyze": "sslyze"}.get(key)
+    if tc_key:
+        try:
+            from ..core import toolcheck
+            specs = {s["key"]: s for s in toolcheck.TOOLS}
+            if tc_key in specs:
+                return bool(toolcheck.detect(specs[tc_key]).get("installed"))
+        except Exception:
+            pass
+    return False
+
+
 class TlsAuditDialog(QDialog):
     """Dialog pro audit TLS a šifer - Vizuální shoda s verzí 2.1.4c."""
     def __init__(self, scan_results, parent=None, project_name="", project_path=None):
@@ -50,13 +95,15 @@ class TlsAuditDialog(QDialog):
         info_layout.addSpacing(15)
         info_layout.addWidget(QLabel("Engine:"))
         self.engine_combo = QComboBox()
-        self.engine_combo.addItems([
-            "Nmap (Rychlý lokální sken)",
-            "Qualys SSL Labs API (Veřejné cíle, detailní)",
-            "TestSSL.sh (Detailní, pro lokální i veřejné)",
-            "SSLyze (Detailní lokální analýza)",
-            "sslscan (Rychlý lokální sken)",
-        ])
+        # Do nabídky jen NAINSTALOVANÉ enginy (klíč uložen v userData).
+        for key in self.ENGINES:
+            if engine_installed(key):
+                self.engine_combo.addItem(ENGINE_LABELS.get(key, key), key)
+        if self.engine_combo.count() == 0:
+            self.engine_combo.addItem("Žádný engine k dispozici", None)
+        self.engine_combo.setToolTip(
+            "Nabízí jen nainstalované enginy. Qualys je online služba jen pro veřejné "
+            "cíle (interní IP přeskočí). Chybějící enginy doinstaluj ve Správci aktualizací.")
         info_layout.addWidget(self.engine_combo)
         
         info_layout.addStretch()
@@ -151,37 +198,63 @@ class TlsAuditDialog(QDialog):
         """Spustí prověření VYBRANÝM enginem (combo). Výsledek jde do samostatného
         řádku enginu pod portem — ostatní enginy se nepřepíšou. ``only_new``
         prověří jen cíle, které vybraným enginem ještě prověřené nebyly."""
-        engine_idx = self.engine_combo.currentIndex()
-        engine = self.ENGINES[engine_idx] if engine_idx < len(self.ENGINES) else "Nmap"
+        engine = self.engine_combo.currentData()
+        if not engine:
+            self.status_label.setText("Žádný engine není k dispozici (doinstaluj ve Správci aktualizací).")
+            return
         if only_new:
             tasks = [k for k in self.item_map if (k[0], k[1], engine) not in self.engine_items]
         else:
             tasks = list(self.item_map.keys())
+        # Qualys jen na veřejné cíle — interní IP by jen chybovaly.
+        if engine == "Qualys":
+            skipped = [t for t in tasks if not is_public_host(t[0])]
+            tasks = [t for t in tasks if is_public_host(t[0])]
+            if not tasks:
+                self.status_label.setText("Qualys je jen pro veřejné cíle — žádný veřejný cíl (interní IP přeskočeny).")
+                return
         if not tasks:
             self.status_label.setText(f"Nic k prověření enginem {engine}.")
             return
-        self._start_engine(engine_idx, tasks)
-        self.status_label.setText(f"Prověřuji enginem {engine}… (lze Zastavit)")
+        self._start_engine(engine, tasks)
+        note = ""
+        if engine == "Qualys" and skipped:
+            note = f" ({len(skipped)} interních cílů přeskočeno)"
+        self.status_label.setText(f"Prověřuji enginem {engine}…{note} (lze Zastavit)")
 
     def start_all_engines(self):
-        """Spustí VŠECHNY enginy pro všechny cíle naráz (každý do svého pod-řádku).
-        Qualys u interních/bezdoménových cílů jen vrátí chybu — ostatní projdou."""
-        tasks = list(self.item_map.keys())
-        if not tasks:
+        """Spustí RELEVANTNÍ enginy pro cíle (jen nainstalované; Qualys jen na
+        veřejné cíle). Každý engine píše do svého pod-řádku."""
+        all_tasks = list(self.item_map.keys())
+        if not all_tasks:
             self.status_label.setText("Nejsou žádné cíle k prověření.")
             return
-        for idx in range(len(self.ENGINES)):
-            self._start_engine(idx, tasks)
-        self.status_label.setText(
-            f"Prověřuji všemi enginy ({len(self.ENGINES)}× {len(tasks)} cílů)… (lze Zastavit)")
+        ran = 0
+        for key in self.ENGINES:
+            if not engine_installed(key):
+                continue
+            tasks = all_tasks
+            if key == "Qualys":
+                tasks = [t for t in all_tasks if is_public_host(t[0])]
+            if not tasks:
+                continue
+            self._start_engine(key, tasks)
+            ran += 1
+        if ran == 0:
+            self.status_label.setText("Žádný relevantní engine k dispozici.")
+        else:
+            self.status_label.setText(
+                f"Prověřuji {ran} relevantními enginy… (lze Zastavit)")
 
-    def _start_engine(self, engine_idx, tasks):
-        """Nastartuje workery jednoho enginu pro zadané cíle. Nic NEzamyká — každý
-        engine píše do vlastního pod-řádku per cíl, takže běhy se nepřepisují a lze
-        spustit i víc enginů souběžně. Jediný indikátor aktivity je tlačítko Zastavit."""
+    def _start_engine(self, engine, tasks):
+        """Nastartuje workery jednoho enginu (klíč z ENGINES) pro zadané cíle. Nic
+        NEzamyká — každý engine píše do vlastního pod-řádku per cíl, takže běhy se
+        nepřepisují a lze spustit i víc enginů souběžně."""
         import threading
-        engine = self.ENGINES[engine_idx]
-        WorkerClass = self.WORKERS[engine_idx]
+        # Zpětná kompatibilita: přijmout i index (int) místo klíče
+        if isinstance(engine, int):
+            engine = self.ENGINES[engine]
+        WorkerClass = dict(zip(self.ENGINES, self.WORKERS))[engine]
         cancel_event = threading.Event()
         self._cancel_events.append(cancel_event)
         self._active += len(tasks)

@@ -4,6 +4,17 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.19.0] - 2026-09-21
+
+### Změněno (TLS inspektor — chytřejší výběr enginů)
+- **Nabídka Engine ukazuje jen NAINSTALOVANÉ enginy** — na Windows tak nezvolíš
+  nástroj, který tam není (testssl.sh/sslscan). Nmap a SSLyze se detekují, Qualys
+  je online (vždy). Chybějící enginy doinstaluješ ve Správci aktualizací.
+- **Qualys (SSL Labs) jen na VEŘEJNÉ cíle** — interní/privátní IP (RFC1918,
+  loopback, link-local) se přeskočí, aby tam nevznikaly zbytečné „chyby". Platí
+  pro ruční volbu i pro „Prověřit všemi".
+- **„Prověřit všemi" spustí jen RELEVANTNÍ enginy** — nainstalované a použitelné
+  na daný cíl (Qualys jen na veřejné).
 ## [5.18.6] - 2026-09-20
 
 ### Opraveno
