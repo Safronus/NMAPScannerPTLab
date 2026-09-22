@@ -4,6 +4,12 @@ Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/),
 verzování dle pravidel projektu (start na 2.0.0; velké zásahy = MAJOR,
 drobnosti a fixy = PATCH).
 
+## [5.19.1] - 2026-09-22
+
+### Přidáno
+- **Nový ffuf slovník `404-paths-PUB.txt`** (12 722 cest) — přibyl do `wordlists/`,
+  takže je k dispozici v okně Directory fuzzing a rozdistribuuje se přes port /
+  self-update aplikace.
 ## [5.19.0] - 2026-09-21
 
 ### Změněno (TLS inspektor — chytřejší výběr enginů)
